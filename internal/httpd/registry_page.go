@@ -433,11 +433,9 @@ type registryData struct {
 	Crumbs []crumb
 	Parent string
 	Tree   bool
-	// List and Folders are the two views, Files the folder the page was
-	// opened on.
+	// List and Folders are the two views.
 	List    string
 	Folders string
-	Files   string
 	// Base is the path the script sends its requests to.
 	Base    string
 	Columns []column
@@ -507,6 +505,8 @@ func (s *Server) registryPage(set *settings, w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
+	who := s.sessionViewFor(set, r, s.identify(set, w, r))
+	who.Page, who.Files, who.Registry = "Registry", base, ""
 	listView, treeView := view, view
 	listView.tree, listView.path = false, ""
 	treeView.tree, treeView.path = true, ""
@@ -516,12 +516,11 @@ func (s *Server) registryPage(set *settings, w http.ResponseWriter, r *http.Requ
 		Tree:    view.tree,
 		List:    listView.link(base),
 		Folders: treeView.link(base),
-		Files:   base,
 		Base:    base,
 		Columns: registryColumns(view, base),
 		Entries: rows,
 		Delete:  user != nil,
-		Session: s.sessionViewFor(set, r, s.identify(set, w, r)),
+		Session: who,
 		Nonce:   nonce,
 		Style:   listingStyle,
 		Script:  registryScript,

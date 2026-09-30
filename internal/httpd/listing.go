@@ -291,6 +291,11 @@ type sessionView struct {
 	// Registry is the link to the registry page, empty while the registry is
 	// off or for an account that is signed in and may not use it.
 	Registry string
+	// Page is the name of the page the header is on, which is what its menu
+	// is labelled with, and Files the link back to the listing from a page
+	// that is not it.
+	Page  string
+	Files string
 }
 
 // loginData is the login page.
@@ -333,6 +338,7 @@ type listingData struct {
 
 // listingPage renders the browsable directory page.
 func listingPage(virtual string, entries []entry, order sortOrder, allowed rights, who sessionView, nonce string, maxChunkSize int64) ([]byte, error) {
+	who.Page = "Files"
 	rows := make([]listingRow, 0, len(entries))
 	for _, item := range sortEntries(entries, order) {
 		row := listingRow{

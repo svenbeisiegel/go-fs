@@ -5,6 +5,28 @@
 (function () {
   "use strict";
 
+  // The menu in the corner of the header is a details element and opens and
+  // closes on its own; what is added is closing it on a click beside it and
+  // on Escape, as a menu is expected to.
+  (function () {
+    var nav = document.querySelector("details.nav");
+    if (!nav) {
+      return;
+    }
+    document.addEventListener("click", function (event) {
+      if (nav.open && !nav.contains(event.target)) {
+        nav.open = false;
+      }
+    }, true);
+    nav.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && nav.open) {
+        event.preventDefault();
+        nav.open = false;
+        nav.querySelector("summary").focus();
+      }
+    });
+  })();
+
   var table = document.getElementById("registry");
   if (!table) {
     return;

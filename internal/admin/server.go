@@ -159,9 +159,14 @@ type pageData struct {
 	// back goes; Logout posts to the file server's logout endpoint there.
 	Files  string
 	Logout string
-	Nonce  string
-	Style  template.CSS
-	Script template.JS
+	// Registry and User are what the file server put in the Nav: the link
+	// to the registry page, empty where there is none to offer, and who is
+	// signed in.
+	Registry string
+	User     string
+	Nonce    string
+	Style    template.CSS
+	Script   template.JS
 }
 
 // handlePage serves the interface itself, with its style and script inlined
@@ -174,12 +179,15 @@ func (h *Handler) handlePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var page bytes.Buffer
+	nav := navOf(r)
 	err = pageTemplate.Execute(&page, pageData{
-		Files:  markedURL(r.URL, ""),
-		Logout: markedURL(r.URL, "logout"),
-		Nonce:  nonce,
-		Style:  pageStyle,
-		Script: pageScript,
+		Files:    markedURL(r.URL, ""),
+		Logout:   markedURL(r.URL, "logout"),
+		Registry: nav.Registry,
+		User:     nav.User,
+		Nonce:    nonce,
+		Style:    pageStyle,
+		Script:   pageScript,
 	})
 	if err != nil {
 		h.log.Error("the admin interface cannot render its page", "error", err)
@@ -359,6 +367,31 @@ type clientKey struct{}
 // the one that knows which proxies to look through.
 func WithClient(ctx context.Context, address string) context.Context {
 	return context.WithValue(ctx, clientKey{}, address)
+}
+
+// Nav is what the page's menu offers beside the way back to the files and
+// out of the session, which the interface cannot know on its own: the link to
+// the registry page, empty where the file server offers none, and the account
+// that is signed in.
+type Nav struct {
+	Registry string
+	User     string
+}
+
+// navKey is where the file server puts the Nav of a request.
+type navKey struct{}
+
+// WithNav records what the page's menu offers. The file server calls it
+// before handing a request over, since it is the one that knows the registry
+// and the session.
+func WithNav(ctx context.Context, nav Nav) context.Context {
+	return context.WithValue(ctx, navKey{}, nav)
+}
+
+// navOf is the Nav the file server recorded, or an empty one.
+func navOf(r *http.Request) Nav {
+	nav, _ := r.Context().Value(navKey{}).(Nav)
+	return nav
 }
 
 // addressOf is who a request is from: what the file server recorded, or the

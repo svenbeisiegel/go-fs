@@ -68,5 +68,9 @@ func (s *Server) handleAdmin(set *settings, w http.ResponseWriter, r *http.Reque
 		"action", r.URL.Query().Get(sessionParam), "method", r.Method, "address", address)
 	// the interface writes its own records, and it should name the same
 	// client this one does
-	s.admin.ServeHTTP(w, r.WithContext(admin.WithClient(r.Context(), address)))
+	// and its menu offers the registry where the listing's would
+	who := s.sessionViewFor(set, r, cred)
+	ctx := admin.WithClient(r.Context(), address)
+	ctx = admin.WithNav(ctx, admin.Nav{Registry: who.Registry, User: who.User})
+	s.admin.ServeHTTP(w, r.WithContext(ctx))
 }

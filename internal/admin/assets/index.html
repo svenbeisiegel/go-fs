@@ -8,13 +8,24 @@
 <style nonce="{{.Nonce}}">{{.Style}}</style>
 </head>
 <body>
+<svg id="icons" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 5.5h5.5l2 2.5H21v10.5H3z"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="M12 3 3.5 7.5v9L12 21l8.5-4.5v-9z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M11 4H5v16h6"/><path d="M20 12H10m3.5-3.5L17 12l-3.5 3.5"/></symbol>
+  <symbol id="i-caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+</svg>
+
 <header>
   <h1>go-fs</h1>
   <p id="path" class="path"></p>
-  <nav class="links">
-    <a class="plain" href="{{.Files}}">Files</a>
-    <form class="inline" method="post" action="{{.Logout}}"><button class="plain" type="submit">Log out</button></form>
-  </nav>
+  <details class="nav">
+    <summary class="plain">Admin<svg class="ic caret"><use href="#i-caret"/></svg></summary>
+    <div class="menu">
+      <a href="{{.Files}}"><svg class="ic"><use href="#i-folder"/></svg>Files</a>
+      {{if .Registry}}<a href="{{.Registry}}"><svg class="ic"><use href="#i-box"/></svg>Registry</a>{{end}}
+      <form class="inline" method="post" action="{{.Logout}}"><button type="submit"><svg class="ic"><use href="#i-logout"/></svg>Log out{{with .User}} {{.}}{{end}}</button></form>
+    </div>
+  </details>
 </header>
 
 <div id="banner" class="banner" hidden></div>

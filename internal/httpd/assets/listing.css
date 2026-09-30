@@ -295,7 +295,7 @@ td.c-acts button[aria-expanded="true"] { opacity: 1; background: var(--ground); 
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
 }
 .menu[hidden] { display: none; }
-.menu button {
+.menu button, .menu a {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -307,10 +307,22 @@ td.c-acts button[aria-expanded="true"] { opacity: 1; background: var(--ground); 
   font: inherit;
   font-size: 0.85rem;
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
 }
-.menu button .ic { font-size: 1rem; color: var(--faint); }
-.menu button:hover, .menu button:focus-visible { background: var(--ground); outline: none; }
+.menu button .ic, .menu a .ic { font-size: 1rem; color: var(--faint); }
+.menu button:hover, .menu button:focus-visible,
+.menu a:hover, .menu a:focus-visible { background: var(--ground); outline: none; }
+
+/* The menu in the corner of the header. It is a details element, so it opens
+   and closes without the script; the script only closes it on a click beside
+   it or on Escape. */
+.nav { position: relative; }
+.nav > summary { list-style: none; user-select: none; }
+.nav > summary::-webkit-details-marker { display: none; }
+.nav > summary .caret { margin-right: -0.2rem; color: var(--faint); }
+.nav[open] > summary { border-color: var(--faint); }
+.nav > .menu { top: calc(100% + 4px); right: 0; }
 .menu button.remove:hover, .menu button.remove:focus-visible { color: var(--bad); }
 .menu button.remove:hover .ic, .menu button.remove:focus-visible .ic { color: var(--bad); }
 

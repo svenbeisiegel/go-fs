@@ -23,7 +23,6 @@
       <a class="plain" href="{{.List}}"{{if not .Tree}} aria-current="page"{{end}}><svg class="ic"><use href="#i-list"/></svg>List</a>
       <a class="plain" href="{{.Folders}}"{{if .Tree}} aria-current="page"{{end}}><svg class="ic"><use href="#i-folder"/></svg>Folders</a>
     </nav>
-    <a id="files" class="plain" href="{{.Files}}"><svg class="ic"><use href="#i-folder"/></svg>Files</a>
     {{template "session" .Session}}
   </div>
 </header>

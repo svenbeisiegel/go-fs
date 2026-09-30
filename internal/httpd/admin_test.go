@@ -209,6 +209,63 @@ func TestTheListingOffersAdminToAdminsOnly(t *testing.T) {
 	}
 }
 
+// The header of every page holds one menu, labelled with the page it is on.
+// It offers the other pages in a fixed order, Files or Registry first, then
+// Admin, and the way in or out of the session last.
+func TestTheMenuOffersTheOtherPagesInOrder(t *testing.T) {
+	folder := t.TempDir()
+	server := adminServer(t, func(cfg *httpConfig) {
+		publicServer(cfg)
+		cfg.RegistryBaseFolder = folder
+		cfg.RegistryAnonymousRead = true
+	})
+	root := login(t, server, "/", "root", "secret")
+
+	inOrder := func(page, body string, items ...string) {
+		t.Helper()
+		last := -1
+		for _, item := range items {
+			at := strings.Index(body, item)
+			if at < 0 {
+				t.Errorf("the %s menu lacks %s", page, item)
+				return
+			}
+			if at < last {
+				t.Errorf("on the %s page %s comes too early", page, item)
+			}
+			last = at
+		}
+	}
+
+	listing := bodyOf(t, withSession(t, server, http.MethodGet, "/", root))
+	inOrder("listing", listing, `<summary class="plain">Files<`,
+		`</svg>Registry</a>`, `</svg>Admin</a>`, `</svg>Log out root</button>`)
+	if strings.Contains(listing, `</svg>Files</a>`) {
+		t.Error("the listing links to itself")
+	}
+
+	registry := bodyOf(t, withSession(t, server, http.MethodGet, "/?go-fs=registry", root))
+	inOrder("registry", registry, `<summary class="plain">Registry<`,
+		`</svg>Files</a>`, `</svg>Admin</a>`, `</svg>Log out root</button>`)
+
+	admin := bodyOf(t, withSession(t, server, http.MethodGet, "/?go-fs=admin", root))
+	inOrder("admin", admin, `<summary class="plain">Admin<`,
+		`</svg>Files</a>`, `<a href="/?go-fs=registry">`, `</svg>Log out root</button>`)
+
+	// without a registry the admin page offers none
+	plain := adminServer(t, nil)
+	session := login(t, plain, "/", "root", "secret")
+	if body := bodyOf(t, withSession(t, plain, http.MethodGet, "/?go-fs=admin", session)); strings.Contains(body, "go-fs=registry") {
+		t.Error("the admin page offers a registry that is off")
+	}
+
+	// nobody signed in, no registry, and no account to log in as: no menu
+	empty := newServer(t, func(cfg *httpConfig) { cfg.Users = nil; publicServer(cfg) })
+	if _, body := get(t, empty, "/"); strings.Contains(body, `class="nav"`) {
+		t.Error("the listing shows a menu with nothing in it")
+	}
+}
+
 // The interface changes the file, so a request for it from another site is
 // refused before it is looked at, the way every other mutation is.
 func TestAdminInterfaceRefusesAnotherSite(t *testing.T) {

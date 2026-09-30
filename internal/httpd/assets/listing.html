@@ -26,9 +26,6 @@
     <button id="upload" class="plain needs-js" type="button"><svg class="ic"><use href="#i-upload"/></svg>Upload</button>
     <input id="picker" type="file" multiple hidden>
     {{end}}
-    {{if .Session.Registry}}
-    <a class="plain" href="{{.Session.Registry}}"><svg class="ic"><use href="#i-box"/></svg>Registry</a>
-    {{end}}
     {{template "session" .Session}}
   </div>
 </header>

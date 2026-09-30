@@ -16,16 +16,28 @@
   <symbol id="i-copy" viewBox="0 0 24 24"><path d="M9 9h11v11H9z"/><path d="M15 9V4H4v11h5"/></symbol>
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.5v.5"/></symbol>
   <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.5m-.5 6h.5m-.5 6h.5"/></symbol>
+  <symbol id="i-caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
 </svg>
 {{end}}
 
+{{/* session is the menu in the corner of the header: the page it is on names
+   it, and it holds the way to the other pages and in or out of the session.
+   Each item is there only for someone who may use it, and a menu left with
+   nothing in it is not shown at all. */}}
 {{define "session"}}
-{{if .User}}
-{{if .Admin}}
-<a class="plain" href="{{.Admin}}"><svg class="ic"><use href="#i-gear"/></svg>Admin</a>
-{{end}}
-<form class="inline" method="post" action="{{.Logout}}"><button class="plain" type="submit"><svg class="ic"><use href="#i-logout"/></svg>Log out {{.User}}</button></form>
-{{else if .CanLogin}}
-<a class="plain" href="{{.Login}}"><svg class="ic"><use href="#i-login"/></svg>Log in</a>
+{{if or .Files .Registry .Admin .User .CanLogin}}
+<details class="nav">
+  <summary class="plain">{{.Page}}<svg class="ic caret"><use href="#i-caret"/></svg></summary>
+  <div class="menu">
+    {{if .Files}}<a href="{{.Files}}"><svg class="ic"><use href="#i-folder"/></svg>Files</a>{{end}}
+    {{if .Registry}}<a href="{{.Registry}}"><svg class="ic"><use href="#i-box"/></svg>Registry</a>{{end}}
+    {{if and .User .Admin}}<a href="{{.Admin}}"><svg class="ic"><use href="#i-gear"/></svg>Admin</a>{{end}}
+    {{if .User}}
+    <form class="inline" method="post" action="{{.Logout}}"><button type="submit"><svg class="ic"><use href="#i-logout"/></svg>Log out {{.User}}</button></form>
+    {{else if .CanLogin}}
+    <a href="{{.Login}}"><svg class="ic"><use href="#i-login"/></svg>Log in</a>
+    {{end}}
+  </div>
+</details>
 {{end}}
 {{end}}

@@ -80,13 +80,18 @@ func TestRegistryListShowsEveryTagWithItsPlatforms(t *testing.T) {
 		`<span class="badge" title="linux/arm64">arm64</span>`,
 		`>tool<wbr>:latest<`,
 		`<span class="badge" title="linux/arm/v7">arm/v7</span>`,
-		`id="files" class="plain" href="/"`,
+		`<summary class="plain">Registry<`,
+		`<a href="/"><svg class="ic"><use href="#i-folder"/></svg>Files</a>`,
 		`aria-label="Options for team/app:1.0"`,
 		`data-pull="docker pull 127.0.0.1:`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the page lacks %s", want)
 		}
+	}
+	// the page the menu is on is not one of its items
+	if strings.Contains(body, `</svg>Registry</a>`) {
+		t.Error("the registry page links to itself")
 	}
 	if got := strings.Count(body, "data-tag="); got != 2 {
 		t.Errorf("%d tag rows, want 2", got)

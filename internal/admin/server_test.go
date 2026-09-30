@@ -4,6 +4,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -254,6 +255,46 @@ func TestPageIsServed(t *testing.T) {
 	}
 	if strings.Contains(page, "/admin.js") || strings.Contains(page, "/admin.css") {
 		t.Error("the page still links its assets by URL")
+	}
+}
+
+// TestPageMenuTakesTheNav checks that the menu offers the registry and names
+// the account only when the file server said so.
+func TestPageMenuTakesTheNav(t *testing.T) {
+	handler, _ := testServer(t, testConfig(t))
+	page := func(nav *Nav) string {
+		request := httptest.NewRequest(http.MethodGet, "/sub/?go-fs=admin", nil)
+		if nav != nil {
+			request = request.WithContext(WithNav(request.Context(), *nav))
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("the page answered %d", recorder.Code)
+		}
+		return recorder.Body.String()
+	}
+
+	bare := page(nil)
+	if !strings.Contains(bare, `<summary class="plain">Admin<`) {
+		t.Error("the menu is not labelled with the page")
+	}
+	if strings.Contains(bare, "</svg>Registry</a>") {
+		t.Error("the menu offers a registry nobody asked for")
+	}
+	if !strings.Contains(bare, "</svg>Log out</button>") {
+		t.Error("the menu offers no way out")
+	}
+
+	full := page(&Nav{Registry: "/sub/?go-fs=registry", User: "root"})
+	files := strings.Index(full, `</svg>Files</a>`)
+	registry := strings.Index(full, `<a href="/sub/?go-fs=registry">`)
+	logout := strings.Index(full, `</svg>Log out root</button>`)
+	if files < 0 || registry < 0 || logout < 0 {
+		t.Fatalf("the menu lacks an item: files %d, registry %d, logout %d", files, registry, logout)
+	}
+	if !(files < registry && registry < logout) {
+		t.Errorf("the items are out of order: files %d, registry %d, logout %d", files, registry, logout)
 	}
 }
 
