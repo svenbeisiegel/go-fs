@@ -15,6 +15,7 @@ make build          # the same five binaries, stamped as a dev build
 make test           # the test suite
 make race           # the test suite under the race detector
 make release        # all five release binaries into dist/ with checksums
+make sign           # signed .update files for the binaries in dist/
 ```
 
 `make release` cross compiles for linux and windows on amd64 and arm64, and for
@@ -41,6 +42,11 @@ Both also copy the documented starter configuration into `dist/go-fs.toml`,
 which is the name the binary reads when `-config` is not given, so an unpacked
 `dist/` is ready to edit and run. It is the same file the binary embeds and
 `-init` writes, so the shipped configuration always matches the build.
+
+With the signing key in `GOFS_SIGNING_KEY`, `make release` also writes a signed
+`dist/go-fs_1.0.0_linux_amd64.update` next to each binary: the file a running
+go-fs accepts as an update over HTTP (see [Updating over HTTP](#updating-over-http)).
+The release workflow refuses to run without the key.
 
 `go-fs -version` prints whichever version was stamped, and a plain `go build .`
 reports `1.0.0-dev`. Pass `VERSION=` to override for a single build, for example
@@ -575,6 +581,108 @@ An unknown or expired token is answered `401` with
 client learns that its token is not accepted.
 
 Removing a token from the file revokes it within one reload.
+
+### Updating over HTTP
+
+A running go-fs can be updated through its own HTTP or HTTPS port. The upload is
+a release's `.update` file: the go-fs binary with an ed25519 signature appended.
+go-fs checks the file, replaces its executable, and restarts into the new
+version. The configuration file is not touched.
+
+It is off by default. Turn it on with `http.enableSelfUpdate = true`, and allow
+at least one client:
+
+- **A bearer token** that sets `allowSelfUpdate = true`, for scripts. The token's
+  `paths` and `basefolder` do not matter here.
+- **An admin's browser session.** The admin interface then shows an **UPDATE**
+  tab with the running version and an upload button.
+
+Basic and Digest credentials are refused, even for an admin account, for the
+same reason the admin interface refuses them.
+
+```sh
+# what is running, to pick the matching file
+curl -H "Authorization: Bearer gofs_…" "https://host:9443/?go-fs=update"
+# {"version":"1.1.0","os":"linux","arch":"arm64","executable":"/opt/go-fs/go-fs","pid":812,"keys":["d1db60358969ad82"]}
+
+# upload it; go-fs answers, then restarts
+curl -T go-fs_1.2.0_linux_arm64.update -H "Authorization: Bearer gofs_…" \
+     "https://host:9443/?go-fs=update"
+# {"previous":"1.1.0","restarting":true,"version":"1.2.0"}
+```
+
+Before anything changes, the upload has to pass these checks, in this order:
+
+1. **Signature.** The file must be signed with a key built into the *running*
+   binary. The keys are compiled in from `internal/selfupdate/keys.txt`, so
+   nothing at runtime can add one, including an admin editing the
+   configuration. Nothing in the file is run before its signature has been
+   checked.
+2. **Platform.** The executable header must match the server's own OS and
+   architecture.
+3. **Smoke test.** The new binary is run with `-version` and must answer as
+   go-fs.
+
+| Status | Meaning |
+|---|---|
+| `202` | accepted; go-fs restarts right after answering |
+| `400` | the file carries no signature, e.g. a plain binary instead of the `.update` file |
+| `409` | another update is in progress |
+| `413` | larger than 256 MiB |
+| `422` | unknown key, bad signature, wrong platform, or not a go-fs binary |
+| `503` | this build trusts no signing key |
+
+The signature is cut off before the binary is installed, so what lands on disk
+is byte for byte the release build. On macOS the operating system's own code
+signature therefore stays valid.
+
+How the executable is replaced:
+
+- The new binary is written into the folder that holds the executable, so that
+  folder has to be writable by the account go-fs runs as.
+- The running binary is renamed to `<executable>.old` and kept as the way back.
+  The next update replaces it.
+- On Linux and macOS go-fs restarts with `exec`: the process keeps its PID,
+  arguments and environment, so systemd, launchd, a container or a terminal
+  keeps tracking it.
+- On Windows go-fs starts the new version as a new process and exits. Whatever
+  started the old process sees it end. `pid` in the answer to `GET` shows the
+  new process.
+- If the new binary cannot be moved into place, the previous one is restored
+  and started again, so the servers come back either way.
+- Open connections are dropped by the restart, as they are by `SIGTERM`.
+
+Without `http.httpSessionTokenSecret` the restart also logs every browser out,
+the admin page included.
+
+**Signing key.** Generate the key pair once:
+
+```sh
+go run ./tools/sign -generate
+```
+
+The command prints a private key and a public key:
+
+- Store the private key as the `GOFS_SIGNING_KEY` secret of the repository, which
+  the release workflow signs with.
+- Add the public key as a line of `internal/selfupdate/keys.txt` and commit it.
+  Builds from then on trust it.
+
+To sign a build by hand:
+
+```sh
+GOFS_SIGNING_KEY=… go run ./tools/sign -in go-fs_linux_arm64 -out go-fs_linux_arm64.update
+```
+
+A fork that signs its own builds can add its key at build time instead of
+editing `keys.txt`, with
+`-ldflags "-X go-fs/internal/selfupdate.buildKeys=<public key>"`.
+
+To rotate the key:
+
+1. Add the new public key to `keys.txt`.
+2. Release a version still signed with the old key, and roll it out.
+3. Switch the secret to the new key and remove the old one from `keys.txt`.
 
 ### Logging in from a browser
 

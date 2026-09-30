@@ -17,6 +17,7 @@ import (
 
 	"go-fs/internal/config"
 	"go-fs/internal/logging"
+	"go-fs/internal/selfupdate"
 	"go-fs/internal/supervisor"
 )
 
@@ -94,6 +95,18 @@ func run() error {
 		"logFormat", cfg.General.LogFormat)
 	warnAboutSecrets(logger.Logger, *configPath, cfg)
 
+	keys, err := selfupdate.TrustedKeys()
+	if err != nil {
+		return err
+	}
+	updater := selfupdate.New(currentVersion(), keys)
+	// a staged update a crash never applied is removed
+	updater.CleanupOld()
+	if cfg.HTTP.EnableSelfUpdate && len(keys) == 0 {
+		logger.Warn("http.enableSelfUpdate is set, but this build trusts no update " +
+			"signing key, so every update will be refused")
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	// the signal is taken by hand rather than through signal.NotifyContext, so
@@ -103,6 +116,7 @@ func run() error {
 
 	sup := supervisor.New(logger.Logger, *configPath)
 	sup.TrackLog(logger)
+	sup.Updates(updater)
 	defer sup.Shutdown(context.Background())
 	if err := sup.Apply(ctx, cfg); err != nil {
 		return err
@@ -117,15 +131,46 @@ func run() error {
 			"path", *configPath)
 	}
 
-	received := <-signals
+	var received os.Signal
+	select {
+	case received = <-signals:
+	case <-updater.Done():
+	}
 	// the signal is handed back to the runtime, so that a second one ends the
 	// process at once should the shutdown below hang on a client
 	signal.Stop(signals)
-	logger.Info("shutting down", "signal", received.String())
+	if received != nil {
+		logger.Info("shutting down", "signal", received.String())
+	} else {
+		logger.Info("shutting down to restart into the new version")
+	}
 	cancel()
 	started := time.Now()
 	sup.Shutdown(context.Background())
 	logger.Info("shutdown complete", "took", time.Since(started).Round(time.Millisecond))
+	if received != nil {
+		return nil
+	}
+	return restart(logger.Logger, updater)
+}
+
+// restart moves the staged binary into place and starts it. On unix it only
+// returns when that failed; on Windows the new process is running by then, and
+// returning ends this one.
+//
+// An update that cannot be moved into place has left the previous binary
+// where it was, and that one is started instead: the servers come back either
+// way, rather than staying down until somebody notices.
+func restart(logger *slog.Logger, updater *selfupdate.Updater) error {
+	if err := updater.Apply(); err != nil {
+		logger.Error("the update could not be applied, restarting the previous version",
+			"error", err)
+	} else {
+		logger.Info("restarting into the new version", "executable", updater.Current().Executable)
+	}
+	if err := updater.Restart(); err != nil {
+		return fmt.Errorf("the new version could not be started: %w", err)
+	}
 	return nil
 }
 

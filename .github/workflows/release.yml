@@ -17,6 +17,18 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      # Every release carries signed .update files, which is what a running
+      # go-fs accepts over HTTP. Without the key there is nothing to sign them
+      # with, so this is checked before anything is committed.
+      - name: check the signing key
+        env:
+          GOFS_SIGNING_KEY: ${{ secrets.GOFS_SIGNING_KEY }}
+        run: |
+          if [ -z "$GOFS_SIGNING_KEY" ]; then
+            echo "::error::the GOFS_SIGNING_KEY secret is not set"
+            exit 1
+          fi
+
       - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v7
@@ -45,6 +57,8 @@ jobs:
         run: make lint race
 
       - name: make release
+        env:
+          GOFS_SIGNING_KEY: ${{ secrets.GOFS_SIGNING_KEY }}
         run: make release VERSION=${{ inputs.version }}
 
       - name: publish GitHub release

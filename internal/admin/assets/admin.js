@@ -23,6 +23,10 @@ const openRecords = new WeakSet();
 // shown only here and only until the file is read again: the record, and so
 // the file, holds nothing but its hash
 const newTokens = new WeakMap();
+// what the update endpoint says about the running binary, or null where it
+// does not answer this session: switched off, or not an admin. It is the one
+// tab the schema does not describe, since it edits no key of the file
+let update = null;
 
 const banner = document.getElementById("banner");
 const tabs = document.getElementById("tabs");
@@ -58,9 +62,21 @@ async function load() {
     say("");
   }
   applyButton.disabled = !state.writable;
+  update = await updateInfo();
 
   render();
   footer.hidden = false;
+}
+
+// updateInfo asks the update endpoint what is running. Anything but an answer
+// means there is no update tab to show.
+async function updateInfo() {
+  try {
+    const answer = await fetch("?go-fs=update", { headers: { Accept: "application/json" } });
+    return answer.ok ? await answer.json() : null;
+  } catch (error) {
+    return null;
+  }
 }
 
 function render() {
@@ -70,7 +86,12 @@ function render() {
     tabs.append(tab(section, index));
     panels.append(panel(section, index));
   });
-  select(Math.min(selected, schema.sections.length - 1));
+  if (update) {
+    const index = schema.sections.length;
+    tabs.append(tab({ label: "UPDATE" }, index));
+    panels.append(updatePanel(index));
+  }
+  select(Math.min(selected, tabs.children.length - 1));
 }
 
 function tab(section, index) {
@@ -106,6 +127,87 @@ function panel(section, index) {
     element.append(tableBlock(values[section.key], table.key, table, section.key + "." + table.key));
   });
   return element;
+}
+
+// updatePanel is the tab that uploads a new go-fs binary. The file is sent as
+// it is, as octet-stream: the server checks its signature, its platform and
+// that it runs, and answers before it restarts into it.
+function updatePanel(index) {
+  const element = document.createElement("section");
+  element.hidden = index !== selected;
+  element.className = "update";
+  element.append(
+    paragraph("Running go-fs " + update.version + " for " + update.os + "/" + update.arch
+      + " from " + update.executable + ".", "update-current"),
+    paragraph("Upload the go-fs_<version>_" + update.os + "_" + update.arch + ".update file of a "
+      + "release. It is accepted only when it is signed with a key built into the running "
+      + "binary (" + (update.keys.length ? update.keys.join(", ") : "this build has none")
+      + ") and is built for this platform. go-fs then replaces its executable, keeping the "
+      + "previous one beside it as .old, and restarts. Without http.httpSessionTokenSecret "
+      + "the restart logs this page out.", "section-help"));
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".update";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "plain";
+  button.textContent = "Upload and restart";
+  button.disabled = true;
+  input.addEventListener("change", () => (button.disabled = input.files.length === 0));
+  button.addEventListener("click", async () => {
+    const file = input.files[0];
+    if (!file) return;
+    button.disabled = true;
+    input.disabled = true;
+    say("Uploading " + file.name + "...", true);
+    try {
+      const answer = await fetch("?go-fs=update", {
+        method: "PUT",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: file,
+      });
+      const text = await answer.text();
+      if (!answer.ok) {
+        throw new Error(text.trim());
+      }
+      const result = JSON.parse(text);
+      say("go-fs " + result.version + " was accepted, restarting...", true);
+      await awaitRestart(result.previous);
+    } catch (error) {
+      say("The update was not accepted: " + error.message);
+      button.disabled = false;
+      input.disabled = false;
+    }
+  });
+
+  const row = document.createElement("div");
+  row.className = "update-upload";
+  row.append(input, button);
+  element.append(row);
+  return element;
+}
+
+// awaitRestart waits for go-fs to come back and then reloads the page. It is
+// back once it answers as another version, or answers at all after it was
+// seen to be down, which also covers an upload of the same version. A 401 is
+// the session that did not survive the restart; the reload leads to the login.
+async function awaitRestart(previous) {
+  let wentDown = false;
+  for (let attempt = 0; attempt < 60; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    try {
+      const answer = await fetch("?go-fs=update", { headers: { Accept: "application/json" } });
+      if (answer.status === 401) break;
+      if (answer.ok) {
+        const info = await answer.json();
+        if (info.version !== previous || wentDown) break;
+      }
+    } catch (error) {
+      wentDown = true;
+    }
+  }
+  location.reload();
 }
 
 // fieldGrid lays out the plain keys of a section or of one record: one row

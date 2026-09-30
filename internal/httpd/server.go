@@ -66,6 +66,9 @@ type Server struct {
 	// the go-fs marker to a session of an account that sets isAdmin. It is nil
 	// when there is no file to edit, which is what a test builds.
 	admin *admin.Handler
+	// updater takes a new binary at ?go-fs=update. It is nil unless main
+	// handed one over, and a test that is not about updates leaves it so.
+	updater Updater
 
 	plain  net.Listener
 	secure net.Listener
@@ -437,6 +440,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// so does the admin interface, which decides for itself who may be here
 	if admin.IsAction(r.URL.Query().Get(sessionParam)) {
 		s.handleAdmin(set, w, r)
+		return
+	}
+	// and so does the update endpoint
+	if r.URL.Query().Get(sessionParam) == actionUpdate {
+		s.handleUpdate(set, w, r)
 		return
 	}
 

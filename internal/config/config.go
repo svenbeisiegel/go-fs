@@ -162,6 +162,9 @@ type Permissions struct {
 	FileDelete      bool
 	FolderDelete    bool
 	FolderCreate    bool
+	// SelfUpdate lets a bearer token replace the go-fs binary; accounts never
+	// have it, an admin updates through a session instead.
+	SelfUpdate bool
 }
 
 // Token is a bearer token for the HTTP server: a credential a script or an API
@@ -199,6 +202,11 @@ type Token struct {
 	AllowUserFileDelete    *bool `toml:"allowUserFileDelete,omitempty"`
 	AllowUserFolderDelete  *bool `toml:"allowUserFolderDelete,omitempty"`
 	AllowUserFolderCreate  *bool `toml:"allowUserFolderCreate,omitempty"`
+
+	// AllowSelfUpdate lets the token upload a new go-fs binary to
+	// ?go-fs=update, which needs http.enableSelfUpdate as well. It is
+	// independent of paths and basefolder.
+	AllowSelfUpdate *bool `toml:"allowSelfUpdate,omitempty"`
 }
 
 // Permissions resolves the token entry the way User.Permissions resolves an
@@ -212,6 +220,7 @@ func (t Token) Permissions() Permissions {
 		FileDelete:    boolOr(t.AllowUserFileDelete, false),
 		FolderDelete:  boolOr(t.AllowUserFolderDelete, false),
 		FolderCreate:  boolOr(t.AllowUserFolderCreate, false),
+		SelfUpdate:    boolOr(t.AllowSelfUpdate, false),
 	}
 }
 
@@ -352,6 +361,11 @@ type HTTP struct {
 	// sets isAdmin and has logged in through the browser; the page carries
 	// every password in the file, so it belongs on the https listener.
 	EnableAdminInterface bool `toml:"enableAdminInterface"`
+	// EnableSelfUpdate accepts a new go-fs binary at ?go-fs=update, which then
+	// replaces the running one and restarts it. Only a file signed with a key
+	// built into this binary is accepted, and only from a token that sets
+	// allowSelfUpdate or from the session of an account that sets isAdmin.
+	EnableSelfUpdate bool `toml:"enableSelfUpdate"`
 
 	MaxConnections int `toml:"maxConnections"`
 	// ReadTimeout, WriteTimeout and IdleTimeout are seconds, 0 disables one.

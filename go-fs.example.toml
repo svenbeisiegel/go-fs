@@ -150,6 +150,9 @@ logFormat = "text"
 # allowUserFileDelete = true
 # allowUserFolderDelete = true
 # allowUserFolderCreate = true
+# Whether the token may upload a new go-fs binary to ?go-fs=update, which also
+# needs http.enableSelfUpdate. False when not set.
+# allowSelfUpdate = true
 
 [ftp]
 # Serve the plain control port. The TLS listener has its own switch in [ftps];
@@ -280,6 +283,15 @@ realm = "go-fs"
 # writer: every key is written out and the comments in the file are lost,
 # with the previous file kept beside it as go-fs.toml.bak.
 enableAdminInterface = true
+
+# Accept a new go-fs binary at ?go-fs=update, which then replaces the running
+# executable and restarts it. Only an update file signed with a key built into
+# this binary is accepted (the .update files of a release), only for this
+# operating system and architecture, and only from a [[tokens]] entry that
+# sets allowSelfUpdate = true or from the browser session of an account that
+# sets isAdmin = true. The folder holding the executable has to be writable by
+# the account go-fs runs as.
+enableSelfUpdate = false
 
 # maximum simultaneous connections
 maxConnections = 100

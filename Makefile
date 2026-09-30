@@ -39,7 +39,7 @@ define crosscompile
 	@$(MAKE) --no-print-directory checksums
 endef
 
-.PHONY: all build test race cover fuzz vet fmt lint clean release checksums version
+.PHONY: all build test race cover fuzz vet fmt lint clean release sign checksums version
 
 all: vet test build
 
@@ -88,9 +88,26 @@ clean:
 	rm -rf $(DIST) $(BINARY) coverage.out
 
 # release cross compiles every supported platform at the released version and
-# writes the checksums.
+# writes the checksums. With the private key in GOFS_SIGNING_KEY it also writes
+# the signed .update files; the release workflow insists on the key.
 release: clean
 	$(call crosscompile,$(VERSION))
+	@if [ -n "$$GOFS_SIGNING_KEY" ]; then \
+		$(MAKE) --no-print-directory sign; \
+	else \
+		echo "GOFS_SIGNING_KEY is not set, no .update files were written"; \
+	fi
+
+# sign appends the update signature to every binary in dist, writing the
+# .update file go-fs accepts over HTTP next to each one, and rewrites the
+# checksums to cover them. The private key is read from GOFS_SIGNING_KEY.
+sign:
+	@test -n "$$GOFS_SIGNING_KEY" || (echo "GOFS_SIGNING_KEY is not set"; exit 1)
+	@for bin in $(DIST)/$(BINARY)_*; do \
+		case $$bin in *.update) continue;; esac; \
+		go run ./tools/sign -in $$bin -out $$bin.update || exit 1; \
+	done
+	@$(MAKE) --no-print-directory checksums
 
 checksums:
 	@cd $(DIST) && (sha256sum * > SHA256SUMS 2>/dev/null || shasum -a 256 * > SHA256SUMS)

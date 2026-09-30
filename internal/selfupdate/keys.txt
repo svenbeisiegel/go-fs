@@ -1,0 +1,8 @@
+# The public keys go-fs accepts updates from, one base64 ed25519 key per line.
+# This file is compiled into every build, so nothing at runtime can add a key.
+#
+# Generate a key pair once with
+#   go run ./tools/sign -generate
+# store the private key as the GOFS_SIGNING_KEY secret of the release workflow,
+# and add the public key below. A build without any key refuses every update.
+dSEAPTYsXlD/Mn/PnNVz1eVGAVBAdFgBGYgoXuFzrc8=

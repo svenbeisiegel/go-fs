@@ -27,12 +27,13 @@ import (
 	"go-fs/internal/tftp"
 )
 
-// env is what building a service is given: the configuration, and the path of
+// env is what building a service is given: the configuration, the path of
 // the file it came from, which the admin interface inside the http server
-// edits.
+// edits, and the updater the http server's update endpoint hands uploads to.
 type env struct {
-	cfg  config.Config
-	path string
+	cfg     config.Config
+	path    string
+	updater httpd.Updater
 }
 
 // entry describes how one service is switched on, built and updated.
@@ -68,7 +69,14 @@ var services = []entry{
 		name:    "http",
 		enabled: func(e env) bool { return e.cfg.HTTP.Enabled || e.cfg.HTTPS.Enabled },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
-			return httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.HTTPUsers(), e.cfg.Tokens, e.path, log)
+			server, err := httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.HTTPUsers(), e.cfg.Tokens, e.path, log)
+			if err != nil {
+				return nil, err
+			}
+			if e.updater != nil {
+				server.SetUpdater(e.updater)
+			}
+			return server, nil
 		},
 		reload: func(s service.Server, e env) error {
 			return s.(*httpd.Server).Reload(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.HTTPUsers(), e.cfg.Tokens)
@@ -97,6 +105,9 @@ type Supervisor struct {
 	// root is the logger whose level follows general.logLevel, when main
 	// handed one over; tests leave it nil.
 	root *logging.Logger
+	// updater is what the http server's update endpoint hands a new binary
+	// to, when main handed one over; tests leave it nil.
+	updater httpd.Updater
 
 	mu      sync.Mutex
 	running map[string]service.Server
@@ -118,6 +129,12 @@ func (s *Supervisor) TrackLog(root *logging.Logger) {
 	s.root = root
 }
 
+// Updates gives the http server, every time it is built, the updater that
+// takes a new binary at ?go-fs=update.
+func (s *Supervisor) Updates(updater httpd.Updater) {
+	s.updater = updater
+}
+
 // Apply brings what is running in line with cfg. A service that cannot be
 // built or reloaded is reported and left as it was, so a bad section never
 // takes down a good one.
@@ -125,7 +142,7 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	current := env{cfg: cfg, path: s.path}
+	current := env{cfg: cfg, path: s.path, updater: s.updater}
 	if s.applied {
 		s.log.Info("applying the changed configuration",
 			"sections", strings.Join(changedSections(s.current, cfg), ","))
