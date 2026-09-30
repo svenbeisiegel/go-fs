@@ -176,8 +176,16 @@ func newCluster(t *testing.T, users []config.User, tune func(*config.Config)) *c
 		}
 		t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
 	}
-	return &cluster{base: base, cfg: cfg, http: web, ftp: files, sftp: secure}
+	c := &cluster{base: base, cfg: cfg, http: web, ftp: files, sftp: secure}
+	c.mkdir(t, share)
+	return c
 }
+
+// share is the folder the tests work in rather than the served folder
+// itself: S3 reaches a file only inside a bucket, which is a folder directly
+// in the served folder, and every protocol is to do the same to the same
+// paths.
+const share = "/share"
 
 // reload hands a changed list of accounts to every server, as the supervisor
 // does when the file changes.
@@ -235,8 +243,8 @@ func (c *cluster) exists(name string) bool {
 	return err == nil
 }
 
-// reset empties the folder, so every step of a test starts from the same
-// state whatever the step before it did.
+// reset empties the folder but for an empty share, so every step of a test
+// starts from the same state whatever the step before it did.
 func (c *cluster) reset(t *testing.T) {
 	t.Helper()
 	entries, err := os.ReadDir(c.base)
@@ -248,6 +256,7 @@ func (c *cluster) reset(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	c.mkdir(t, share)
 }
 
 func portOf(addr net.Addr) string {
@@ -396,7 +405,8 @@ func (c *httpClient) rename(from, to string) error {
 // ---- S3
 
 // s3Client is an AWS SDK client of the S3 API, which the HTTP server serves on
-// its own listener. A path is a key in the one bucket, without its slash.
+// its own listener. The first folder of a path is the bucket, and the rest of
+// it the key.
 type s3Client struct {
 	api *s3.Client
 }
@@ -418,13 +428,15 @@ func loginS3(t *testing.T, c *cluster, name, password string) (client, error) {
 	return &s3Client{api: api}, nil
 }
 
-func keyOf(path string) *string {
-	return aws.String(strings.TrimPrefix(path, "/"))
+// objectOf splits a path into its bucket and its key.
+func objectOf(path string) (bucket, key *string) {
+	name, rest, _ := strings.Cut(strings.TrimPrefix(path, "/"), "/")
+	return aws.String(name), aws.String(rest)
 }
 
 func (c *s3Client) get(path string) ([]byte, error) {
-	out, err := c.api.GetObject(context.Background(), &s3.GetObjectInput{
-		Bucket: aws.String(config.S3Bucket), Key: keyOf(path)})
+	bucket, key := objectOf(path)
+	out, err := c.api.GetObject(context.Background(), &s3.GetObjectInput{Bucket: bucket, Key: key})
 	if err != nil {
 		return nil, err
 	}
@@ -433,14 +445,15 @@ func (c *s3Client) get(path string) ([]byte, error) {
 }
 
 func (c *s3Client) put(path string, content []byte) error {
+	bucket, key := objectOf(path)
 	_, err := c.api.PutObject(context.Background(), &s3.PutObjectInput{
-		Bucket: aws.String(config.S3Bucket), Key: keyOf(path), Body: bytes.NewReader(content)})
+		Bucket: bucket, Key: key, Body: bytes.NewReader(content)})
 	return err
 }
 
 func (c *s3Client) remove(path string) error {
-	_, err := c.api.DeleteObject(context.Background(), &s3.DeleteObjectInput{
-		Bucket: aws.String(config.S3Bucket), Key: keyOf(path)})
+	bucket, key := objectOf(path)
+	_, err := c.api.DeleteObject(context.Background(), &s3.DeleteObjectInput{Bucket: bucket, Key: key})
 	return err
 }
 
@@ -456,9 +469,9 @@ func (c *s3Client) rmdir(path string) error {
 // rename is what every S3 client does, since S3 has no rename: a copy, and a
 // delete of what was copied.
 func (c *s3Client) rename(from, to string) error {
+	bucket, key := objectOf(to)
 	_, err := c.api.CopyObject(context.Background(), &s3.CopyObjectInput{
-		Bucket: aws.String(config.S3Bucket), Key: keyOf(to),
-		CopySource: aws.String(config.S3Bucket + "/" + strings.TrimPrefix(from, "/"))})
+		Bucket: bucket, Key: key, CopySource: aws.String(strings.TrimPrefix(from, "/"))})
 	if err != nil {
 		return err
 	}

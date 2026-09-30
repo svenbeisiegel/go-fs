@@ -78,7 +78,7 @@ type Field struct {
 	index int
 	// fixed is the value of a field that is not a key of the file at all but
 	// a constant of the server, shown beside the keys it belongs with: the S3
-	// bucket and region. It is read from here, never from the file, and what
+	// region. It is read from here, never from the file, and what
 	// the page posts for it is ignored.
 	fixed    string
 	constant bool
@@ -91,10 +91,7 @@ var fixedFields = map[string][]struct {
 	field Field
 }{
 	"http": {
-		{"enableS3", Field{Key: "s3Bucket", Label: "s3Bucket", Kind: kindText, ReadOnly: true,
-			Help:  "The one bucket the S3 API serves, holding the served folder as http shows it. It is fixed and cannot be changed, made or removed.",
-			fixed: config.S3Bucket, constant: true}},
-		{"s3Bucket", Field{Key: "s3Region", Label: "s3Region", Kind: kindText, ReadOnly: true,
+		{"enableS3", Field{Key: "s3Region", Label: "s3Region", Kind: kindText, ReadOnly: true,
 			Help:  "The one region the S3 API answers for; clients have to sign their requests for it. It is fixed and cannot be changed.",
 			fixed: config.S3Region, constant: true}},
 	},

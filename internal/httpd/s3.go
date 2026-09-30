@@ -22,10 +22,12 @@ import (
 // URL here stays a path in the served folder: a request signed with SigV4 is an
 // S3 request, and any other request is what it always was.
 //
-// There is one bucket, config.S3Bucket, holding the served folder as it is, so
-// the key "docs/a.txt" is the file http serves at /docs/a.txt, and the paths
-// and rights of an account decide over both alike. Only path style addressing
-// is served: https://host/main/docs/a.txt.
+// Every folder directly in the served folder is a bucket, so the key "a.txt"
+// in the bucket "docs" is the file http serves at /docs/a.txt, and the paths
+// and rights of an account decide over both alike. A bucket is found by the
+// name of its folder ignoring case, since bucket names are written in lower
+// case by habit and folder names are not. Only path style addressing is
+// served: https://host/docs/a.txt.
 
 // s3TimeFormat is how a time is written in an S3 XML document.
 const s3TimeFormat = "2006-01-02T15:04:05.000Z"
@@ -59,7 +61,7 @@ var (
 	errAccessDenied = s3Err(http.StatusForbidden, "AccessDenied", "Access Denied")
 	errNoSuchKey    = s3Err(http.StatusNotFound, "NoSuchKey", "The specified key does not exist.")
 	errNoSuchBucket = s3Err(http.StatusNotFound, "NoSuchBucket",
-		"The specified bucket does not exist. The one bucket of this server is "+config.S3Bucket+".")
+		"The specified bucket does not exist. A bucket here is a folder directly in the served folder.")
 	errBadKey = s3Err(http.StatusBadRequest, "InvalidArgument",
 		"The key does not name a path in the served folder: it is empty, climbs out of it, "+
 			"or holds an empty, . or .. segment.")
@@ -82,6 +84,8 @@ type s3Request struct {
 	r    *http.Request
 	sig  *s3Signature
 	user *account
+	// bucket is the folder the request names, spelled as it is on disk
+	bucket string
 }
 
 // may reports whether the account may do act to a path. S3 has nothing
@@ -251,26 +255,30 @@ func (s *Server) routeS3(q *s3Request) {
 		return
 	}
 
-	bucket, key, _ := strings.Cut(strings.TrimPrefix(q.r.URL.Path, "/"), "/")
+	name, key, _ := strings.Cut(strings.TrimPrefix(q.r.URL.Path, "/"), "/")
 	method := q.r.Method
-	switch {
-	case bucket == "":
+	if name == "" {
 		if method != http.MethodGet {
 			q.fail(errNotImplemented)
 			return
 		}
 		s.s3ListBuckets(q)
 		return
-
-	case bucket != config.S3Bucket:
+	}
+	bucket, found := s.findBucket(name)
+	if !found {
+		s.log.Debug("s3 bucket not found", "bucket", name)
 		if method == http.MethodPut && key == "" {
 			q.fail(s3Err(http.StatusForbidden, "AccessDenied",
-				"Buckets cannot be created here: the one bucket is "+config.S3Bucket+"."))
+				"Buckets cannot be created here: a bucket is a folder directly in the served folder."))
 			return
 		}
 		q.fail(errNoSuchBucket)
 		return
+	}
+	q.bucket = bucket
 
+	switch {
 	case key == "":
 		switch {
 		case method == http.MethodHead:
@@ -290,7 +298,7 @@ func (s *Server) routeS3(q *s3Request) {
 			s.s3CreateBucket(q)
 		case method == http.MethodDelete:
 			q.fail(s3Err(http.StatusForbidden, "AccessDenied",
-				"The bucket "+config.S3Bucket+" is the served folder and cannot be removed."))
+				"The bucket "+q.bucket+" is a folder of the served folder and cannot be removed."))
 		case method == http.MethodPost && has("delete"):
 			s.s3DeleteObjects(q)
 		default:
@@ -299,7 +307,7 @@ func (s *Server) routeS3(q *s3Request) {
 		return
 	}
 
-	obj, ok := s.resolveKey(key)
+	obj, ok := s.resolveKey(bucket, key)
 	if !ok {
 		if method == http.MethodGet || method == http.MethodHead {
 			q.fail(errNoSuchKey)
@@ -337,46 +345,104 @@ func (s *Server) routeS3(q *s3Request) {
 	}
 }
 
-// s3Object is a key resolved against the served folder.
+// s3Object is a key resolved against the folder of its bucket.
 type s3Object struct {
-	key string
+	bucket string
+	key    string
 	// folder says the key ends with a slash, which is how S3 names a folder:
 	// a key of no bytes that the keys below it are listed under
 	folder bool
 	target vfs.Target
 }
 
-// resolveKey maps a key onto the served folder. A key the file tree cannot
-// hold as it is spelled, one with an empty, a . or a .. segment, is refused
-// rather than stored under a name the listing would then report differently.
-func (s *Server) resolveKey(key string) (s3Object, bool) {
-	folder := strings.HasSuffix(key, "/")
-	trimmed := "/" + strings.TrimSuffix(key, "/")
-	target := s.root.Resolve("/", trimmed)
-	if !target.Valid || target.IsRoot() || target.Virtual != trimmed {
+// resolveKey maps a key onto the folder of a bucket. A key the file tree
+// cannot hold as it is spelled, one with an empty, a . or a .. segment, is
+// refused rather than stored under a name the listing would then report
+// differently.
+func (s *Server) resolveKey(bucket, key string) (s3Object, bool) {
+	if key == "" {
 		return s3Object{}, false
 	}
-	return s3Object{key: key, folder: folder, target: target}, true
+	folder := strings.HasSuffix(key, "/")
+	trimmed := "/" + bucket + "/" + strings.TrimSuffix(key, "/")
+	target := s.root.Resolve("/", trimmed)
+	if !target.Valid || target.Virtual != trimmed {
+		return s3Object{}, false
+	}
+	return s3Object{bucket: bucket, key: key, folder: folder, target: target}, true
 }
 
-// s3ListBuckets lists the one bucket.
+// bucketFolder reports whether a name in the served folder is a folder that
+// can be a bucket: one that stays inside the served folder, as a link has to,
+// and is named on disk as it is spelled.
+func (s *Server) bucketFolder(name string) (os.FileInfo, bool) {
+	target := s.root.Resolve("/", "/"+name)
+	if !target.Valid || target.Virtual != "/"+name {
+		return nil, false
+	}
+	info, err := os.Stat(target.Path)
+	if err != nil || !info.IsDir() {
+		return nil, false
+	}
+	return info, true
+}
+
+// findBucket finds the folder a bucket name names, ignoring case, and gives
+// its name as it is on disk. Where two folders differ in case only, the one
+// spelled as asked wins, and otherwise the first by name.
+func (s *Server) findBucket(name string) (string, bool) {
+	if name == "" {
+		return "", false
+	}
+	listed, err := os.ReadDir(s.root.Base())
+	if err != nil {
+		return "", false
+	}
+	found := ""
+	for _, item := range listed {
+		if !strings.EqualFold(item.Name(), name) {
+			continue
+		}
+		if _, ok := s.bucketFolder(item.Name()); !ok {
+			continue
+		}
+		if item.Name() == name {
+			return name, true
+		}
+		if found == "" {
+			found = item.Name()
+		}
+	}
+	return found, found != ""
+}
+
+// s3ListBuckets lists the folders directly in the served folder that the
+// account may see.
 func (s *Server) s3ListBuckets(q *s3Request) {
 	type bucket struct {
 		Name         string `xml:"Name"`
 		CreationDate string `xml:"CreationDate"`
 	}
-	created := time.Now()
-	if info, err := os.Stat(s.root.Base()); err == nil {
-		created = info.ModTime()
+	listed, err := os.ReadDir(s.root.Base())
+	if err != nil {
+		s.log.Error("s3 cannot list the served folder", "error", err)
+		q.fail(errInternal)
+		return
+	}
+	buckets := []bucket{}
+	for _, item := range listed {
+		info, ok := s.bucketFolder(item.Name())
+		if !ok || !q.user.allows("/"+item.Name()) {
+			continue
+		}
+		buckets = append(buckets, bucket{Name: item.Name(),
+			CreationDate: info.ModTime().UTC().Format(s3TimeFormat)})
 	}
 	writeS3XML(q.w, http.StatusOK, struct {
 		XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListAllMyBucketsResult"`
 		Owner   s3Owner  `xml:"Owner"`
 		Buckets []bucket `xml:"Buckets>Bucket"`
-	}{
-		Owner:   ownerOf(q.user),
-		Buckets: []bucket{{Name: config.S3Bucket, CreationDate: created.UTC().Format(s3TimeFormat)}},
-	})
+	}{Owner: ownerOf(q.user), Buckets: buckets})
 }
 
 // s3BucketLocation names the region, which S3 writes as nothing at all for
@@ -392,7 +458,7 @@ func (s *Server) s3BucketLocation(q *s3Request) {
 	}{Location: location})
 }
 
-// s3CreateBucket answers a request to create the one bucket, which exists. As
+// s3CreateBucket answers a request to create a bucket that exists. As
 // in us-east-1 on AWS, creating a bucket its owner already has succeeds, which
 // is what lets a client that makes sure of its bucket before an upload go on.
 func (s *Server) s3CreateBucket(q *s3Request) {
@@ -410,12 +476,12 @@ func (s *Server) s3CreateBucket(q *s3Request) {
 			"The specified location-constraint is not valid: the one region is "+config.S3Region+"."))
 		return
 	}
-	q.w.Header().Set("Location", "/"+config.S3Bucket)
+	q.w.Header().Set("Location", "/"+q.bucket)
 	q.w.WriteHeader(http.StatusOK)
 }
 
-// s3Owner is who owns what S3 lists: the account asking, since everything
-// here belongs to the one bucket every account shares.
+// s3Owner is who owns what S3 lists: the account asking, since every bucket
+// here is shared by every account.
 type s3Owner struct {
 	ID          string `xml:"ID"`
 	DisplayName string `xml:"DisplayName"`

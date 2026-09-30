@@ -92,7 +92,7 @@ func TestPasswordlessLoginIsExplicit(t *testing.T) {
 // who removes an account expects it gone.
 func TestAReloadReachesOpenSessions(t *testing.T) {
 	c := newCluster(t, []config.User{account("john", "doe", allRights...)}, nil)
-	c.write(t, "/file.txt", seed)
+	c.write(t, "/share/file.txt", seed)
 
 	sessions := map[string]client{}
 	for _, proto := range protocols {
@@ -109,26 +109,26 @@ func TestAReloadReachesOpenSessions(t *testing.T) {
 	sessions["http session token"] = token
 
 	for name, cl := range sessions {
-		if _, err := cl.get("/file.txt"); err != nil {
+		if _, err := cl.get("/share/file.txt"); err != nil {
 			t.Fatalf("%s before the reload: %v", name, err)
 		}
 	}
 
 	c.reload(t, []config.User{account("john", "doe", without(retrieve)...)})
 	for name, cl := range sessions {
-		if _, err := cl.get("/file.txt"); err == nil {
+		if _, err := cl.get("/share/file.txt"); err == nil {
 			t.Errorf("%s still downloads after retrieve was taken away", name)
 		}
-		if err := cl.put("/still-there.txt", written); err != nil {
+		if err := cl.put("/share/still-there.txt", written); err != nil {
 			t.Errorf("%s lost a right the reload kept: %v", name, err)
 		}
 		c.reset(t)
-		c.write(t, "/file.txt", seed)
+		c.write(t, "/share/file.txt", seed)
 	}
 
 	c.reload(t, []config.User{account("jane", "roe", allRights...)})
 	for name, cl := range sessions {
-		if err := cl.put("/after-removal.txt", written); err == nil {
+		if err := cl.put("/share/after-removal.txt", written); err == nil {
 			t.Errorf("%s still uploads after the account was removed", name)
 		}
 	}

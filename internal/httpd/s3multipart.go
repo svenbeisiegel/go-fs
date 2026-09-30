@@ -16,8 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"go-fs/internal/config"
 )
 
 // A multipart upload is how every S3 client sends a large file: it is opened,
@@ -45,6 +43,7 @@ var errNoSuchUpload = s3Err(http.StatusNotFound, "NoSuchUpload",
 // uploadRecord is what the folder of an upload says about it.
 type uploadRecord struct {
 	Owner     string    `json:"owner"`
+	Bucket    string    `json:"bucket"`
 	Key       string    `json:"key"`
 	Initiated time.Time `json:"initiated"`
 }
@@ -59,9 +58,9 @@ func partName(number int) string {
 	return fmt.Sprintf("%05d.part", number)
 }
 
-// loadUpload finds an upload of the account asking, for the key it is asked
-// about. An upload of another account is one that does not exist.
-func (s *Server) loadUpload(q *s3Request, id, key string) (string, uploadRecord, *s3Error) {
+// loadUpload finds an upload of the account asking, for the bucket and key it
+// is asked about. An upload of another account is one that does not exist.
+func (s *Server) loadUpload(q *s3Request, id string, obj s3Object) (string, uploadRecord, *s3Error) {
 	if !uploadIDPattern.MatchString(id) {
 		return "", uploadRecord{}, errNoSuchUpload
 	}
@@ -71,7 +70,8 @@ func (s *Server) loadUpload(q *s3Request, id, key string) (string, uploadRecord,
 		return "", uploadRecord{}, errNoSuchUpload
 	}
 	var record uploadRecord
-	if err := json.Unmarshal(data, &record); err != nil || record.Owner != q.user.name || record.Key != key {
+	if err := json.Unmarshal(data, &record); err != nil || record.Owner != q.user.name ||
+		record.Bucket != obj.bucket || record.Key != obj.key {
 		return "", uploadRecord{}, errNoSuchUpload
 	}
 	return folder, record, nil
@@ -112,7 +112,8 @@ func (s *Server) s3CreateUpload(q *s3Request, obj s3Object) {
 	}
 	id := hex.EncodeToString(raw)
 	folder := filepath.Join(uploadsFolder(q.set), id)
-	record, _ := json.Marshal(uploadRecord{Owner: q.user.name, Key: obj.key, Initiated: time.Now().UTC()})
+	record, _ := json.Marshal(uploadRecord{Owner: q.user.name, Bucket: obj.bucket, Key: obj.key,
+		Initiated: time.Now().UTC()})
 	if err := os.MkdirAll(folder, 0o700); err != nil {
 		s.log.Error("s3 cannot create the upload folder", "path", folder, "error", err)
 		q.fail(errInternal)
@@ -131,7 +132,7 @@ func (s *Server) s3CreateUpload(q *s3Request, obj s3Object) {
 		Bucket   string   `xml:"Bucket"`
 		Key      string   `xml:"Key"`
 		UploadID string   `xml:"UploadId"`
-	}{Bucket: config.S3Bucket, Key: obj.key, UploadID: id})
+	}{Bucket: obj.bucket, Key: obj.key, UploadID: id})
 }
 
 // s3UploadPart answers UploadPart, and UploadPartCopy for a part that comes
@@ -144,7 +145,7 @@ func (s *Server) s3UploadPart(q *s3Request, obj s3Object, id, number, copySource
 			"Part number must be an integer between 1 and 10000, inclusive."))
 		return
 	}
-	folder, _, failure := s.loadUpload(q, id, obj.key)
+	folder, _, failure := s.loadUpload(q, id, obj)
 	if failure != nil {
 		q.fail(failure)
 		return
@@ -277,7 +278,7 @@ func listParts(folder string) ([]uploadedPart, error) {
 // s3CompleteUpload answers CompleteMultipartUpload: the parts the client
 // names, in the order it names them, are joined into the object.
 func (s *Server) s3CompleteUpload(q *s3Request, obj s3Object, id string) {
-	folder, _, failure := s.loadUpload(q, id, obj.key)
+	folder, _, failure := s.loadUpload(q, id, obj)
 	if failure != nil {
 		q.fail(failure)
 		return
@@ -373,7 +374,7 @@ func (s *Server) s3CompleteUpload(q *s3Request, obj s3Object, id string) {
 		Bucket   string   `xml:"Bucket"`
 		Key      string   `xml:"Key"`
 		ETag     string   `xml:"ETag"`
-	}{Location: "/" + config.S3Bucket + "/" + s3Escape(obj.key, true), Bucket: config.S3Bucket,
+	}{Location: "/" + obj.bucket + "/" + s3Escape(obj.key, true), Bucket: obj.bucket,
 		Key: obj.key, ETag: etag})
 }
 
@@ -389,7 +390,7 @@ func appendFile(to *os.File, path string) error {
 
 // s3AbortUpload answers AbortMultipartUpload, which throws the parts away.
 func (s *Server) s3AbortUpload(q *s3Request, obj s3Object, id string) {
-	folder, _, failure := s.loadUpload(q, id, obj.key)
+	folder, _, failure := s.loadUpload(q, id, obj)
 	if failure != nil {
 		q.fail(failure)
 		return
@@ -406,7 +407,7 @@ func (s *Server) s3AbortUpload(q *s3Request, obj s3Object, id string) {
 
 // s3ListParts answers ListParts, which a client resuming an upload asks for.
 func (s *Server) s3ListParts(q *s3Request, obj s3Object, id string) {
-	folder, _, failure := s.loadUpload(q, id, obj.key)
+	folder, _, failure := s.loadUpload(q, id, obj)
 	if failure != nil {
 		q.fail(failure)
 		return
@@ -449,7 +450,7 @@ func (s *Server) s3ListParts(q *s3Request, obj s3Object, id string) {
 		MaxParts             int      `xml:"MaxParts"`
 		IsTruncated          bool     `xml:"IsTruncated"`
 		Parts                []listed `xml:"Part"`
-	}{Bucket: config.S3Bucket, Key: obj.key, UploadID: id, Initiator: ownerOf(q.user),
+	}{Bucket: obj.bucket, Key: obj.key, UploadID: id, Initiator: ownerOf(q.user),
 		Owner: ownerOf(q.user), StorageClass: "STANDARD", PartNumberMarker: marker,
 		MaxParts: maxParts, IsTruncated: truncated}
 	for _, part := range parts {
@@ -461,7 +462,7 @@ func (s *Server) s3ListParts(q *s3Request, obj s3Object, id string) {
 }
 
 // s3ListUploads answers ListMultipartUploads with the uploads of the account
-// asking whose key begins with the prefix, which is how a client finds an
+// asking into the bucket whose key begins with the prefix, which is how a client finds an
 // upload it can resume.
 func (s *Server) s3ListUploads(q *s3Request) {
 	prefix := q.r.URL.Query().Get("prefix")
@@ -485,7 +486,7 @@ func (s *Server) s3ListUploads(q *s3Request) {
 		}
 		var record uploadRecord
 		if json.Unmarshal(data, &record) != nil || record.Owner != q.user.name ||
-			!strings.HasPrefix(record.Key, prefix) {
+			record.Bucket != q.bucket || !strings.HasPrefix(record.Key, prefix) {
 			continue
 		}
 		uploads = append(uploads, upload{Key: record.Key, UploadID: entry.Name(),
@@ -505,5 +506,5 @@ func (s *Server) s3ListUploads(q *s3Request) {
 		MaxUploads  int      `xml:"MaxUploads"`
 		IsTruncated bool     `xml:"IsTruncated"`
 		Uploads     []upload `xml:"Upload"`
-	}{Bucket: config.S3Bucket, Prefix: prefix, MaxUploads: 1000, Uploads: uploads})
+	}{Bucket: q.bucket, Prefix: prefix, MaxUploads: 1000, Uploads: uploads})
 }

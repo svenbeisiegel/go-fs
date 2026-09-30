@@ -13,8 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"go-fs/internal/config"
 )
 
 // s3GetObject answers GetObject and HeadObject. A key ending with a slash is a
@@ -313,8 +311,9 @@ func (s *Server) makeFolder(q *s3Request, obj s3Object) *s3Error {
 	return nil
 }
 
-// copySource resolves an x-amz-copy-source, "main/docs/a.txt" with or without
-// a leading slash and URL encoded, to the object it names.
+// copySource resolves an x-amz-copy-source, "docs/a.txt" with or without a
+// leading slash and URL encoded, to the object it names, which may be in
+// another bucket.
 func (s *Server) copySource(header string) (s3Object, *s3Error) {
 	raw, version, _ := strings.Cut(header, "?")
 	if version != "" {
@@ -328,11 +327,12 @@ func (s *Server) copySource(header string) (s3Object, *s3Error) {
 		return s3Object{}, s3Err(http.StatusBadRequest, "InvalidArgument",
 			"x-amz-copy-source is not URL encoded.")
 	}
-	bucket, key, _ := strings.Cut(strings.TrimPrefix(decoded, "/"), "/")
-	if bucket != config.S3Bucket {
+	name, key, _ := strings.Cut(strings.TrimPrefix(decoded, "/"), "/")
+	bucket, found := s.findBucket(name)
+	if !found {
 		return s3Object{}, errNoSuchBucket
 	}
-	source, ok := s.resolveKey(key)
+	source, ok := s.resolveKey(bucket, key)
 	if !ok {
 		return s3Object{}, errNoSuchKey
 	}
@@ -585,7 +585,7 @@ func (s *Server) s3DeleteObjects(q *s3Request) {
 		Errors  []failed  `xml:"Error"`
 	}{}
 	for _, object := range request.Objects {
-		obj, ok := s.resolveKey(object.Key)
+		obj, ok := s.resolveKey(q.bucket, object.Key)
 		failure := errBadKey
 		if ok {
 			failure = s.s3DeleteObject(q, obj)

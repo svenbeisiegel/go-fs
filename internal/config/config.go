@@ -373,8 +373,9 @@ type HTTP struct {
 	// allowSelfUpdate or from the session of an account that sets isAdmin.
 	EnableSelfUpdate bool `toml:"enableSelfUpdate"`
 	// EnableS3 answers requests signed with AWS Signature Version 4 as the S3
-	// API, on both listeners. The served folder is the one bucket, S3Bucket, in
-	// the one region, S3Region, and only the accounts that set s3 may use it.
+	// API, on both listeners. Every folder directly in Basefolder is a bucket,
+	// found by its name ignoring case, in the one region, S3Region, and only
+	// the accounts that set s3 may use it.
 	EnableS3 bool `toml:"enableS3"`
 
 	MaxConnections int `toml:"maxConnections"`
@@ -443,13 +444,9 @@ type HTTP struct {
 	Cleanup []Cleanup `toml:"cleanup"`
 }
 
-// S3Bucket and S3Region are what the S3 API of the HTTP server serves: one
-// bucket holding http.basefolder as it is, in one region. Neither is a key of
-// the file, because there is nothing to choose between.
-const (
-	S3Bucket = "main"
-	S3Region = "us-east-1"
-)
+// S3Region is the one region the S3 API of the HTTP server answers for. It is
+// not a key of the file, because there is nothing to choose between.
+const S3Region = "us-east-1"
 
 // HTTPS configures the TLS interface of the HTTP server. It is a section of
 // its own because TOML tables are top level; the folder, accounts and limits

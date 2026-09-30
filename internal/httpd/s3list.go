@@ -15,8 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"go-fs/internal/config"
 )
 
 // s3Entry is one line of a listing: an object, or a common prefix, which is how
@@ -78,9 +76,9 @@ func (s *Server) s3ListObjects(q *s3Request) {
 		}
 	}
 
-	entries, err := s.s3Entries(q.user, prefix, delimiter)
+	entries, err := s.s3Entries(q.user, q.bucket, prefix, delimiter)
 	if err != nil {
-		s.log.Error("s3 cannot list the folder", "prefix", prefix, "error", err)
+		s.log.Error("s3 cannot list the folder", "bucket", q.bucket, "prefix", prefix, "error", err)
 		q.fail(errInternal)
 		return
 	}
@@ -143,7 +141,7 @@ func (s *Server) s3ListObjects(q *s3Request) {
 			Contents              []object       `xml:"Contents"`
 			CommonPrefixes        []commonPrefix `xml:"CommonPrefixes"`
 		}{
-			Name: config.S3Bucket, Prefix: escape(prefix), Delimiter: escape(delimiter),
+			Name: q.bucket, Prefix: escape(prefix), Delimiter: escape(delimiter),
 			StartAfter: escape(query.Get("start-after")), ContinuationToken: token,
 			KeyCount: len(entries), MaxKeys: maxKeys, EncodingType: encoding, IsTruncated: truncated,
 			Contents: objects, CommonPrefixes: prefixes,
@@ -167,7 +165,7 @@ func (s *Server) s3ListObjects(q *s3Request) {
 		Contents       []object       `xml:"Contents"`
 		CommonPrefixes []commonPrefix `xml:"CommonPrefixes"`
 	}{
-		Name: config.S3Bucket, Prefix: escape(prefix), Marker: escape(query.Get("marker")),
+		Name: q.bucket, Prefix: escape(prefix), Marker: escape(query.Get("marker")),
 		NextMarker: escape(next), Delimiter: escape(delimiter), MaxKeys: maxKeys,
 		EncodingType: encoding, IsTruncated: truncated, Contents: objects, CommonPrefixes: prefixes,
 	})
@@ -182,20 +180,20 @@ func entryETag(entry s3Entry) string {
 	return etagOf(entry.modified, entry.size)
 }
 
-// s3Entries lists what an account may see under a prefix, sorted by key as S3
-// sorts: byte by byte.
+// s3Entries lists what an account may see under a prefix of a bucket, sorted
+// by key as S3 sorts: byte by byte.
 //
 // With the delimiter "/", which is how every client browses, that is one
 // folder read. Without one it is every file below, and every empty folder as
 // the "folder/" key it would be in S3, so that copying a listing elsewhere
 // takes the empty folders along. Any other delimiter is applied to that.
-func (s *Server) s3Entries(user *account, prefix, delimiter string) ([]s3Entry, error) {
+func (s *Server) s3Entries(user *account, bucket, prefix, delimiter string) ([]s3Entry, error) {
 	var entries []s3Entry
 	var err error
 	if delimiter == "/" {
-		entries, err = s.s3Folder(user, prefix)
+		entries, err = s.s3Folder(user, bucket, prefix)
 	} else {
-		entries, err = s.s3Walk(user, prefix)
+		entries, err = s.s3Walk(user, bucket, prefix)
 		if err == nil && delimiter != "" {
 			entries = rollUp(entries, prefix, delimiter)
 		}
@@ -210,9 +208,9 @@ func (s *Server) s3Entries(user *account, prefix, delimiter string) ([]s3Entry, 
 // s3Folder lists the folder a prefix points into: the files and folders in it
 // whose names begin with the rest of the prefix, the folders as common
 // prefixes.
-func (s *Server) s3Folder(user *account, prefix string) ([]s3Entry, error) {
+func (s *Server) s3Folder(user *account, bucket, prefix string) ([]s3Entry, error) {
 	folderKey := prefix[:strings.LastIndex(prefix, "/")+1]
-	folder, ok := s.folderOf(folderKey)
+	folder, ok := s.folderOf(bucket, folderKey)
 	if !ok {
 		return nil, nil
 	}
@@ -229,7 +227,7 @@ func (s *Server) s3Folder(user *account, prefix string) ([]s3Entry, error) {
 		key := folderKey + item.Name()
 		// resolved one by one, which is what keeps a link that points out of
 		// the served folder out of the listing, as it is out of every other
-		child, ok := s.resolveKey(key)
+		child, ok := s.resolveKey(bucket, key)
 		if !ok || !user.allows(child.target.Virtual) {
 			continue
 		}
@@ -250,9 +248,9 @@ func (s *Server) s3Folder(user *account, prefix string) ([]s3Entry, error) {
 // begins with the prefix, and every empty folder as its "folder/" key. A link
 // to a folder is not followed, so a link that points back up cannot make the
 // walk endless.
-func (s *Server) s3Walk(user *account, prefix string) ([]s3Entry, error) {
+func (s *Server) s3Walk(user *account, bucket, prefix string) ([]s3Entry, error) {
 	folderKey := prefix[:strings.LastIndex(prefix, "/")+1]
-	folder, ok := s.folderOf(folderKey)
+	folder, ok := s.folderOf(bucket, folderKey)
 	if !ok {
 		return nil, nil
 	}
@@ -269,7 +267,7 @@ func (s *Server) s3Walk(user *account, prefix string) ([]s3Entry, error) {
 			return err
 		}
 		if len(listed) == 0 && key != folderKey && strings.HasPrefix(key, prefix) &&
-			user.allows("/"+strings.TrimSuffix(key, "/")) {
+			user.allows("/"+bucket+"/"+strings.TrimSuffix(key, "/")) {
 			entries = append(entries, s3Entry{key: key, modified: modTime(path)})
 		}
 		for _, item := range listed {
@@ -279,7 +277,7 @@ func (s *Server) s3Walk(user *account, prefix string) ([]s3Entry, error) {
 			if isLink || runtime.GOOS == "windows" {
 				// a link has to stay inside the served folder, and a name has
 				// to mean on Windows what it says; resolving it checks both
-				child, ok := s.resolveKey(childKey)
+				child, ok := s.resolveKey(bucket, childKey)
 				if !ok {
 					continue
 				}
@@ -295,7 +293,7 @@ func (s *Server) s3Walk(user *account, prefix string) ([]s3Entry, error) {
 				}
 				continue
 			}
-			if !strings.HasPrefix(childKey, prefix) || !user.allows("/"+childKey) {
+			if !strings.HasPrefix(childKey, prefix) || !user.allows("/"+bucket+"/"+childKey) {
 				continue
 			}
 			info, err := os.Stat(childPath)
@@ -312,12 +310,13 @@ func (s *Server) s3Walk(user *account, prefix string) ([]s3Entry, error) {
 	return entries, nil
 }
 
-// folderOf is where a folder key, "" or ending with a slash, is on disk, and
-// false for a key that names no folder there, which lists as nothing.
-func (s *Server) folderOf(folderKey string) (string, bool) {
-	path := s.root.Base()
+// folderOf is where a folder key of a bucket, "" or ending with a slash, is on
+// disk, and false for a key that names no folder there, which lists as
+// nothing.
+func (s *Server) folderOf(bucket, folderKey string) (string, bool) {
+	path := s.root.Resolve("/", "/"+bucket).Path
 	if folderKey != "" {
-		folder, ok := s.resolveKey(folderKey)
+		folder, ok := s.resolveKey(bucket, folderKey)
 		if !ok {
 			return "", false
 		}

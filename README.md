@@ -603,23 +603,29 @@ allowUserFolderCreate = true
 | | |
 |---|---|
 | Endpoint | `https://host:9443` (or the plain port) |
-| Bucket | `main`, the one bucket, fixed |
+| Buckets | every folder directly in `http.basefolder`, by its name ignoring case |
 | Region | `us-east-1`, the one region, fixed |
 | Access key / secret key | the account's `username` / `password` |
-| Addressing | path style only: `https://host:9443/main/<key>` |
+| Addressing | path style only: `https://host:9443/<folder>/<key>` |
 
-The bucket holds `http.basefolder` exactly as HTTP shows it: `s3://main/docs/a.txt`
-is the file served at `/docs/a.txt`, and the account's `paths` are matched
-against that same path. Its rights mean what they mean everywhere else, so an
-account has the same reach over S3 as over HTTP. The bucket and the region are
-shown read-only on the HTTP tab of the admin interface; neither can be changed,
-and buckets cannot be created or removed. `s3` is independent of `http`: an
+Each folder directly in `http.basefolder` is a bucket holding that folder exactly
+as HTTP shows it: `s3://docs/a.txt` is the file served at `/docs/a.txt`, and the
+account's `paths` are matched against that same path. A file directly in
+`http.basefolder` is in no bucket and cannot be reached over S3. A bucket name is
+matched against the folder names ignoring case, so `s3://docs/` reaches the
+folder `Docs`, and the folder is named as it is spelled on disk in every answer.
+Where two folders differ in case only, the one spelled as asked wins, and
+otherwise the first by name. `ListBuckets` lists the folders the account's
+`paths` reach. Its rights mean what they mean everywhere else, so an account has
+the same reach over S3 as over HTTP. The region is shown read-only on the HTTP
+tab of the admin interface and cannot be changed. Buckets cannot be created or
+removed over S3: make or remove the folder instead. `s3` is independent of `http`: an
 account that sets only `s3` cannot log in to the page or send Basic credentials.
 
 Only requests signed with AWS Signature Version 4 are S3 requests, in the
 `Authorization` header or as a presigned URL. Everything else is served as it
-always was, so a folder called `main` is still reached as `/main` over HTTP,
-and nothing is public over S3. A request signed for another region is refused
+always was, so a bucket's folder is still reached as `/docs` over HTTP, and
+nothing is public over S3. A request signed for another region is refused
 with the answer AWS gives, which tells the SDKs to sign for `us-east-1`.
 Signatures are checked against the clock with 15 minutes of slack, and a wrong
 secret key counts against the address in the same lock as a wrong password.
@@ -628,8 +634,9 @@ Clients have to be set to path style and to the region. For example:
 
 ```shell
 aws configure set default.s3.addressing_style path
-aws --endpoint-url https://host:9443 --region us-east-1 s3 ls s3://main/
-aws --endpoint-url https://host:9443 --region us-east-1 s3 cp report.pdf s3://main/docs/
+aws --endpoint-url https://host:9443 --region us-east-1 s3 ls
+aws --endpoint-url https://host:9443 --region us-east-1 s3 ls s3://backups/
+aws --endpoint-url https://host:9443 --region us-east-1 s3 cp report.pdf s3://backups/2026/
 ```
 
 Version 1 of the aws CLI presigns URLs with Signature Version 2 unless told
@@ -981,10 +988,10 @@ with POST in `methodsRequireAuth`. The pair is public, so it opens no protected 
 
 **S3** — the object API of Amazon S3 on the HTTP listeners, authenticated with
 AWS Signature Version 4 (header, presigned URL, signed and unsigned
-`aws-chunked` bodies with trailers), path style, over one bucket and one region.
+`aws-chunked` bodies with trailers), path style, with every top-level folder a bucket, in one region.
 Bucket: `ListBuckets`, `HeadBucket`, `GetBucketLocation`, `GetBucketVersioning`,
 `ListObjects`, `ListObjectsV2`, `ListMultipartUploads`, `DeleteObjects`, and
-`CreateBucket` of the existing bucket. Object: `GetObject`, `HeadObject`,
+`CreateBucket` of a bucket whose folder exists. Object: `GetObject`, `HeadObject`,
 `PutObject`, `CopyObject`, `DeleteObject`, `CreateMultipartUpload`,
 `UploadPart`, `UploadPartCopy`, `ListParts`, `CompleteMultipartUpload` and
 `AbortMultipartUpload`.

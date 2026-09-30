@@ -29,11 +29,11 @@ func TestFilesCrossProtocolsIntact(t *testing.T) {
 		name    string
 		content []byte
 	}{
-		{"/large.bin", randomBytes(t, 3<<20+17)},
-		{"/empty.bin", []byte{}},
-		{"/lines.txt", []byte("one\r\ntwo\nthree\rfour\r\n")},
-		{"/grüße 日本.txt", []byte("unicode")},
-		{"/sub folder/nested.txt", []byte("nested")},
+		{"/share/large.bin", randomBytes(t, 3<<20+17)},
+		{"/share/empty.bin", []byte{}},
+		{"/share/lines.txt", []byte("one\r\ntwo\nthree\rfour\r\n")},
+		{"/share/grüße 日本.txt", []byte("unicode")},
+		{"/share/sub folder/nested.txt", []byte("nested")},
 	}
 
 	clients := map[string]client{}
@@ -50,7 +50,7 @@ func TestFilesCrossProtocolsIntact(t *testing.T) {
 			for _, to := range protocols {
 				t.Run(fmt.Sprintf("%s %s to %s", file.name, from.name, to.name), func(t *testing.T) {
 					c.reset(t)
-					c.mkdir(t, "/sub folder")
+					c.mkdir(t, "/share/sub folder")
 					if err := clients[from.name].put(file.name, file.content); err != nil {
 						t.Fatalf("upload: %v", err)
 					}
@@ -85,7 +85,7 @@ func TestAChunkedHTTPUploadIsWholeForTheOthers(t *testing.T) {
 	total := len(content)
 	for start := 0; start < total; start += chunk {
 		end := min(start+chunk, total) - 1
-		res, err := web.do(http.MethodPut, "/chunked.bin", content[start:end+1], http.Header{
+		res, err := web.do(http.MethodPut, "/share/chunked.bin", content[start:end+1], http.Header{
 			"Content-Type":  {"application/octet-stream"},
 			"Content-Range": {fmt.Sprintf("bytes %d-%d/%d", start, end, total)},
 		})
@@ -98,7 +98,7 @@ func TestAChunkedHTTPUploadIsWholeForTheOthers(t *testing.T) {
 			t.Fatalf("chunk %d-%d: %s", start, end, res.Status)
 		}
 		// nothing is visible under the final name until the last chunk
-		if last := end == total-1; !last && c.exists("/chunked.bin") {
+		if last := end == total-1; !last && c.exists("/share/chunked.bin") {
 			t.Fatalf("the file appeared after chunk %d-%d, before the upload was complete", start, end)
 		}
 	}
@@ -108,7 +108,7 @@ func TestAChunkedHTTPUploadIsWholeForTheOthers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := reader.get("/chunked.bin")
+		got, err := reader.get("/share/chunked.bin")
 		if err != nil {
 			t.Fatalf("%s download: %v", proto.name, err)
 		}
@@ -123,7 +123,7 @@ func TestAChunkedHTTPUploadIsWholeForTheOthers(t *testing.T) {
 func TestResumedDownloadsAgree(t *testing.T) {
 	c := newCluster(t, []config.User{account("john", "doe", allRights...)}, nil)
 	content := randomBytes(t, 512<<10)
-	c.write(t, "/resume.bin", content)
+	c.write(t, "/share/resume.bin", content)
 	const offset = 123457
 	want := content[offset:]
 
@@ -131,7 +131,7 @@ func TestResumedDownloadsAgree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := ftpCl.(*ftpClient).getFrom("/resume.bin", offset)
+	got, err := ftpCl.(*ftpClient).getFrom("/share/resume.bin", offset)
 	if err != nil {
 		t.Fatalf("ftp REST: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestResumedDownloadsAgree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := webCl.(*httpClient).do(http.MethodGet, "/resume.bin", nil,
+	res, err := webCl.(*httpClient).do(http.MethodGet, "/share/resume.bin", nil,
 		http.Header{"Range": {fmt.Sprintf("bytes=%d-", offset)}})
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +158,7 @@ func TestResumedDownloadsAgree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	file, err := sftpCl.(*sftpClient).Open("/resume.bin")
+	file, err := sftpCl.(*sftpClient).Open("/share/resume.bin")
 	if err != nil {
 		t.Fatal(err)
 	}

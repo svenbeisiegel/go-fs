@@ -32,8 +32,8 @@ var (
 func fixture(t *testing.T, c *cluster) {
 	t.Helper()
 	c.reset(t)
-	c.write(t, "/seed.txt", seed)
-	c.mkdir(t, "/empty")
+	c.write(t, "/share/seed.txt", seed)
+	c.mkdir(t, "/share/empty")
 }
 
 var operations = []operation{
@@ -41,7 +41,7 @@ var operations = []operation{
 		name:  "download",
 		needs: []right{retrieve},
 		do: func(cl client) error {
-			content, err := cl.get("/seed.txt")
+			content, err := cl.get("/share/seed.txt")
 			if err == nil && !bytes.Equal(content, seed) {
 				return errMismatch
 			}
@@ -52,51 +52,51 @@ var operations = []operation{
 	{
 		name:  "upload a new file",
 		needs: []right{create},
-		do:    func(cl client) error { return cl.put("/new.txt", written) },
+		do:    func(cl client) error { return cl.put("/share/new.txt", written) },
 		happened: func(t *testing.T, c *cluster) bool {
-			return bytes.Equal(c.read(t, "/new.txt"), written)
+			return bytes.Equal(c.read(t, "/share/new.txt"), written)
 		},
 	},
 	{
 		name:  "upload over a file",
 		needs: []right{overwrite},
-		do:    func(cl client) error { return cl.put("/seed.txt", written) },
+		do:    func(cl client) error { return cl.put("/share/seed.txt", written) },
 		happened: func(t *testing.T, c *cluster) bool {
-			return !bytes.Equal(c.read(t, "/seed.txt"), seed)
+			return !bytes.Equal(c.read(t, "/share/seed.txt"), seed)
 		},
 	},
 	{
 		name:     "delete a file",
 		needs:    []right{deleteFile},
-		do:       func(cl client) error { return cl.remove("/seed.txt") },
-		happened: func(t *testing.T, c *cluster) bool { return !c.exists("/seed.txt") },
+		do:       func(cl client) error { return cl.remove("/share/seed.txt") },
+		happened: func(t *testing.T, c *cluster) bool { return !c.exists("/share/seed.txt") },
 	},
 	{
 		name:     "create a folder",
 		needs:    []right{folderCreate},
-		do:       func(cl client) error { return cl.mkdir("/made") },
-		happened: func(t *testing.T, c *cluster) bool { return c.exists("/made") },
+		do:       func(cl client) error { return cl.mkdir("/share/made") },
+		happened: func(t *testing.T, c *cluster) bool { return c.exists("/share/made") },
 	},
 	{
 		name:     "delete an empty folder",
 		needs:    []right{folderDelete},
-		do:       func(cl client) error { return cl.rmdir("/empty") },
-		happened: func(t *testing.T, c *cluster) bool { return !c.exists("/empty") },
+		do:       func(cl client) error { return cl.rmdir("/share/empty") },
+		happened: func(t *testing.T, c *cluster) bool { return !c.exists("/share/empty") },
 	},
 	{
 		// a rename creates one name and removes another, so it needs both
 		name:  "rename a file",
 		needs: []right{create, deleteFile},
-		do:    func(cl client) error { return cl.rename("/seed.txt", "/renamed.txt") },
+		do:    func(cl client) error { return cl.rename("/share/seed.txt", "/share/renamed.txt") },
 		happened: func(t *testing.T, c *cluster) bool {
-			return !c.exists("/seed.txt") || c.exists("/renamed.txt")
+			return !c.exists("/share/seed.txt") || c.exists("/share/renamed.txt")
 		},
 		// S3 has no rename: a client copies and deletes, and a copy reads
 		// what it copies. An account that may read and create but not
 		// delete is left with the copy, which it could have made anyway by
 		// downloading and uploading; what it must not do is remove the source
 		s3Needs:    []right{retrieve, create, deleteFile},
-		s3Happened: func(t *testing.T, c *cluster) bool { return !c.exists("/seed.txt") },
+		s3Happened: func(t *testing.T, c *cluster) bool { return !c.exists("/share/seed.txt") },
 	},
 }
 
