@@ -75,6 +75,12 @@ basefolder = "{{folder}}"
 	if !cfg.HTTP.EnableS3 {
 		t.Error("the S3 API has to be on by default")
 	}
+	if cfg.HTTP.RegistryBaseFolder != "" {
+		t.Error("the registry has to be off by default")
+	}
+	if !cfg.HTTP.RegistryAnonymousRead {
+		t.Error("pulling from the registry has to be public by default")
+	}
 }
 
 func TestUserPermissionDefaults(t *testing.T) {
@@ -281,6 +287,45 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 				{Username: "john", Password: "a", FTP: true}, {Username: "john", Password: "b", HTTP: true},
 			}
 		}, "configured twice"},
+		{"registry without password", func(c *Config) {
+			c.Users = []User{{Username: "ci", Registry: true}}
+		}, "no password, which registry needs"},
+		{"registry username with a colon", func(c *Config) {
+			c.Users = []User{{Username: "ci:bot", Password: "x", Registry: true}}
+		}, "cannot hold a colon"},
+		{"relative registry folder", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.RegistryBaseFolder = "registry"
+		}, "http.registryBaseFolder \"registry\" has to be an absolute path"},
+		{"missing registry folder", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.RegistryBaseFolder = filepath.Join(folder, "nope")
+		}, "http.registryBaseFolder"},
+		{"registry folder inside the served folder", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.RegistryBaseFolder = mkdir(t, folder, "registry")
+		}, "overlaps ftp.basefolder"},
+		{"registry folder is the served folder", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.RegistryBaseFolder = folder
+		}, "overlaps"},
+		{"registry folder holding the http folder", func(c *Config) {
+			outer := t.TempDir()
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = mkdir(t, outer, "served")
+			c.HTTP.RegistryBaseFolder = outer
+		}, "overlaps http.basefolder"},
+		{"registry folder inside an account's folder", func(c *Config) {
+			own := t.TempDir()
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = t.TempDir()
+			c.Users = []User{{Username: "john", FTP: true, Basefolder: own}}
+			c.HTTP.RegistryBaseFolder = mkdir(t, own, "registry")
+		}, "overlaps users[0].basefolder"},
 		{"tftp type", func(c *Config) { c.TFTP.Type = "sctp" }, "tftp.type"},
 		{"tftp block size", func(c *Config) { c.TFTP.MaxBlockSize = 4 }, "tftp.maxBlockSize"},
 		{"tftp maxTimeout below timeout", func(c *Config) { c.TFTP.Timeout = 30; c.TFTP.MaxTimeout = 10 }, "maxTimeout"},
@@ -299,6 +344,34 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 				t.Errorf("error %q does not mention %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// mkdir makes a folder inside another and returns its path.
+func mkdir(t *testing.T, parent, name string) string {
+	t.Helper()
+	path := filepath.Join(parent, name)
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestValidateAcceptsARegistryFolderOfItsOwn(t *testing.T) {
+	parent := t.TempDir()
+	cfg := Default()
+	cfg.FTP.Basefolder = mkdir(t, parent, "served")
+	cfg.TFTP.Basefolder = cfg.FTP.Basefolder
+	cfg.HTTP.Enabled = true
+	cfg.HTTP.Basefolder = cfg.FTP.Basefolder
+	// a sibling whose name starts like the served folder's is not inside it
+	cfg.HTTP.RegistryBaseFolder = mkdir(t, parent, "served-registry")
+	cfg.Users = []User{{Username: "ci", Password: "secret", Registry: true}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if users := cfg.HTTPServerUsers(); len(users) != 1 || users[0].Username != "ci" {
+		t.Errorf("a registry-only account is not handed to the http server: %+v", users)
 	}
 }
 
@@ -434,13 +507,24 @@ func TestSaveKeepsExplicitUserFlags(t *testing.T) {
 	}
 	_, account, _ := strings.Cut(string(written), "[[users]]")
 	account, _, _ = strings.Cut(account, "\n[")
-	for _, unwanted := range []string{"sftp", "http", "paths", "cookie", "authorizedKeys"} {
+	for _, unwanted := range []string{"sftp", "http", "paths", "cookie", "authorizedKeys", "registry"} {
 		if strings.Contains(account, unwanted) {
 			t.Errorf("the saved account mentions %q:\n%s", unwanted, account)
 		}
 	}
 	if !reloaded.Users[0].FTP || reloaded.Users[0].SFTP || reloaded.Users[0].HTTP {
 		t.Errorf("switches after a round trip: %+v", reloaded.Users[0])
+	}
+
+	cfg.Users = []User{{Username: "ci", Password: "secret", Registry: true}}
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if reloaded, err = Load(path); err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.Users[0].Registry {
+		t.Error("registry = true was lost on the way through the file")
 	}
 }
 

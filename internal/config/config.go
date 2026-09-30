@@ -107,6 +107,12 @@ type User struct {
 	// as the access key and its password as the secret key. It is independent
 	// of HTTP, and the same Paths and rights apply to it.
 	S3 bool `toml:"s3,omitempty"`
+	// Registry lets the account push to and delete from the container
+	// registry of the HTTP server (see HTTP.RegistryBaseFolder), logging in
+	// with its username and password, and pull from it where
+	// RegistryAnonymousRead is off. It is independent of HTTP; Paths and the
+	// rights below do not apply to it.
+	Registry bool `toml:"registry,omitempty"`
 
 	// Basefolder is the folder this account sees on FTP and SFTP instead of
 	// the server's own. HTTP scopes an account by Paths instead and ignores
@@ -244,11 +250,12 @@ func (c Config) SFTPUsers() []User { return c.usersFor(func(u User) bool { retur
 func (c Config) HTTPUsers() []User { return c.usersFor(func(u User) bool { return u.HTTP }) }
 func (c Config) S3Users() []User   { return c.usersFor(func(u User) bool { return u.S3 }) }
 
-// HTTPServerUsers are the entries the HTTP server serves in either way, over
-// http, over its S3 API or over both. The server tells the two apart itself,
-// by the http and s3 switches of each entry.
+// HTTPServerUsers are the entries the HTTP server serves in any way: over
+// http, over its S3 API, over its container registry or over several. The
+// server tells them apart itself, by the http, s3 and registry switches of
+// each entry.
 func (c Config) HTTPServerUsers() []User {
-	return c.usersFor(func(u User) bool { return u.HTTP || u.S3 })
+	return c.usersFor(func(u User) bool { return u.HTTP || u.S3 || u.Registry })
 }
 
 func (c Config) usersFor(serves func(User) bool) []User {
@@ -377,6 +384,16 @@ type HTTP struct {
 	// found by its name ignoring case, in the one region, S3Region, and only
 	// the accounts that set s3 may use it.
 	EnableS3 bool `toml:"enableS3"`
+	// RegistryBaseFolder serves an OCI container registry under /v2/ on both
+	// listeners and keeps its blobs, manifests and tags in this folder. Empty
+	// turns the registry off. It has to be an absolute path to an existing
+	// folder that neither is nor contains nor lies inside a folder any server
+	// serves, since everything in it is managed by the registry alone.
+	RegistryBaseFolder string `toml:"registryBaseFolder"`
+	// RegistryAnonymousRead lets anyone pull from the registry without
+	// credentials. With it off, pulling takes an account that sets registry,
+	// as pushing and deleting always do.
+	RegistryAnonymousRead bool `toml:"registryAnonymousRead"`
 
 	MaxConnections int `toml:"maxConnections"`
 	// ReadTimeout, WriteTimeout and IdleTimeout are seconds, 0 disables one.
@@ -529,19 +546,20 @@ func Default() Config {
 			LoginFailureDelay: 1,
 		},
 		HTTP: HTTP{
-			Port:                 9080,
-			Realm:                "go-fs",
-			EnableAdminInterface: true,
-			EnableS3:             true,
-			MaxConnections:       100,
-			ReadTimeout:          120,
-			IdleTimeout:          120,
-			MaxChunkSize:         50 << 20, // 50 MB
-			SessionTokenLifetime: 3600,
-			LoginFailureDelay:    1,
-			LoginAttempts:        5,
-			LoginLockout:         60,
-			MethodsRequireAuth:   []string{"PUT", "DELETE", "POST", "MKCOL", "MOVE"},
+			Port:                  9080,
+			Realm:                 "go-fs",
+			EnableAdminInterface:  true,
+			EnableS3:              true,
+			RegistryAnonymousRead: true,
+			MaxConnections:        100,
+			ReadTimeout:           120,
+			IdleTimeout:           120,
+			MaxChunkSize:          50 << 20, // 50 MB
+			SessionTokenLifetime:  3600,
+			LoginFailureDelay:     1,
+			LoginAttempts:         5,
+			LoginLockout:          60,
+			MethodsRequireAuth:    []string{"PUT", "DELETE", "POST", "MKCOL", "MOVE"},
 		},
 		HTTPS: HTTPS{
 			Port: 9443,
@@ -863,6 +881,17 @@ func (c Config) validateUsers() error {
 			return fmt.Errorf("%s %q sets s3, and an S3 access key cannot hold a slash, "+
 				"a comma or white space", where, user.Username)
 		}
+		if user.Registry {
+			if user.Password == "" {
+				return fmt.Errorf("%s %q has no password, which registry needs", where, user.Username)
+			}
+			// HTTP Basic splits the credentials at the first colon, so a name
+			// that holds one could never be sent
+			if strings.Contains(user.Username, ":") {
+				return fmt.Errorf("%s %q sets registry, and a registry username cannot hold a colon",
+					where, user.Username)
+			}
+		}
 		// the admin interface is reached with a session, and only an http
 		// account ever holds one
 		if user.IsAdmin && !user.HTTP {
@@ -984,7 +1013,66 @@ func (c Config) validateHTTP() error {
 			return fmt.Errorf("http.cleanup[%d].keep cannot be negative", i)
 		}
 	}
+	if err := c.validateRegistry(); err != nil {
+		return err
+	}
 	return checkFolder("http.basefolder", h.Basefolder)
+}
+
+// validateRegistry checks http.registryBaseFolder. The registry is the only
+// thing that may write to its folder: a served folder that overlapped it would
+// let a file upload replace a blob under its digest, or a listing show them.
+func (c Config) validateRegistry() error {
+	folder := c.HTTP.RegistryBaseFolder
+	if folder == "" {
+		return nil
+	}
+	if !filepath.IsAbs(folder) {
+		return fmt.Errorf("http.registryBaseFolder %q has to be an absolute path", folder)
+	}
+	if err := checkFolder("http.registryBaseFolder", folder); err != nil {
+		return err
+	}
+	served := []struct{ name, folder string }{
+		{"general.basefolder", c.General.Basefolder},
+		{"ftp.basefolder", c.FTP.Basefolder},
+		{"sftp.basefolder", c.SFTP.Basefolder},
+		{"http.basefolder", c.HTTP.Basefolder},
+		{"tftp.basefolder", c.TFTP.Basefolder},
+	}
+	for i, user := range c.Users {
+		served = append(served, struct{ name, folder string }{
+			fmt.Sprintf("users[%d].basefolder", i), user.Basefolder})
+	}
+	registry := comparablePath(folder)
+	for _, other := range served {
+		if other.folder == "" {
+			continue
+		}
+		if overlaps(registry, comparablePath(other.folder)) {
+			return fmt.Errorf("http.registryBaseFolder %q overlaps %s %q; "+
+				"it has to be a folder of its own", folder, other.name, other.folder)
+		}
+	}
+	return nil
+}
+
+// comparablePath is a folder as it is on disk, with its links resolved where
+// it exists, so that two spellings of one folder compare equal.
+func comparablePath(folder string) string {
+	if resolved, err := filepath.EvalSymlinks(folder); err == nil {
+		folder = resolved
+	}
+	return filepath.Clean(folder)
+}
+
+// overlaps reports whether one folder is, holds or lies inside the other.
+func overlaps(a, b string) bool {
+	inside := func(child, parent string) bool {
+		rel, err := filepath.Rel(parent, child)
+		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	}
+	return inside(a, b) || inside(b, a)
 }
 
 // ParseProxy reads one entry of http.trustedProxies: an address, or a CIDR

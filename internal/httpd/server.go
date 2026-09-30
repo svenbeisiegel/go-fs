@@ -86,6 +86,15 @@ type Server struct {
 	// uploadLocks serializes the finishing chunk of a chunked upload per
 	// target path; see uploadLock in handlers.go.
 	uploadLocks sync.Map
+	// registryMu is held shared by everything that adds to the registry and
+	// exclusively by its garbage collection, so a blob cannot be collected
+	// between being found unreferenced and being linked by a push.
+	registryMu sync.RWMutex
+	// registryRepositoryLocks serialize the changes to one repository and
+	// registryUploadLocks those to one upload; see registryLock in
+	// registry.go.
+	registryRepositoryLocks [64]sync.Mutex
+	registryUploadLocks     [64]sync.Mutex
 }
 
 // New prepares a server. The base folder has to exist and every configured
@@ -104,7 +113,15 @@ type settings struct {
 	// s3accounts are the [[users]] entries that set s3, which sign their
 	// requests to the S3 API. An entry that sets s3 and not http is only
 	// here, so it can neither log in through the browser nor send Basic.
-	s3accounts     []*account
+	s3accounts []*account
+	// registryAccounts are the [[users]] entries that set registry, which
+	// push to the container registry with Basic credentials. Like s3accounts
+	// they are a list of their own, so a registry-only entry cannot reach the
+	// file tree.
+	registryAccounts []*account
+	// registry is the store under http.registryBaseFolder, nil when the
+	// registry is off.
+	registry       *registryStore
 	protectedPaths []*regexp.Regexp
 	// proxies are http.trustedProxies compiled, the addresses whose
 	// X-Forwarded-For and X-Forwarded-Proto are believed.
@@ -122,14 +139,18 @@ func (s *Server) settings() *settings {
 // served.
 func newSettings(cfg config.HTTP, https config.HTTPS, users []config.User, tokens []config.Token, root *vfs.Root) (*settings, error) {
 	fold := root.CaseInsensitive()
-	var web, s3 []config.User
+	var web, s3, registry []config.User
 	for _, user := range users {
-		// an entry that sets s3 alone is an S3 account and nothing else
-		if user.HTTP || !user.S3 {
+		// an entry that sets s3 or registry alone is an account of that API
+		// and nothing else
+		if user.HTTP {
 			web = append(web, user)
 		}
 		if user.S3 {
 			s3 = append(s3, user)
+		}
+		if user.Registry {
+			registry = append(registry, user)
 		}
 	}
 	accounts, err := buildAccounts(web, fold)
@@ -139,6 +160,17 @@ func newSettings(cfg config.HTTP, https config.HTTPS, users []config.User, token
 	s3accounts, err := buildAccounts(s3, fold)
 	if err != nil {
 		return nil, err
+	}
+	registryAccounts, err := buildAccounts(registry, fold)
+	if err != nil {
+		return nil, err
+	}
+	var store *registryStore
+	if cfg.RegistryBaseFolder != "" {
+		store, err = newRegistryStore(cfg.RegistryBaseFolder)
+		if err != nil {
+			return nil, fmt.Errorf("http.registryBaseFolder: %w", err)
+		}
 	}
 	bearers, err := buildTokens(tokens, fold)
 	if err != nil {
@@ -161,7 +193,8 @@ func newSettings(cfg config.HTTP, https config.HTTPS, users []config.User, token
 		proxies = append(proxies, prefix)
 	}
 	return &settings{cfg: cfg, https: https, accounts: accounts, tokens: bearers,
-		s3accounts: s3accounts, protectedPaths: protected, proxies: proxies}, nil
+		s3accounts: s3accounts, registryAccounts: registryAccounts, registry: store,
+		protectedPaths: protected, proxies: proxies}, nil
 }
 
 // Reload swaps the accounts, the tokens, the paths and the limits that are read
@@ -186,6 +219,7 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, users []config.User
 		// a broken account or pattern leaves the running one in place
 		return err
 	}
+	s.warnAboutTheRegistry(next)
 	// the token lifetime needs nothing done to it: it is read from the
 	// snapshot when a token is minted, so a reload changes what is issued from
 	// here on and leaves a live token with the expiry it was signed with. The
@@ -308,6 +342,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	s.warnAboutTheAdminInterface(set)
+	s.warnAboutTheRegistry(set)
 
 	go func() {
 		<-ctx.Done()
@@ -445,6 +480,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// so it is not resolved the way a path of the file tree is
 	if isS3Request(r) {
 		s.handleS3(set, w, r)
+		return
+	}
+
+	// the container registry owns /v2 while it is on: its paths name
+	// repositories, blobs and manifests rather than files, so they are not
+	// resolved against the served folder
+	if set.registry != nil && isRegistryPath(r.URL.Path) {
+		s.handleRegistry(set, w, r)
 		return
 	}
 

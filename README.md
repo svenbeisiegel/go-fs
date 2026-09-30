@@ -134,8 +134,10 @@ is in.
 
 Accounts are one `[[users]]` table each, and every server draws from the same
 list: an account is configured once, with one password, and says which servers
-it may log in to with `ftp = true`, `sftp = true` and `http = true`, and whether
-it may use the [S3 API](#s3) with `s3 = true`, each off unless set. There is no default account, so a name that is not listed cannot
+it may log in to with `ftp = true`, `sftp = true` and `http = true`, whether
+it may use the [S3 API](#s3) with `s3 = true`, and whether it may push to the
+[container registry](#container-registry) with `registry = true`, each off
+unless set. There is no default account, so a name that is not listed cannot
 log in anywhere, and a name is listed once — the same person on FTP and HTTP is
 one entry with both switches on. An entry that switches nothing on is kept
 without being served, which is the way to park an account.
@@ -143,7 +145,9 @@ without being served, which is the way to park an account.
 Each account may have its own `basefolder`, which FTP and SFTP serve instead of
 the server's; HTTP scopes an account by `paths` instead. `allowLoginWithoutPassword`
 is read by FTP alone, `authorizedKeys` by SFTP alone and `paths` by HTTP and S3;
-the servers a key does not apply to ignore it.
+the servers a key does not apply to ignore it. The container registry reads
+neither `paths` nor the rights below: `registry = true` is the whole of what an
+account may do there.
 
 **The shipped file defines no account.** The examples in it are commented out on
 purpose, so a fresh configuration serves nobody until you put a name and a
@@ -178,6 +182,8 @@ further than its name says:
 | S3 `PutObject` of a key ending in `/` | `allowUserFolderCreate` |
 | S3 `DeleteObject` | `allowUserFileDelete`, or `allowUserFolderDelete` for a key ending in `/` |
 | S3 `CopyObject`, `UploadPartCopy` | `allowUserFileRetrieve` on the source, and create or overwrite on the target |
+| Registry push, tag and delete | `registry`; the rights above do not apply |
+| Registry pull | nothing while `http.registryAnonymousRead` is on, `registry` when it is off |
 
 Anonymous access is not a setting of its own, just an account that takes no
 password:
@@ -702,6 +708,116 @@ not taken for an S3 request at all.
   response does, so give S3 accounts long random passwords and use the TLS
   port.
 
+### Container registry
+
+The HTTP server can also be a **container registry**: docker, podman, buildx,
+crane and every other client of the
+[OCI Distribution Specification](https://github.com/opencontainers/distribution-spec)
+v1.1 push images to it and pull them from it, on its plain port and its TLS
+port alike. It is off until `http.registryBaseFolder` names the folder the
+registry keeps its images in; each account that should push sets
+`registry = true`:
+
+```toml
+[http]
+enabled = true
+registryBaseFolder = "/srv/registry"
+registryAnonymousRead = true
+
+[[users]]
+username = "ci"
+password = "…"
+registry = true
+```
+
+```shell
+docker login host:9443
+docker tag app:latest host:9443/team/app:1.0
+docker push host:9443/team/app:1.0
+docker pull host:9443/team/app:1.0
+```
+
+| | |
+|---|---|
+| Endpoint | `host:9443` (or the plain port), under `/v2/` |
+| Storage | `http.registryBaseFolder`, which nothing else may serve |
+| Pulling | anyone while `http.registryAnonymousRead = true` (the default), otherwise an account that sets `registry` |
+| Pushing, tagging, deleting | an account that sets `registry` |
+| Credentials | a token from `/v2/_token`, fetched with the account's username and password as `docker login` does, or HTTP Basic on every request |
+
+The folder has to exist, and it must be none of the folders the servers serve,
+nor hold one or lie inside one: go-fs refuses to start with it otherwise, and
+`-check` says why. Everything in it is managed by the registry, which addresses
+content by its digest alone, so a layer that several images, architectures or
+repositories share is stored once. While the registry is on it answers every path under `/v2`, so a folder
+`v2` in `http.basefolder` cannot be reached over HTTP; go-fs says so at warning
+level. Both settings take effect on a reload.
+
+`registry` is independent of `http`: an account that sets only `registry`
+cannot reach the file tree, and an `http` account that does not set it may
+pull where pulling is public and is refused with `403` where it is not.
+
+Clients log in the way every public registry has them do: `/v2/` answers
+`401` with a `Bearer` challenge that names `/v2/_token`, the client fetches a
+token there, with the username and password it was given by `docker login` or
+without any, and sends the token with every request after. A token without an
+account pulls where pulling is public; a token of an account that sets
+`registry` does everything. Tokens are signed with the key of the browser
+sessions, `http.httpSessionTokenSecret`, but cannot stand in for one, and are
+accepted for five minutes; changing the account's password ends them at once.
+A request may also carry Basic credentials itself, which is what `curl -u`
+sends. A wrong password counts against the address in the same lock as
+everywhere else, so `docker login` with a wrong one fails as it should.
+
+**Several architectures under one tag.** A tag names either an image for one
+platform or an index that lists one image per platform, which is what
+`docker buildx build --platform linux/amd64,linux/arm64 --push` pushes and what
+a pull picks the right image from. go-fs also builds that index itself: an
+image pushed to a tag that holds an image for another platform joins it in an
+index instead of replacing it, so images built on an amd64 and an arm64
+machine and pushed separately end up under one tag:
+
+```shell
+# on an amd64 machine
+docker push host:9443/team/app:1.0
+# on an arm64 machine
+docker push host:9443/team/app:1.0
+docker manifest inspect host:9443/team/app:1.0   # lists linux/amd64 and linux/arm64
+```
+
+The platform comes from the image's configuration. An image for a platform
+the tag already holds replaces that entry and the attestations buildx attached
+to it; an index that is pushed, and an artifact that is not an image, replace
+the tag as they are. The push is answered with the digest of what was pushed,
+and the tag then names the index, which the registry keeps only for as long as
+a tag points to it.
+
+What is served:
+
+- **Pulling.** Manifests by tag or digest, blobs with ranges, the tag list and
+  the `_catalog` of repositories, both paged with `n` and `last`, and the
+  referrers of a manifest with the `artifactType` filter.
+- **Pushing.** Blob uploads in one request, in chunks with `Content-Range`, or
+  streamed in one `PATCH` as docker sends them, and mounted from another
+  repository. Every blob is checked against its digest before it is stored,
+  SHA-256 and SHA-512 alike. `maxUploadSize` applies to a blob as a whole,
+  `maxChunkSize` does not. Manifests are the OCI image manifest and index and
+  Docker's schema 2 manifest and manifest list; a manifest is refused while a
+  blob or manifest it refers to is not in the repository.
+- **Deleting.** A tag, a manifest with the tags pointing to it, and a blob.
+
+Cleanup runs with the hourly sweep: an upload nothing has been added to for
+24 hours is removed, and so is a blob that no manifest of any repository refers
+to and that has not been pushed or mounted in the last 24 hours. A manifest
+stays until it is deleted, tagged or not: an image a newer push has taken the
+tag from can still be pulled by its digest, and its blobs are kept for it.
+
+- **Plain HTTP.** Docker only talks to a registry over plain HTTP when it is
+  `localhost` or listed in `insecure-registries` of the daemon's
+  configuration; use the TLS port everywhere else.
+- **`http.writeTimeout`** caps how long a pull of a large layer may take, as
+  it caps any download.
+
 ### Updating over HTTP
 
 A running go-fs can be updated through its own HTTP or HTTPS port. The upload is
@@ -995,6 +1111,15 @@ Bucket: `ListBuckets`, `HeadBucket`, `GetBucketLocation`, `GetBucketVersioning`,
 `PutObject`, `CopyObject`, `DeleteObject`, `CreateMultipartUpload`,
 `UploadPart`, `UploadPartCopy`, `ListParts`, `CompleteMultipartUpload` and
 `AbortMultipartUpload`.
+
+**Registry** — the OCI Distribution Specification v1.1 under `/v2/` on the HTTP
+listeners, with the Bearer token flow of the Docker registry (a JWT, RFC 7519,
+from `/v2/_token`) and HTTP Basic authentication: pulling manifests and blobs,
+monolithic, chunked, streamed and mounted blob uploads, pushing and deleting
+manifests and tags, the tag list, the `_catalog` extension and the referrers
+API. OCI image manifests and indexes and Docker schema 2 manifests and
+manifest lists; SHA-256 and SHA-512 digests. Images for different platforms
+pushed to one tag are merged into an index.
 
 **TFTP** — the protocol has no accounts and no passwords and no way to carry
 them, so anyone who can reach `tftp.port` can read what `allowRead` allows and

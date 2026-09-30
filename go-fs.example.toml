@@ -54,6 +54,12 @@ logFormat = "text"
 # the username as the access key and the password as the secret key. It is
 # independent of http, and the paths and rights below apply to it alike.
 # s3 = true
+# Let this account push images to and delete them from the container registry
+# of the http server (see http.registryBaseFolder), logging in with its
+# username and password as docker login does, and pull from it when
+# http.registryAnonymousRead is off. It is independent of http; the paths and
+# rights below do not apply to it.
+# registry = true
 # own folder for this account on ftp and sftp, the server's basefolder when
 # empty
 # basefolder = "/srv/files/john"
@@ -303,6 +309,18 @@ enableSelfUpdate = false
 # https://host:9443/docs/key. A request without such a signature is served as
 # it always was.
 enableS3 = true
+
+# Serve an OCI container registry under /v2/ on both listeners, which docker,
+# podman and buildx push to and pull from, and keep its blobs, manifests and
+# tags in this folder. Empty turns the registry off, and /v2 is then an
+# ordinary path of the served folder. The folder has to exist, and it must
+# neither be nor hold nor lie inside a folder that any server serves: nothing
+# but the registry may write to it. Pushing and deleting take a [[users]]
+# entry that sets registry = true.
+registryBaseFolder = ""
+# Let anyone pull from the registry without credentials. With it off, pulling
+# takes an account that sets registry = true, as pushing always does.
+registryAnonymousRead = true
 
 # maximum simultaneous connections
 maxConnections = 100
