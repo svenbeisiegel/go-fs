@@ -35,11 +35,9 @@ type account struct {
 	isAdmin bool
 
 	// The rest is only set for a bearer token. hash is what the token is
-	// matched by, expires when it stops being accepted (zero for never), and
-	// root the folder it is served from, nil for the server's own.
+	// matched by, and expires when it stops being accepted (zero for never).
 	hash    string
 	expires time.Time
-	root    *vfs.Root
 }
 
 // allows reports whether this account may reach a normalized request path.
@@ -496,10 +494,7 @@ func actionOf(method string, target vfs.Target) action {
 // one exception: a public PUT never replaced what was there, and it still does
 // not — only an account granted allowUserFileOverwrite may.
 func (s *Server) permits(set *settings, user *account, method, virtual string, act action) bool {
-	// what is public is public in the served folder; a token with a base
-	// folder of its own sees another tree, where only its own rights count
-	ownTree := user != nil && user.root != nil
-	if act != actOverwrite && !ownTree && !s.needsAuth(set, method, virtual) {
+	if act != actOverwrite && !s.needsAuth(set, method, virtual) {
 		return true
 	}
 	if user == nil || !user.allows(virtual) {

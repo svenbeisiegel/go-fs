@@ -187,13 +187,8 @@ type Token struct {
 	// such as 2026-12-31T23:59:59Z. A token without one never expires.
 	Expires string `toml:"expires,omitempty"`
 
-	// Basefolder is the folder a request with this token is served from: the
-	// request path / is this folder. Without one the token sees the HTTP
-	// server's own folder.
-	Basefolder string `toml:"basefolder,omitempty"`
-	// Paths are regular expressions matched against the request path, which
-	// is relative to the token's base folder, after it has been normalized. A
-	// token with no pattern can reach nothing.
+	// Paths are regular expressions matched against the request path, after
+	// it has been normalized. A token with no pattern can reach nothing.
 	Paths []string `toml:"paths,omitempty"`
 
 	AllowUserFileCreate    *bool `toml:"allowUserFileCreate,omitempty"`
@@ -205,7 +200,7 @@ type Token struct {
 
 	// AllowSelfUpdate lets the token upload a new go-fs binary to
 	// ?go-fs=update, which needs http.enableSelfUpdate as well. It is
-	// independent of paths and basefolder.
+	// independent of paths.
 	AllowSelfUpdate *bool `toml:"allowSelfUpdate,omitempty"`
 }
 
@@ -213,7 +208,6 @@ type Token struct {
 // account: every right has to be granted explicitly.
 func (t Token) Permissions() Permissions {
 	return Permissions{
-		Basefolder:    t.Basefolder,
 		FileCreate:    boolOr(t.AllowUserFileCreate, false),
 		FileRetrieve:  boolOr(t.AllowUserFileRetrieve, false),
 		FileOverwrite: boolOr(t.AllowUserFileOverwrite, false),
@@ -873,15 +867,6 @@ func (c Config) validateTokens() error {
 			if _, err := time.Parse(time.RFC3339, token.Expires); err != nil {
 				return fmt.Errorf("%s %q: expires %q is not an RFC 3339 time "+
 					"such as 2026-12-31T23:59:59Z", where, token.Name, token.Expires)
-			}
-		}
-		if token.Basefolder != "" {
-			if !filepath.IsAbs(token.Basefolder) {
-				return fmt.Errorf("%s.basefolder %q has to be an absolute path",
-					where, token.Basefolder)
-			}
-			if err := checkFolder(where+".basefolder", token.Basefolder); err != nil {
-				return err
 			}
 		}
 		for k, pattern := range token.Paths {

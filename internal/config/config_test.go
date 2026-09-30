@@ -202,12 +202,6 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		{"token expiry", func(c *Config) {
 			c.Tokens = []Token{{Name: "ci", Hash: HashToken("a"), Expires: "tomorrow"}}
 		}, "RFC 3339"},
-		{"token basefolder", func(c *Config) {
-			c.Tokens = []Token{{Name: "ci", Hash: HashToken("a"), Basefolder: filepath.Join(folder, "nope")}}
-		}, "tokens[0].basefolder"},
-		{"relative token basefolder", func(c *Config) {
-			c.Tokens = []Token{{Name: "ci", Hash: HashToken("a"), Basefolder: "files"}}
-		}, "absolute path"},
 		{"broken token path pattern", func(c *Config) {
 			c.Tokens = []Token{{Name: "ci", Hash: HashToken("a"), Paths: []string{"([bad"}}}
 		}, "tokens[0].paths[0]"},
@@ -575,10 +569,10 @@ func TestTokens(t *testing.T) {
 	}
 
 	yes := true
-	token := Token{Name: "ci", Hash: hash, Basefolder: t.TempDir(), AllowUserFileRetrieve: &yes,
+	token := Token{Name: "ci", Hash: hash, AllowUserFileRetrieve: &yes,
 		Expires: "2030-01-02T03:04:05Z", Paths: []string{"^/.*"}}
 	perms := token.Permissions()
-	if !perms.FileRetrieve || perms.FileCreate || perms.FileDelete || perms.Basefolder != token.Basefolder {
+	if !perms.FileRetrieve || perms.FileCreate || perms.FileDelete {
 		t.Errorf("permissions %+v", perms)
 	}
 	if at, ok := token.ExpiresAt(); !ok || at.Year() != 2030 {
@@ -589,8 +583,8 @@ func TestTokens(t *testing.T) {
 	}
 
 	cfg := Default()
-	cfg.FTP.Basefolder = token.Basefolder
-	cfg.TFTP.Basefolder = token.Basefolder
+	cfg.FTP.Basefolder = t.TempDir()
+	cfg.TFTP.Basefolder = cfg.FTP.Basefolder
 	cfg.Tokens = []Token{token}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("a valid token was refused: %v", err)

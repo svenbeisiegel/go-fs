@@ -339,9 +339,8 @@ func (s *Server) handleChunkedPut(set *settings, w http.ResponseWriter, r *http.
 		return
 	}
 
-	// both are keyed by the file on disk rather than by the request path: a
-	// bearer token with a base folder of its own sees another tree under the
-	// same paths, and its upload must not meet an account's
+	// both are keyed by the file on disk rather than by the request path, so
+	// two uploads meet whenever they name the same file
 	staging := stagingPath(set, target.Path)
 	lock := s.uploadLock(target.Path)
 	lock.Lock()
@@ -868,7 +867,7 @@ func (s *Server) destinationOf(set *settings, w http.ResponseWriter, r *http.Req
 		return vfs.Target{}, false
 	}
 
-	destination := s.rootFor(user).Resolve("/", parsed.Path)
+	destination := s.root.Resolve("/", parsed.Path)
 	if !destination.Valid || destination.IsRoot() {
 		s.log.Debug("http rename destination refused", "destination", parsed.Path)
 		http.NotFound(w, r)
@@ -949,7 +948,7 @@ func (s *Server) handleDirectoryReader(set *settings, w http.ResponseWriter, r *
 	// the request path names the reader script, so the listing is relative to
 	// the folder that script sits in
 	base := path.Dir(target.Virtual)
-	listed := s.rootFor(user).Resolve(base, folder)
+	listed := s.root.Resolve(base, folder)
 	if !listed.Valid {
 		s.log.Debug("http directory reader path refused", "dir", folder)
 		http.NotFound(w, r)

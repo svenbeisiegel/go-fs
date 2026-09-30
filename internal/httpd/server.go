@@ -453,16 +453,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := cred.user
-	if user != nil && user.root != nil {
-		// a token with a base folder of its own is served from it: the path
-		// names the same place relative to another folder
-		target = user.root.Resolve("/", r.URL.Path)
-		if !target.Valid {
-			s.log.Debug("http path refused", "url", r.URL.Path, "user", user.name)
-			http.NotFound(w, r)
-			return
-		}
-	}
 	act := actionOf(r.Method, target)
 	if !s.permits(set, user, r.Method, target.Virtual, act) {
 		s.log.Debug("http request not allowed for the account",

@@ -184,7 +184,7 @@ func TestValuesRoundTrip(t *testing.T) {
 	cfg.HTTP.Cleanup = []config.Cleanup{{Path: "/iso", Keep: 10}}
 	cfg.Tokens = []config.Token{
 		{Name: "ci", Hash: strings.Repeat("ab", 32), Expires: "2030-01-02T03:04:05Z",
-			Basefolder: "/srv/ci", Paths: []string{"^/.*"}, AllowUserFileCreate: &yes},
+			Paths: []string{"^/.*"}, AllowUserFileCreate: &yes},
 	}
 
 	first := schema.Values(cfg)
@@ -228,7 +228,7 @@ func TestValuesRoundTrip(t *testing.T) {
 	}
 	got, want := applied.Tokens[0], cfg.Tokens[0]
 	if got.Name != want.Name || got.Hash != want.Hash || got.Expires != want.Expires ||
-		got.Basefolder != want.Basefolder || !reflect.DeepEqual(got.Paths, want.Paths) ||
+		!reflect.DeepEqual(got.Paths, want.Paths) ||
 		got.Permissions() != want.Permissions() {
 		t.Errorf("the token did not survive: %+v", got)
 	}

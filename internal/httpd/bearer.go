@@ -8,7 +8,6 @@ import (
 
 	"go-fs/internal/config"
 	"go-fs/internal/secrets"
-	"go-fs/internal/vfs"
 )
 
 // tokenPrefix is what a bearer token's account is named with, so that the
@@ -16,9 +15,8 @@ import (
 const tokenPrefix = "token:"
 
 // buildTokens resolves the [[tokens]] entries once, at startup and on every
-// reload. A token with a base folder gets a root of its own, and its paths
-// fold case as that folder does; one without is served the server's folder,
-// whose fold is fold.
+// reload. Every token is served the server's folder, so its paths fold case
+// as that folder does, which is fold.
 func buildTokens(tokens []config.Token, fold bool) ([]*account, error) {
 	resolved := make([]*account, 0, len(tokens))
 	for _, token := range tokens {
@@ -30,17 +28,8 @@ func buildTokens(tokens []config.Token, fold bool) ([]*account, error) {
 		if at, ok := token.ExpiresAt(); ok {
 			entry.expires = at
 		}
-		folds := fold
-		if token.Basefolder != "" {
-			root, err := vfs.New(token.Basefolder)
-			if err != nil {
-				return nil, fmt.Errorf("tokens %q basefolder: %w", token.Name, err)
-			}
-			entry.root = root
-			folds = root.CaseInsensitive()
-		}
 		for k, pattern := range token.Paths {
-			compiled, err := compilePattern(pattern, folds)
+			compiled, err := compilePattern(pattern, fold)
 			if err != nil {
 				return nil, fmt.Errorf("tokens %q paths[%d]: %w", token.Name, k, err)
 			}
@@ -87,13 +76,4 @@ func (s *Server) refuseBearer(set *settings, w http.ResponseWriter, r *http.Requ
 	w.Header().Set("WWW-Authenticate",
 		fmt.Sprintf(`Bearer realm=%q, error="invalid_token"`, set.cfg.Realm))
 	http.Error(w, "Invalid token", http.StatusUnauthorized)
-}
-
-// rootFor is the folder a request by user is served from: a token's own base
-// folder, or the server's.
-func (s *Server) rootFor(user *account) *vfs.Root {
-	if user != nil && user.root != nil {
-		return user.root
-	}
-	return s.root
 }

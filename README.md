@@ -561,10 +561,6 @@ What a token may do is set on its own entry:
 - **Rights:** the same `allowUser*` rights as an account.
 - **`paths`:** regular expressions matched against the request path. A token
   with no pattern can reach nothing.
-- **`basefolder`:** optional. When set, requests with the token are served from
-  that folder instead of the HTTP server's, so `/` is the token's folder and
-  nothing outside it can be reached. What is public in the server's folder is
-  not public there either, so only the token's own rights count.
 - **`expires`:** an RFC 3339 time. Edit it to extend a token, or clear it to
   make the token permanent.
 
@@ -590,7 +586,7 @@ It is off by default. Turn it on with `http.enableSelfUpdate = true`, and allow
 at least one client:
 
 - **A bearer token** that sets `allowSelfUpdate = true`, for scripts. The token's
-  `paths` and `basefolder` do not matter here.
+  `paths` do not matter here.
 - **An admin's browser session.** The admin interface then shows an **UPDATE**
   tab with the running version and an upload button.
 

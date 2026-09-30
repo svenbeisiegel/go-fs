@@ -5,8 +5,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -112,64 +110,6 @@ func TestBearerTokenPaths(t *testing.T) {
 	if res := bearer(t, server, http.MethodGet, "/private/other/b.txt", plain, nil); res.StatusCode != http.StatusForbidden {
 		t.Errorf("an unlisted path was answered %d, want 403", res.StatusCode)
 	}
-}
-
-// A token with a base folder is served from it: / is that folder, the
-// server's own folder is out of reach, and what is public in the server's
-// folder is not public in the token's.
-func TestBearerTokenBasefolder(t *testing.T) {
-	folder := t.TempDir()
-	if err := os.WriteFile(filepath.Join(folder, "mine.txt"), []byte("mine"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	server, plain := tokenServer(t, func(token *config.Token) {
-		token.Basefolder = folder
-	})
-	server.write(t, "theirs.txt", "theirs")
-
-	res := bearer(t, server, http.MethodGet, "/mine.txt", plain, nil)
-	if body := bodyOf(t, res); res.StatusCode != http.StatusOK || body != "mine" {
-		t.Errorf("the token's file: status %d body %q", res.StatusCode, body)
-	}
-	if res := bearer(t, server, http.MethodGet, "/theirs.txt", plain, nil); res.StatusCode != http.StatusNotFound {
-		t.Errorf("the server's file was answered %d, want 404", res.StatusCode)
-	}
-	if res := bearer(t, server, http.MethodPut, "/up.txt", plain, strings.NewReader("up")); res.StatusCode != http.StatusOK {
-		t.Errorf("PUT status %d", res.StatusCode)
-	}
-	if content, err := os.ReadFile(filepath.Join(folder, "up.txt")); err != nil || string(content) != "up" {
-		t.Errorf("the upload landed as %q, %v", content, err)
-	}
-	if _, err := os.Stat(filepath.Join(server.base, "up.txt")); !os.IsNotExist(err) {
-		t.Error("the upload landed in the server's folder")
-	}
-	// a move stays in the token's folder too
-	if res := bearerMove(t, server, "/up.txt", "/moved.txt", plain); res.StatusCode != http.StatusNoContent {
-		t.Errorf("MOVE status %d", res.StatusCode)
-	}
-	if _, err := os.Stat(filepath.Join(folder, "moved.txt")); err != nil {
-		t.Errorf("the moved file is not in the token's folder: %v", err)
-	}
-
-	// GET of / is public on this server, but not in the token's own tree
-	server2, plain2 := tokenServer(t, func(token *config.Token) {
-		token.Basefolder = folder
-		token.AllowUserFileRetrieve = nil
-	})
-	if res := bearer(t, server2, http.MethodGet, "/mine.txt", plain2, nil); res.StatusCode != http.StatusForbidden {
-		t.Errorf("a token without retrieve read its own folder: %d, want 403", res.StatusCode)
-	}
-}
-
-func bearerMove(t *testing.T, server *testServer, from, to, token string) *http.Response {
-	t.Helper()
-	req, err := http.NewRequest(methodMove, server.url(from), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Destination", server.url(to))
-	return do(t, req)
 }
 
 // An expired token and an unknown one are refused with a bearer challenge,

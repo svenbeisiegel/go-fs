@@ -134,14 +134,9 @@ logFormat = "text"
 # When the token stops being accepted, as an RFC 3339 time. A token without one
 # never expires.
 # expires = "2026-12-31T23:59:59Z"
-# The folder requests with this token are served from: the request path / is
-# this folder, and the http server's folder is out of its reach. Without one
-# the token sees the http server's folder, and what is public there stays
-# public to it.
-# basefolder = "/srv/files/backup"
 # What the token may reach: regular expressions matched against the request
-# path, relative to the token's basefolder, after it has been normalized. A
-# token with no pattern can reach nothing.
+# path, after it has been normalized. A token with no pattern can reach
+# nothing.
 # paths = ["^/.*"]
 # What the token may do, as for an http account. All false when not set.
 # allowUserFileCreate = true
