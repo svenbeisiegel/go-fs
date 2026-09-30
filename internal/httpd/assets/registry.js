@@ -1,7 +1,8 @@
 // The registry page is complete without this script: the rows are rendered by
 // the server and the views and the sort headers are ordinary links. What is
 // added here is what a link cannot do — filtering, the options of a tag, its
-// details, copying its pull command and deleting it.
+// details, copying its pull command and deleting it, and pulling an image
+// from another registry or pushing a tag to one.
 (function () {
   "use strict";
 
@@ -53,6 +54,28 @@
     banner.hidden = true;
   }
 
+  // A message that has to survive the reload after a pull is kept for the
+  // next page of this tab. Storage may be off; the reload then says nothing.
+  var carried = "go-fs-registry-banner";
+  try {
+    var kept = window.sessionStorage.getItem(carried);
+    if (kept) {
+      window.sessionStorage.removeItem(carried);
+      say(kept, true);
+    }
+  } catch (err) {
+    // nothing carried
+  }
+
+  function sayAfterReload(message) {
+    try {
+      window.sessionStorage.setItem(carried, message);
+    } catch (err) {
+      // the reload will show the new tag, which says it as well
+    }
+    window.location.reload();
+  }
+
   function tagURL(action, row) {
     return base + "?go-fs=" + action +
       "&repository=" + encodeURIComponent(row.dataset.repository) +
@@ -69,12 +92,17 @@
     return text || ("The server answered " + status + ".");
   }
 
-  function request(method, url) {
-    return fetch(url, {
+  function request(method, url, body) {
+    var options = {
       method: method,
       headers: { Accept: "application/json" },
       credentials: "same-origin"
-    }).then(function (res) {
+    };
+    if (body !== undefined) {
+      options.headers["Content-Type"] = "application/json";
+      options.body = JSON.stringify(body);
+    }
+    return fetch(url, options).then(function (res) {
       if (res.ok) {
         return res;
       }
@@ -242,6 +270,8 @@
       showDetails(row);
     } else if (item.dataset.do === "copy") {
       copyPull(row);
+    } else if (item.dataset.do === "push") {
+      openPush(row);
     } else if (item.dataset.do === "delete") {
       deleteTag(row);
     }
@@ -343,6 +373,287 @@
     }, function () {
       showPull(command);
     });
+  }
+
+  // --- pulling from and pushing to another registry --------------------
+  //
+  // The server does the copying, as a job of its own: the dialog starts it,
+  // then asks every second how far it has got. Closing the dialog leaves the
+  // job running, and the banner says how it ended.
+
+  function transfer(dialog, start, finished) {
+    var form = dialog.querySelector("form");
+    var progress = dialog.querySelector(".progress");
+    var bar = progress.querySelector("progress");
+    var status = progress.querySelector(".status");
+    var go = form.querySelector("button[value='start']");
+    var stop = form.querySelector("button[value='stop']");
+    var close = form.querySelector("button[value='cancel']");
+    var job = null;
+
+    function busy(on) {
+      Array.prototype.forEach.call(form.querySelectorAll("input"), function (input) {
+        input.disabled = on;
+      });
+      go.hidden = on;
+      stop.hidden = !on;
+      close.textContent = on ? "Close" : "Cancel";
+    }
+
+    function tell(message, bad) {
+      progress.hidden = false;
+      status.textContent = message;
+      status.classList.toggle("bad", bad === true);
+    }
+
+    function show(view) {
+      if (view.bytesTotal > 0) {
+        bar.max = view.bytesTotal;
+        bar.value = Math.min(view.bytesDone, view.bytesTotal);
+      } else {
+        // not known yet: the bar runs without a value
+        bar.removeAttribute("value");
+      }
+      if (view.blobsTotal > 0) {
+        tell(view.blobsDone + " of " + view.blobsTotal + " blobs · " +
+          readableSize(view.bytesDone) + " of " + readableSize(view.bytesTotal));
+      } else {
+        tell("Reading the manifests…");
+      }
+    }
+
+    function end(view) {
+      job = null;
+      busy(false);
+      if (view.state === "done") {
+        form.reset();
+        progress.hidden = true;
+        if (dialog.open) {
+          dialog.close();
+        }
+        finished(view);
+        return;
+      }
+      var message = view.state === "cancelled" ? "Stopped." : (view.message || "The transfer failed.");
+      bar.value = 0;
+      tell(message, view.state !== "cancelled");
+      if (!dialog.open) {
+        say(view.what ? view.what + ": " + message : message);
+      }
+    }
+
+    function poll() {
+      if (!job) {
+        return;
+      }
+      request("GET", base + "?go-fs=registry-job&id=" + encodeURIComponent(job)).then(function (res) {
+        return res.json();
+      }).then(function (view) {
+        if (view.state === "running") {
+          show(view);
+          window.setTimeout(poll, 1000);
+          return;
+        }
+        end(view);
+      }).catch(function (err) {
+        end({ state: "failed", message: err.message, what: "" });
+      });
+    }
+
+    // The submit event rather than close, for the reason the listing gives:
+    // which button was pressed is only known there.
+    form.addEventListener("submit", function (event) {
+      var pressed = event.submitter ? event.submitter.value : "start";
+      if (pressed === "cancel") {
+        return;
+      }
+      event.preventDefault();
+      if (pressed === "stop") {
+        if (job) {
+          request("DELETE", base + "?go-fs=registry-job&id=" + encodeURIComponent(job)).catch(failed);
+        }
+        return;
+      }
+      var call = start();
+      busy(true);
+      bar.removeAttribute("value");
+      tell("Starting…");
+      request("POST", call.url, call.body).then(function (res) {
+        return res.json();
+      }).then(function (view) {
+        job = view.id;
+        show(view);
+        window.setTimeout(poll, 1000);
+      }).catch(function (err) {
+        busy(false);
+        tell(err.message, true);
+      });
+    });
+
+    return {
+      // open shows the dialog: as it was left while a job runs, fresh
+      // otherwise. It reports whether the dialog was fresh.
+      open: function () {
+        var fresh = !job;
+        if (fresh) {
+          progress.hidden = true;
+          status.textContent = "";
+        }
+        dialog.showModal();
+        return fresh;
+      }
+    };
+  }
+
+  // localName is where a pull stores an image, worked out the way the server
+  // does: the registry is dropped, and an official image of Docker Hub is
+  // under library/. It is only shown; the server decides.
+  function isHost(component) {
+    return /[.:]/.test(component) || component === "localhost";
+  }
+
+  function localName(value) {
+    var rest = value.trim().replace(/^https?:\/\//, "");
+    var byDigest = false;
+    var at = rest.indexOf("@");
+    if (at >= 0) {
+      rest = rest.slice(0, at);
+      byDigest = true;
+    }
+    var tag = "";
+    var colon = rest.lastIndexOf(":");
+    if (colon > rest.lastIndexOf("/")) {
+      tag = rest.slice(colon + 1);
+      rest = rest.slice(0, colon);
+    }
+    var hub = true;
+    var slash = rest.indexOf("/");
+    if (slash >= 0 && isHost(rest.slice(0, slash))) {
+      var host = rest.slice(0, slash).toLowerCase();
+      hub = host === "docker.io" || host === "index.docker.io";
+      rest = rest.slice(slash + 1);
+    }
+    if (rest === "") {
+      return "";
+    }
+    if (hub && rest.indexOf("/") < 0) {
+      rest = "library/" + rest;
+    }
+    if (tag === "") {
+      if (byDigest) {
+        return null;
+      }
+      tag = "latest";
+    }
+    return rest + ":" + tag;
+  }
+
+  // pushTarget is where a push puts a tag: the repository under the address,
+  // which may name a namespace after the registry.
+  function pushTarget(address, repository, tag) {
+    var rest = address.trim().replace(/^https?:\/\//, "").replace(/^\/+|\/+$/g, "");
+    if (rest === "") {
+      return "";
+    }
+    var slash = rest.indexOf("/");
+    var first = slash >= 0 ? rest.slice(0, slash) : rest;
+    var host = "docker.io";
+    var namespace = rest;
+    if (isHost(first)) {
+      host = first.toLowerCase();
+      namespace = slash >= 0 ? rest.slice(slash + 1) : "";
+    }
+    if (host === "index.docker.io") {
+      host = "docker.io";
+    }
+    var name = namespace ? namespace + "/" + repository : repository;
+    if (host === "docker.io" && name.indexOf("/") < 0) {
+      name = "library/" + name;
+    }
+    return host + "/" + name + ":" + tag;
+  }
+
+  var pullDialog = document.getElementById("remote-pull");
+  var pullButton = document.getElementById("pull-image");
+  if (pullDialog && pullButton) {
+    var pullField = function (name) {
+      return pullDialog.querySelector("input[name='" + name + "']");
+    };
+    var pullWhere = pullDialog.querySelector(".where");
+    var showLocal = function () {
+      var name = localName(pullField("reference").value);
+      if (name === null) {
+        pullWhere.textContent = "Name a tag along with the digest: the image is stored under it.";
+      } else {
+        pullWhere.textContent = name ? "Stored here as " + name : "";
+      }
+    };
+    pullField("reference").addEventListener("input", showLocal);
+    var pulling = transfer(pullDialog, function () {
+      return {
+        url: base + "?go-fs=registry-pull",
+        body: {
+          reference: pullField("reference").value.trim(),
+          platforms: pullField("platforms").value.trim(),
+          username: pullField("username").value.trim(),
+          password: pullField("password").value
+        }
+      };
+    }, function (view) {
+      sayAfterReload(view.message);
+    });
+    pullButton.addEventListener("click", function () {
+      clear();
+      if (pulling.open()) {
+        showLocal();
+        pullField("reference").focus();
+      }
+    });
+  }
+
+  var pushDialog = document.getElementById("remote-push");
+  var pushing = null;
+  var pushRow = null;
+  var showTarget = null;
+  if (pushDialog) {
+    var pushField = function (name) {
+      return pushDialog.querySelector("input[name='" + name + "']");
+    };
+    var pushWhere = pushDialog.querySelector(".where");
+    showTarget = function () {
+      var target = pushRow ? pushTarget(pushField("address").value,
+        pushRow.dataset.repository, pushRow.dataset.tag) : "";
+      pushWhere.textContent = target ? "Pushes to " + target : "";
+    };
+    pushField("address").addEventListener("input", showTarget);
+    pushing = transfer(pushDialog, function () {
+      return {
+        url: tagURL("registry-push", pushRow),
+        body: {
+          address: pushField("address").value.trim(),
+          username: pushField("username").value.trim(),
+          password: pushField("password").value
+        }
+      };
+    }, function (view) {
+      say(view.message, true);
+    });
+  }
+
+  function openPush(row) {
+    if (!pushing) {
+      return;
+    }
+    // while a push runs the dialog shows that one, whichever row asked
+    var previous = pushRow;
+    pushRow = row;
+    if (!pushing.open()) {
+      pushRow = previous;
+      return;
+    }
+    pushDialog.querySelector(".what").textContent = row.dataset.repository + ":" + row.dataset.tag;
+    showTarget();
+    pushDialog.querySelector("input[name='address']").focus();
   }
 
   // --- deleting a tag --------------------------------------------------

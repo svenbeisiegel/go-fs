@@ -23,6 +23,7 @@
       <a class="plain" href="{{.List}}"{{if not .Tree}} aria-current="page"{{end}}><svg class="ic"><use href="#i-list"/></svg>List</a>
       <a class="plain" href="{{.Folders}}"{{if .Tree}} aria-current="page"{{end}}><svg class="ic"><use href="#i-folder"/></svg>Folders</a>
     </nav>
+    {{if .Write}}<button id="pull-image" class="plain needs-js" type="button"><svg class="ic"><use href="#i-download"/></svg>Pull image</button>{{end}}
     {{template "session" .Session}}
   </div>
 </header>
@@ -76,7 +77,8 @@
 <div id="menu" class="menu" role="menu" hidden>
   <button type="button" role="menuitem" data-do="details"><svg class="ic"><use href="#i-info"/></svg>Details</button>
   <button type="button" role="menuitem" data-do="copy"><svg class="ic"><use href="#i-copy"/></svg>Copy pull command</button>
-  {{if .Delete}}<button type="button" role="menuitem" class="remove" data-do="delete"><svg class="ic"><use href="#i-trash"/></svg>Delete tag</button>{{end}}
+  {{if .Write}}<button type="button" role="menuitem" data-do="push"><svg class="ic"><use href="#i-upload"/></svg>Push to registry&#8230;</button>{{end}}
+  {{if .Write}}<button type="button" role="menuitem" class="remove" data-do="delete"><svg class="ic"><use href="#i-trash"/></svg>Delete tag</button>{{end}}
 </div>
 
 <dialog id="details" class="wide" aria-labelledby="details-title">
@@ -99,6 +101,60 @@
     </div>
   </form>
 </dialog>
+
+{{if .Write}}
+<dialog id="remote-pull" class="transfer" aria-labelledby="remote-pull-title">
+  <form method="dialog">
+    <h2 id="remote-pull-title">Pull image</h2>
+    <p>Copies an image from another registry into this one.</p>
+    <div class="fields">
+      <label for="pull-reference">Image</label>
+      <input id="pull-reference" name="reference" type="text" required placeholder="docker.io/library/nginx:latest" autocomplete="off" spellcheck="false">
+      <label for="pull-platforms">Platforms <span class="hint">optional</span></label>
+      <input id="pull-platforms" name="platforms" type="text" placeholder="all, or linux/amd64, linux/arm64" autocomplete="off" spellcheck="false">
+      <label for="pull-username">Username <span class="hint">optional</span></label>
+      <input id="pull-username" name="username" type="text" autocomplete="off" spellcheck="false">
+      <label for="pull-password">Password or token <span class="hint">optional</span></label>
+      <input id="pull-password" name="password" type="password" autocomplete="new-password">
+    </div>
+    <p class="where"></p>
+    <div class="progress" hidden>
+      <progress max="1"></progress>
+      <p class="status" role="status" aria-live="polite"></p>
+    </div>
+    <div class="row">
+      <button class="go" type="submit" value="start">Pull</button>
+      <button class="plain" type="submit" value="stop" formnovalidate hidden>Stop</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="remote-push" class="transfer" aria-labelledby="remote-push-title">
+  <form method="dialog">
+    <h2 id="remote-push-title">Push to registry</h2>
+    <p class="what"></p>
+    <div class="fields">
+      <label for="push-address">Registry address</label>
+      <input id="push-address" name="address" type="text" required placeholder="ghcr.io/my-org" autocomplete="off" spellcheck="false">
+      <label for="push-username">Username <span class="hint">optional</span></label>
+      <input id="push-username" name="username" type="text" autocomplete="off" spellcheck="false">
+      <label for="push-password">Password or token <span class="hint">optional</span></label>
+      <input id="push-password" name="password" type="password" autocomplete="new-password">
+    </div>
+    <p class="where"></p>
+    <div class="progress" hidden>
+      <progress max="1"></progress>
+      <p class="status" role="status" aria-live="polite"></p>
+    </div>
+    <div class="row">
+      <button class="go" type="submit" value="start">Push</button>
+      <button class="plain" type="submit" value="stop" formnovalidate hidden>Stop</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
 
 <dialog id="confirm">
   <form method="dialog">

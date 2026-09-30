@@ -98,6 +98,9 @@ type Server struct {
 	// registrySummaries are the images the registry page has read; see
 	// summarize in registry_page.go.
 	registrySummaries summaryCache
+	// registryJobs are the pulls from and pushes to other registries the
+	// registry page started; see registry_jobs.go.
+	registryJobs registryJobs
 }
 
 // New prepares a server. The base folder has to exist and every configured

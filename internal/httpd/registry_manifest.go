@@ -282,8 +282,7 @@ func (q *registryRequest) checkReferences(mediaType string, doc manifestDoc) *re
 		}
 	}
 	for _, layer := range doc.Layers {
-		if len(layer.URLs) > 0 || strings.Contains(layer.MediaType, "nondistributable") ||
-			strings.Contains(layer.MediaType, "foreign") {
+		if isForeign(layer) {
 			continue
 		}
 		if _, err := q.store.repoBlob(q.route.name, layer.Digest); err != nil {

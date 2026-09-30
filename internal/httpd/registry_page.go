@@ -2,10 +2,12 @@ package httpd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"net/url"
 	"slices"
@@ -29,18 +31,33 @@ import (
 // and otherwise a session of an account that sets registry. Deleting a tag
 // takes that session whatever the setting says, since it is what pushing
 // takes. A session is the only credential it reads, as for the admin
-// interface: a header is what docker sends, and docker has the API.
+// interface: a header is what docker sends, and docker has the API. Pulling
+// an image from another registry and pushing a tag to one take that session
+// too: the one writes to the registry, and the other hands its images to
+// wherever the account says.
 
 const (
 	actionRegistry      = "registry"
 	actionRegistryImage = "registry-image"
+	actionRegistryPull  = "registry-pull"
+	actionRegistryPush  = "registry-push"
+	actionRegistryJob   = "registry-job"
 )
+
+// registryPageMethods are the methods each endpoint of the page answers.
+var registryPageMethods = map[string]string{
+	actionRegistry:      "GET, HEAD, DELETE",
+	actionRegistryImage: "GET, HEAD",
+	actionRegistryPull:  "POST",
+	actionRegistryPush:  "POST",
+	actionRegistryJob:   "GET, HEAD, DELETE",
+}
 
 // registryPageAction reports which registry endpoint a request is for, or ""
 // for any other request.
 func registryPageAction(r *http.Request) string {
 	switch action := r.URL.Query().Get(sessionParam); action {
-	case actionRegistry, actionRegistryImage:
+	case actionRegistry, actionRegistryImage, actionRegistryPull, actionRegistryPush, actionRegistryJob:
 		return action
 	default:
 		return ""
@@ -129,12 +146,25 @@ func (s *Server) handleRegistryPage(set *settings, w http.ResponseWriter, r *htt
 			return
 		}
 		s.registryUntag(set, w, r, user)
-	default:
-		allowed := "GET, HEAD"
-		if action == actionRegistry {
-			allowed += ", DELETE"
+	case action == actionRegistryPull && r.Method == http.MethodPost:
+		if !s.sameSite(set, w, r) {
+			return
 		}
-		w.Header().Set("Allow", allowed)
+		s.registryPull(set, w, r, user)
+	case action == actionRegistryPush && r.Method == http.MethodPost:
+		if !s.sameSite(set, w, r) {
+			return
+		}
+		s.registryPush(set, w, r, user)
+	case action == actionRegistryJob && read:
+		s.registryJobStatus(w, r, user)
+	case action == actionRegistryJob && r.Method == http.MethodDelete:
+		if !s.sameSite(set, w, r) {
+			return
+		}
+		s.registryJobCancel(w, r, user)
+	default:
+		w.Header().Set("Allow", registryPageMethods[action])
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -441,8 +471,9 @@ type registryData struct {
 	Columns []column
 	Entries []registryRow
 	Empty   string
-	// Delete says the account may delete tags.
-	Delete  bool
+	// Write says the account may delete tags, pull images from another
+	// registry and push tags to one.
+	Write   bool
 	Session sessionView
 	Nonce   string
 	Style   template.CSS
@@ -519,7 +550,7 @@ func (s *Server) registryPage(set *settings, w http.ResponseWriter, r *http.Requ
 		Base:    base,
 		Columns: registryColumns(view, base),
 		Entries: rows,
-		Delete:  user != nil,
+		Write:   user != nil,
 		Session: who,
 		Nonce:   nonce,
 		Style:   listingStyle,
@@ -911,4 +942,165 @@ func (s *Server) registryUntag(set *settings, w http.ResponseWriter, r *http.Req
 	default:
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// --- pulling from and pushing to other registries ---------------------------
+
+// maxTransferRequest bounds the body of a pull or a push: a reference, an
+// address and a login.
+const maxTransferRequest = 16 << 10
+
+// readTransferRequest decodes the body of a pull or a push, and answers a
+// request that may not start one.
+func (s *Server) readTransferRequest(set *settings, w http.ResponseWriter, r *http.Request, user *account, into any) bool {
+	w.Header().Set("Cache-Control", "no-store")
+	if user == nil {
+		s.log.Info("http registry transfer refused, no session of a registry account",
+			"address", clientAddress(set, r))
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return false
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxTransferRequest)).Decode(into); err != nil {
+		http.Error(w, "The request could not be read.", http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
+// answerStarted answers a job that was started, or why it was not.
+func (s *Server) answerStarted(w http.ResponseWriter, job *registryJob, err error) {
+	switch {
+	case errors.Is(err, errTooManyJobs):
+		w.Header().Set("Retry-After", "30")
+		http.Error(w, err.Error(), http.StatusTooManyRequests)
+	case err != nil:
+		s.log.Error("registry cannot start a transfer", "error", err)
+		http.Error(w, "Server Error", http.StatusInternalServerError)
+	default:
+		writeJSON(w, http.StatusAccepted, job.view())
+	}
+}
+
+// registryPull starts copying an image from another registry into this one.
+func (s *Server) registryPull(set *settings, w http.ResponseWriter, r *http.Request, user *account) {
+	var body struct {
+		Reference string `json:"reference"`
+		Platforms string `json:"platforms"`
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+	}
+	if !s.readTransferRequest(set, w, r, user, &body) {
+		return
+	}
+	ref, err := parseRemoteReference(body.Reference)
+	if err == nil && ref.tag == "" {
+		err = errors.New("the image is stored under its tag, so name one along with the digest")
+	}
+	var filter platformFilter
+	if err == nil {
+		filter, err = parsePlatforms(body.Platforms)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	what := ref.String() + " → " + ref.repository + ":" + ref.tag
+	address := clientAddress(set, r)
+	job, err := s.startJob(jobPull, user.name, what, func(ctx context.Context, job *registryJob) (string, error) {
+		message, err := s.pullImage(ctx, set, job, ref, filter, strings.TrimSpace(body.Username), body.Password, user)
+		if err != nil && ctx.Err() == nil {
+			s.log.Warn("registry pull failed", "source", ref.String(), "user", user.name,
+				"address", address, "error", err)
+		}
+		return message, err
+	})
+	if err == nil {
+		s.log.Info("registry pull started", "source", ref.String(), "platforms", strings.Join(filter, ","),
+			"login", body.Username != "", "user", user.name, "address", address, "job", job.id)
+	}
+	s.answerStarted(w, job, err)
+}
+
+// registryPush starts copying a tag of this registry to another one.
+func (s *Server) registryPush(set *settings, w http.ResponseWriter, r *http.Request, user *account) {
+	var body struct {
+		Address  string `json:"address"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if !s.readTransferRequest(set, w, r, user, &body) {
+		return
+	}
+	store := set.registry
+	name, tag, tags, ok, err := registryTagQuery(store, r)
+	if err != nil {
+		s.log.Error("registry page cannot read the tags", "repository", name, "error", err)
+		http.Error(w, "Server Error", http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.Error(w, "That tag is not in the registry.", http.StatusNotFound)
+		return
+	}
+	target, err := parseRemoteTarget(body.Address)
+	var ref remoteRef
+	if err == nil {
+		ref, err = target.reference(name, tag)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	d := tags[tag]
+	what := name + ":" + tag + " → " + ref.String()
+	address := clientAddress(set, r)
+	job, err := s.startJob(jobPush, user.name, what, func(ctx context.Context, job *registryJob) (string, error) {
+		message, err := s.pushImage(ctx, set, job, name, tag, d, ref, strings.TrimSpace(body.Username), body.Password, user)
+		if err != nil && ctx.Err() == nil {
+			s.log.Warn("registry push failed", "repository", name, "tag", tag, "target", ref.String(),
+				"user", user.name, "address", address, "error", err)
+		}
+		return message, err
+	})
+	if err == nil {
+		s.log.Info("registry push started", "repository", name, "tag", tag, "target", ref.String(),
+			"login", body.Username != "", "user", user.name, "address", address, "job", job.id)
+	}
+	s.answerStarted(w, job, err)
+}
+
+// jobOf finds the job a request names, and answers a request for one that
+// is not the caller's.
+func (s *Server) jobOf(w http.ResponseWriter, r *http.Request, user *account) *registryJob {
+	w.Header().Set("Cache-Control", "no-store")
+	if user == nil {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return nil
+	}
+	job := s.job(r.URL.Query().Get("id"), user.name)
+	if job == nil {
+		http.Error(w, "That transfer is not known.", http.StatusNotFound)
+	}
+	return job
+}
+
+// registryJobStatus says how far a transfer has got.
+func (s *Server) registryJobStatus(w http.ResponseWriter, r *http.Request, user *account) {
+	if job := s.jobOf(w, r, user); job != nil {
+		writeJSON(w, http.StatusOK, job.view())
+	}
+}
+
+// registryJobCancel stops a transfer. What it had fetched stays in the store
+// for the garbage collection, or for the next pull of the same image.
+func (s *Server) registryJobCancel(w http.ResponseWriter, r *http.Request, user *account) {
+	job := s.jobOf(w, r, user)
+	if job == nil {
+		return
+	}
+	if job.running() {
+		s.log.Info("registry transfer stopped", "job", job.id, "what", job.what, "user", user.name)
+		job.cancel()
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
