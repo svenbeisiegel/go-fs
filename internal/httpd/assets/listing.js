@@ -439,20 +439,50 @@
     picker.value = "";
   });
 
-  ["dragenter", "dragover"].forEach(function (name) {
-    document.addEventListener(name, function (event) {
+  // The overlay is shown only for a drag that carries files, so dragging
+  // text around the page, into the filter say, goes on as normal. depth
+  // counts the elements the drag is inside of: every one it enters is left
+  // again, and it has left the window once none are left.
+  var depth = 0;
+  function carriesFiles(event) {
+    return !!event.dataTransfer &&
+      Array.prototype.indexOf.call(event.dataTransfer.types, "Files") !== -1;
+  }
+  function hideDrop() {
+    depth = 0;
+    drop.hidden = true;
+  }
+  document.addEventListener("dragenter", function (event) {
+    if (!carriesFiles(event)) {
+      return;
+    }
+    event.preventDefault();
+    depth++;
+    drop.hidden = false;
+  });
+  document.addEventListener("dragover", function (event) {
+    if (carriesFiles(event)) {
       event.preventDefault();
-      drop.classList.add("over");
-    });
+    }
   });
   document.addEventListener("dragleave", function (event) {
-    if (event.target === drop || event.relatedTarget === null) {
-      drop.classList.remove("over");
+    if (!carriesFiles(event)) {
+      return;
+    }
+    depth = Math.max(0, depth - 1);
+    if (depth === 0) {
+      drop.hidden = true;
+    }
+  });
+  document.addEventListener("dragend", hideDrop);
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") {
+      hideDrop();
     }
   });
   document.addEventListener("drop", function (event) {
     event.preventDefault();
-    drop.classList.remove("over");
+    hideDrop();
     if (event.dataTransfer && event.dataTransfer.files.length) {
       accept(event.dataTransfer.files);
     }

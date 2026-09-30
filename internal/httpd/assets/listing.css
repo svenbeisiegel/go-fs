@@ -186,16 +186,39 @@ td.c-acts button.remove:hover { color: var(--bad); }
 
 .empty { padding: 1.5rem 0.55rem; color: var(--faint); font-style: italic; }
 
+/* The overlay that covers the page while files are dragged over it. Nothing
+   inside it takes pointer events, so the overlay is the only thing a drag
+   enters and leaves, and it does not flicker on the way across. */
 .drop {
-  margin: 0.9rem 0 0;
-  padding: 0.9rem;
-  border: 1px dashed var(--line);
-  border-radius: 4px;
-  color: var(--faint);
-  font-size: 0.85rem;
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.35);
+}
+.drop[hidden] { display: none; }
+.drop * { pointer-events: none; }
+.drop .panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  border: 3px dashed var(--accent);
+  border-radius: 8px;
+  background: var(--raised);
   text-align: center;
 }
-.drop.over { border-color: var(--accent); color: var(--ink); }
+.drop .ic { font-size: 3rem; color: var(--accent); }
+.drop strong { font-size: 1.25rem; }
+.drop .where {
+  color: var(--faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
 
 .queue { margin: 0.75rem 0 0; padding: 0; list-style: none; }
 .queue li {

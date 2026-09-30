@@ -23,7 +23,7 @@
     <button id="new-folder" class="plain needs-js" type="button"><svg class="ic"><use href="#i-folder-plus"/></svg>New folder</button>
     {{end}}
     {{if .Rights.Upload}}
-    <button id="upload" class="plain needs-js" type="button"><svg class="ic"><use href="#i-upload"/></svg>Upload</button>
+    <button id="upload" class="plain needs-js" type="button"><svg class="ic"><use href="#i-upload"/></svg>Upload or Drop file</button>
     <input id="picker" type="file" multiple hidden>
     {{end}}
     {{template "session" .Session}}
@@ -71,7 +71,13 @@
 {{if not .Entries}}<p class="empty">This folder is empty.</p>{{end}}
 
 {{if .Rights.Upload}}
-<div id="drop" class="drop needs-js">Drop files here to upload</div>
+<div id="drop" class="drop" hidden>
+  <div class="panel">
+    <svg class="ic"><use href="#i-upload"/></svg>
+    <strong>Drop files to upload</strong>
+    <span class="where">into {{.Path}}</span>
+  </div>
+</div>
 <ul id="queue" class="queue" hidden></ul>
 {{end}}
 </main>
@@ -83,7 +89,7 @@
     <input type="text" aria-label="Name" required>
     <div class="row">
       <button class="go" type="submit" value="accept">Save</button>
-      <button class="plain" type="submit" value="cancel">Cancel</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
     </div>
   </form>
 </dialog>
