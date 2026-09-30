@@ -475,13 +475,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cred, ok := s.authenticate(set, w, r, target.Virtual)
+	method := r.Method
+	if dlsReader(w, r) {
+		// the DLS scanner signs its reader requests in the body rather than
+		// with a header; they list a folder, so they need what browsing it
+		// with GET needs, and a protected folder still needs an account
+		method = http.MethodGet
+		s.log.Debug("http directory reader with the DLS credentials", "path", target.Virtual,
+			"address", clientAddress(set, r))
+	}
+	cred, ok := s.authenticate(set, w, r, method, target.Virtual)
 	if !ok {
 		return
 	}
 	user := cred.user
 	act := actionOf(r.Method, target)
-	if !s.permits(set, user, r.Method, target.Virtual, act) {
+	if !s.permits(set, user, method, target.Virtual, act) {
 		s.log.Debug("http request not allowed for the account",
 			"user", nameOf(user), "method", r.Method, "action", act, "path", target.Virtual)
 		http.Error(w, "Forbidden", http.StatusForbidden)

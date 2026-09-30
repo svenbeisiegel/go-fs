@@ -973,6 +973,11 @@ point out of the base folder.
 empty folder, Basic (RFC 7617) and Digest (RFC 7616, with the RFC 2069 form)
 authentication, bearer tokens (RFC 6750) for scripts, browser login with a signed session token (JWT, RFC 7519), and
 the `dls_directory_reader` listing endpoint. Downloads answer range requests, so a large one can be resumed.
+The OSEM directory scanner (the HTTPS storage provider) posts to `dls_directory_reader.php` and `.asp` with its fixed
+credentials in the form (`PHP_DLS_USER`, `PHP_DLS_PW`) instead of an `Authorization` header, as the original
+scripts expected. A POST that carries them needs what browsing the listed folder with `GET` needs, so it works
+with POST in `methodsRequireAuth`. The pair is public, so it opens no protected folder. A folder in
+`pathsRequireAuth`, or any folder when `GET` is protected, still needs Basic, Digest or bearer credentials as well.
 
 **S3** — the object API of Amazon S3 on the HTTP listeners, authenticated with
 AWS Signature Version 4 (header, presigned URL, signed and unsigned

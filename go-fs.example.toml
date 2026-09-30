@@ -353,7 +353,9 @@ trustedProxies = []
 
 # Methods that always need an account. HEAD, MKCOL and MOVE do not have to be
 # listed: HEAD is protected wherever GET is, MKCOL wherever PUT is and MOVE
-# wherever PUT or DELETE is.
+# wherever PUT or DELETE is. A dls_directory_reader POST that carries the DLS
+# scanner's fixed credentials in its form is protected as the GET of the folder
+# it lists instead.
 methodsRequireAuth = ["PUT", "DELETE", "POST", "MKCOL", "MOVE"]
 # Regular expressions; a request whose path matches one of these needs an
 # account whatever its method. Everything else is public. On a filesystem that

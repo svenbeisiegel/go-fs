@@ -134,8 +134,10 @@ type credential struct {
 //
 // The two return values are the credential and whether the request may
 // proceed. A public request proceeds with no account at all; anything else has
-// to present credentials or a live session token.
-func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Request, virtual string) (credential, bool) {
+// to present credentials or a live session token. method is the one the
+// request is protected as, which is its own except where the request has been
+// found to be something else under another verb.
+func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Request, method, virtual string) (credential, bool) {
 	// who the request is from is resolved for every request, public ones
 	// included: the page shows who is signed in, and it cannot do that if a
 	// public folder discards the identity before looking at it
@@ -149,7 +151,7 @@ func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Requ
 		s.refuseBearer(set, w, r)
 		return credential{}, false
 	}
-	if !s.needsAuth(set, r.Method, virtual) {
+	if !s.needsAuth(set, method, virtual) {
 		return cred, true
 	}
 	if cred.locked {

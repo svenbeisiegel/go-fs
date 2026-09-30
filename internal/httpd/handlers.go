@@ -3,6 +3,7 @@ package httpd
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -924,6 +925,35 @@ func contentPolicy(nonce string) string {
 		"img-src 'self' data:; " +
 		"connect-src 'self'; " +
 		"base-uri 'none'"
+}
+
+// dlsUser and dlsPassword are what the DLS scanner puts in the body of every
+// reader request: the fixed pair the original PHP and ASP scripts checked
+// instead of an Authorization header.
+const (
+	dlsUser     = "dls"
+	dlsPassword = "DLs-siemenS-tr1g6031_2007"
+)
+
+// dlsReaderBody is as much of a reader request as is read before it has been
+// authenticated. The form it carries is three short fields.
+const dlsReaderBody = 64 << 10
+
+// dlsReader reports whether r is a directory reader POST that carries the DLS
+// credentials in its form. The pair is public, written into every scanner, so
+// it stands in for the protection of POST only: what the reader then lists is
+// decided as it is for anyone else.
+func dlsReader(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodPost || !readerPath.MatchString(r.URL.Path) {
+		return false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, dlsReaderBody)
+	if err := r.ParseForm(); err != nil {
+		return false
+	}
+	user := subtle.ConstantTimeCompare([]byte(r.PostFormValue("PHP_DLS_USER")), []byte(dlsUser))
+	password := subtle.ConstantTimeCompare([]byte(r.PostFormValue("PHP_DLS_PW")), []byte(dlsPassword))
+	return user&password == 1
 }
 
 // handleDirectoryReader answers the legacy listing endpoint: a form field dir,
