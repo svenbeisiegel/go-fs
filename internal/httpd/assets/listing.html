@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%232f6f4f' d='M1.5 2.5h4.2l1.4 1.8h7.4v9.2h-13z'/%3E%3C/svg%3E">
+<title>{{.Path}}</title>
+<style nonce="{{.Nonce}}">{{.Style}}</style>
+<script nonce="{{.Nonce}}">document.documentElement.className = "js";</script>
+</head>
+<body>
+
+<svg id="icons" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 5.5h5.5l2 2.5H21v10.5H3z"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M9 5H4v14h16v-9h-7z"/><path d="M12 15V9m-2.5 2.5L12 9l2.5 2.5"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 7V4h4v3m-8 0 1 13h10l1-13"/></symbol>
+  <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3 5.5h5.5l2 2.5H21v10.5H3z"/><path d="M12 11v5m-2.5-2.5h5"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M4 16v4h16v-4"/><path d="M12 4v11m-4-7 4-4 4 4"/></symbol>
+  <symbol id="i-login" viewBox="0 0 24 24"><path d="M13 4h6v16h-6"/><path d="M4 12h10m-3.5-3.5L14 12l-3.5 3.5"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M11 4H5v16h6"/><path d="M20 12H10m3.5-3.5L17 12l-3.5 3.5"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3m0 13v3M2.5 12h3m13 0h3M5.3 5.3l2.1 2.1m9.2 9.2 2.1 2.1m0-13.4-2.1 2.1m-9.2 9.2-2.1 2.1"/></symbol>
+</svg>
+
+<header>
+  <nav class="crumbs" aria-label="Path">
+    <svg class="ic"><use href="#i-folder"/></svg>
+    {{range .Crumbs}}{{if .Link}}<a href="{{.Link}}">{{.Name}}</a>{{else}}<span class="here">{{.Name}}</span>{{end}}{{if .Sep}}<span class="sep">/</span>{{end}}{{end}}
+  </nav>
+  <div class="tools">
+    <input id="filter" class="needs-js" type="search" placeholder="Filter&#8230;" aria-label="Filter this folder">
+    {{if .Rights.Mkdir}}
+    <button id="new-folder" class="plain needs-js" type="button"><svg class="ic"><use href="#i-folder-plus"/></svg>New folder</button>
+    {{end}}
+    {{if .Rights.Upload}}
+    <button id="upload" class="plain needs-js" type="button"><svg class="ic"><use href="#i-upload"/></svg>Upload</button>
+    <input id="picker" type="file" multiple hidden>
+    {{end}}
+    {{with .Session}}
+    {{if .User}}
+    {{if .Admin}}
+    <a class="plain" href="{{.Admin}}"><svg class="ic"><use href="#i-gear"/></svg>Admin</a>
+    {{end}}
+    <form class="inline" method="post" action="{{.Logout}}"><button class="plain" type="submit"><svg class="ic"><use href="#i-logout"/></svg>Log out {{.User}}</button></form>
+    {{else if .CanLogin}}
+    <a class="plain" href="{{.Login}}"><svg class="ic"><use href="#i-login"/></svg>Log in</a>
+    {{end}}
+    {{end}}
+  </div>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<main>
+<table id="listing" data-folder="{{.Folder}}" data-sort="{{.Sort}}" data-dir="{{.Dir}}" data-max-chunk-size="{{.MaxChunkSize}}">
+  <thead>
+    <tr>
+      {{range .Columns}}
+      <th class="{{.Class}}"{{if .Active}} aria-sort="{{.Order}}"{{end}} data-key="{{.Key}}"><a href="{{.Link}}">{{.Label}} <span class="caret">{{.Caret}}</span></a></th>
+      {{end}}
+      {{if .Rights.Any}}<th class="c-acts"><span class="head">Actions</span></th>{{end}}
+    </tr>
+  </thead>
+  <tbody>
+    {{if .Parent}}
+    <tr>
+      <td><span class="name"><svg class="ic dir"><use href="#i-up"/></svg><a href="{{.Parent}}">..</a></span></td>
+      <td class="meta c-mod">&#8212;</td>
+      <td class="meta c-kind">&#8212;</td>
+      <td class="meta num c-size">&#8212;</td>
+      {{if $.Rights.Any}}<td class="c-acts"></td>{{end}}
+    </tr>
+    {{end}}
+    {{range .Entries}}
+    <tr data-name="{{.Name}}" data-dir="{{.Group}}" data-size="{{.Bytes}}" data-time="{{.Unix}}" data-kind="{{.Kind}}">
+      <td><span class="name"><svg class="ic{{if .IsDir}} dir{{end}}"><use href="{{if .IsDir}}#i-folder{{else}}#i-file{{end}}"/></svg><a href="{{.Link}}">{{.Label}}</a></span></td>
+      <td class="meta c-mod">{{.Modified}}</td>
+      <td class="meta c-kind">{{.Kind}}</td>
+      <td class="meta num c-size">{{.Size}}</td>
+      {{if $.Rights.Any}}
+      <td class="c-acts needs-js">
+        {{if $.Rights.Rename}}<button type="button" data-do="rename" title="Rename" aria-label="Rename {{.Name}}"><svg class="ic"><use href="#i-pencil"/></svg></button>{{end}}
+        {{if (or (and .IsDir $.Rights.DeleteFolder) (and (not .IsDir) $.Rights.DeleteFile))}}<button type="button" class="remove" data-do="delete" title="Delete" aria-label="Delete {{.Name}}"><svg class="ic"><use href="#i-trash"/></svg></button>{{end}}
+      </td>
+      {{end}}
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{if not .Entries}}<p class="empty">This folder is empty.</p>{{end}}
+
+{{if .Rights.Upload}}
+<div id="drop" class="drop needs-js">Drop files here to upload</div>
+<ul id="queue" class="queue" hidden></ul>
+{{end}}
+</main>
+
+<dialog id="prompt">
+  <form method="dialog">
+    <h2></h2>
+    <p></p>
+    <input type="text" aria-label="Name" required>
+    <div class="row">
+      <button class="go" type="submit" value="accept">Save</button>
+      <button class="plain" type="submit" value="cancel">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="confirm">
+  <form method="dialog">
+    <h2></h2>
+    <p></p>
+    <div class="row">
+      <button class="go danger" type="submit" value="agree">Delete</button>
+      <button class="plain" type="submit" value="cancel">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<script nonce="{{.Nonce}}">{{.Script}}</script>
+</body>
+</html>

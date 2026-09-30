@@ -1,0 +1,58 @@
+name: Release
+
+# Manually started only: a release is a deliberate act, not something a push
+# should trigger by itself.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 1.0.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # The released version is committed to the repository, not just baked
+      # into this run's binaries, so the code matches what was released.
+      - name: bump VERSION
+        run: |
+          echo -n "${{ inputs.version }}" > VERSION
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- VERSION; then
+            echo "VERSION is already ${{ inputs.version }}"
+          else
+            git add VERSION
+            git commit -m "Release ${{ inputs.version }}"
+            git push
+          fi
+
+      # A release that fails its own tests is not one to publish, so they run
+      # here rather than being trusted to have run somewhere earlier. The race
+      # detector is included: every server here is concurrent.
+      - name: vet and test
+        run: make lint race
+
+      - name: make release
+        run: make release VERSION=${{ inputs.version }}
+
+      - name: publish GitHub release
+        # pinned to a commit rather than a moving tag: this step is handed the
+        # token that writes releases
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          generate_release_notes: true
+          files: dist/*

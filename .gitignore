@@ -1,0 +1,6 @@
+# build output
+/go-fs
+/dist/
+
+# macOS
+.DS_Store

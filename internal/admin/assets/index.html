@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%232f6f4f' d='M1.5 2.5h4.2l1.4 1.8h7.4v9.2h-13z'/%3E%3C/svg%3E">
+<title>go-fs configuration</title>
+<style nonce="{{.Nonce}}">{{.Style}}</style>
+</head>
+<body>
+<header>
+  <h1>go-fs</h1>
+  <p id="path" class="path"></p>
+  <nav class="links">
+    <a class="plain" href="{{.Files}}">Files</a>
+    <form class="inline" method="post" action="{{.Logout}}"><button class="plain" type="submit">Log out</button></form>
+  </nav>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<nav id="tabs" class="tabs" role="tablist"></nav>
+<main id="panels"></main>
+
+<footer id="footer" hidden>
+  <span id="status" class="status"></span>
+  <button id="apply" type="button">Apply</button>
+</footer>
+
+<script nonce="{{.Nonce}}">{{.Script}}</script>
+</body>
+</html>

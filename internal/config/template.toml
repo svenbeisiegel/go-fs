@@ -1,0 +1,371 @@
+# go-fs configuration
+#
+# Every key is optional, an absent key keeps the default shown here. Paths have
+# to exist before the server starts.
+#
+# The admin interface shows the comment directly above a key as that key's
+# help; a comment above a run of keys covers every one of them. A paragraph
+# set apart by a blank line is for this file alone.
+
+# What every server shares. basefolder is the folder they all fall back to when
+# their own section does not name one, so a setup where they serve the same tree
+# says it once here. It has to be an absolute path and it has to exist.
+[general]
+basefolder = "/srv/files"
+
+# Watch this file and apply what changes in it without a restart. Accounts,
+# permissions and limits are swapped without disturbing anything in flight; a
+# port, a folder or a certificate needs the listener rebound, so that one server
+# is restarted and only its connections drop. A file that does not parse or does
+# not validate is reported and ignored, so a half-written save cannot take a
+# server down. On unix, kill -HUP also reloads, whatever this says.
+reloadConfig = true
+# seconds between two checks of the file
+reloadInterval = 5
+
+# Everything the program has to say goes to standard output, one record per
+# line. debug shows the protocol trace, info reports listeners, logins,
+# transfers and every change to a file, warn and error only what needs
+# attention. The level can be changed here without a restart: the watcher
+# applies it within reloadInterval seconds, which is the way to look at a
+# problem on a running server.
+logLevel = "info"
+# text or json. Changing this needs a restart.
+logFormat = "text"
+
+# The examples below are commented out on purpose — uncomment one and put a
+# name and a password of your own in, rather than starting with the ones
+# printed in the documentation.
+#
+# The accounts, one table per account, repeated for as many as are needed. An
+# account is configured once and says which servers it may log in to; its
+# rights are one set that holds on every one of them. There is no default
+# account: a name that is not listed here cannot log in anywhere, so as this
+# file stands the servers accept nobody.
+# [[users]]
+# username = "john"
+# password = "doe"
+# The servers this account may log in to, each off when not set. An account
+# that switches none on is kept without being served.
+# ftp = true
+# sftp = true
+# http = true
+# own folder for this account on ftp and sftp, the server's basefolder when
+# empty
+# basefolder = "/srv/files/john"
+# What this account may reach over http: regular expressions matched against
+# the request path after it has been normalized, so ".." cannot be used to
+# slip past one. An http account with no pattern can reach nothing.
+# paths = ["^/.*"]
+# accept this account on ftp without a password, off by default. SSH and HTTP
+# have no anonymous login, so it does nothing there.
+# allowLoginWithoutPassword = false
+# SSH public keys this account may log in to sftp with, one entry per line as
+# ssh-keygen writes them: the whole content of an id_*.pub file.
+# authorizedKeys = []
+# What the account may do, on every server alike. All false when not set, so
+# an account with none of these can log in and nothing more; grant what it
+# needs. Over http: retrieve covers GET and the listing of a path that needs an
+# account, create a PUT of a new file, overwrite a PUT over an existing one,
+# folderCreate MKCOL, fileDelete and folderDelete DELETE of the one or the
+# other, and MOVE needs create and delete both.
+# allowUserFileCreate = true
+# allowUserFileRetrieve = true
+# allowUserFileOverwrite = true
+# allowUserFileDelete = true
+# allowUserFolderDelete = true
+# allowUserFolderCreate = true
+# Any http account may also log in through the browser: the page offers a Log
+# in button, and a successful login is carried by a signed token in the
+# goFsSessionToken cookie rather than by repeating the credentials. The token
+# names the account and nothing else, so it carries exactly the rights above
+# as they are configured right now. Programs are unaffected and keep using
+# Basic or Digest.
+#
+# Let this account into the admin interface, the page that edits this file
+# (see http.enableAdminInterface). It is reached after logging in through the
+# browser, so the account has to set http as well; the listing then shows it
+# an Admin button.
+# isAdmin = false
+
+# Anonymous FTP access is an ordinary account: the name clients use, with no
+# password. Below it may read, and nothing else. Uncommenting this hands the
+# folder to anyone who can reach the port.
+# [[users]]
+# username = "anonymous"
+# password = ""
+# ftp = true
+# allowLoginWithoutPassword = true
+# allowUserFileRetrieve = true
+
+# An sftp account that logs in with a key instead of a password. Uncomment it
+# and put your own key in: the entries are authorized_keys lines, that is the
+# whole content of an id_*.pub file, and every one of them has to parse or the
+# server will not start.
+# [[users]]
+# username = "max"
+# sftp = true
+# authorizedKeys = [
+#   "ssh-ed25519 AAAA...the rest of your id_ed25519.pub... max@laptop",
+# ]
+# allowUserFileRetrieve = true
+
+# An http account that may only read, and only below one folder.
+# [[users]]
+# username = "jane"
+# password = "chosen"
+# http = true
+# paths = ["^/public/.*"]
+# allowUserFileRetrieve = true
+
+[ftp]
+# Serve the plain control port. The TLS listener has its own switch in [ftps];
+# everything else in this section applies to both of them.
+enabled = true
+
+port = 21
+# interface the control ports and the passive data ports bind to, empty binds
+# to all
+address = ""
+# served folder, general.basefolder when not set; it has to exist either
+# way
+# basefolder = "/srv/ftp"
+
+# maximum simultaneous control connections
+maxConnections = 10
+
+# The data channel, which is the part a firewall has to be told about. Which
+# mode is used is the client's choice, and both are always served.
+#
+# Passive (PASV, EPSV): the client connects to the server, on a port out of this
+# range. Open the whole range in the firewall; it should hold at least
+# maxConnections ports, since a transfer takes one for as long as it runs.
+passiveMinPort = 1024
+# last port of that range, inclusive
+passiveMaxPort = 1034
+# Active (PORT, EPRT): the server connects to the client, from this port. 0
+# lets the system pick one, which means a firewall cannot name it; 20 is the
+# port RFC 959 uses and what a firewall written for active FTP expects, but on
+# unix binding it needs the privilege for ports below 1024.
+activeSourcePort = 0
+# The address a PASV reply tells the client to connect back to. Empty names the
+# address the control connection arrived on, which is right whenever nothing
+# translates in between; set it to the address clients reach this host at when
+# the server is behind NAT or in a container. It has to be IPv4, which is all a
+# PASV reply can carry, and it does not affect EPSV, which names no address.
+passiveAddress = ""
+# seconds an idle control connection is kept open, 0 disables
+idleTimeout = 600
+# seconds to wait for the data connection of a transfer to be established
+dataTimeout = 5
+# Seconds a running transfer may move nothing before it is dropped, 0 disables.
+# It bounds a stall rather than the length of a transfer, so a download of any
+# size finishes, while a client that opens the data connection and stops reading
+# gives its connection slot back instead of holding it until it disconnects.
+transferIdleTimeout = 300
+# maximum length of a single command line in bytes
+maxCommandLength = 4096
+# seconds to wait before answering a wrong password
+loginFailureDelay = 1
+
+# Allow PORT and EPRT to name a host other than the connected client. Off by
+# default, because it lets the server reach third parties on a client's behalf
+# (RFC 2577). Only needed for server to server transfers.
+allowFtpBounce = false
+# Allow passive data connections from another address than the control
+# connection. Off by default.
+allowForeignDataConnection = false
+
+# The TLS interface of the same FTP server: it serves the accounts, folders and
+# limits of [ftp] above.
+[ftps]
+# Listen on ftps.port and offer AUTH TLS on the plain port. Independent of
+# ftp.enabled, so turning that one off serves implicit FTPS only.
+enabled = false
+
+port = 990
+# The certificate and its key themselves, base64 of the PEM, not paths to them,
+# so the whole configuration stays in this one file. When both are empty a
+# self-signed certificate is generated at startup; it changes on every restart
+# and proves no identity, so set your own for anything but a quick test.
+cert = ""
+key = ""
+# to fill them in by hand: base64 < server.crt | tr -d "\n"
+
+# The SFTP server, which is the SFTP subsystem of an SSH server. Its accounts
+# are the [[users]] entries that set sftp = true. Off unless switched on, so
+# that upgrading never opens an SSH port by itself.
+[sftp]
+enabled = false
+
+port = 22
+# interface to bind to, empty binds to all
+address = ""
+# served folder, general.basefolder when not set; it has to exist either
+# way
+# basefolder = "/srv/sftp"
+
+# The SSH host key, base64 of its PEM encoding, so the whole configuration
+# stays in this one file. Empty generates a key at every start, which makes
+# every client report a changed host key.
+hostkey = ""
+# a stable one: ssh-keygen -q -t ed25519 -N "" -f hostkey && base64 < hostkey | tr -d "\n"
+
+# maximum simultaneous connections
+maxConnections = 10
+# seconds without any traffic after which a connection is closed, 0 disables
+idleTimeout = 600
+# seconds to wait before answering a wrong password
+loginFailureDelay = 1
+
+# The HTTP file server: browse and download with GET, upload with PUT, remove
+# with DELETE. Access has two layers. A request is public unless its method is
+# in methodsRequireAuth or its path matches one of pathsRequireAuth; when it is
+# not public it has to be answered by one of the [[users]] entries that
+# set http = true, whose own paths and rights then decide what it may do.
+[http]
+# Serve the plain port. The TLS listener has its own switch in [https];
+# everything else in this section applies to both of them.
+enabled = false
+
+port = 9080
+# interface both listeners bind to, empty binds to all
+address = ""
+# served folder, general.basefolder when not set; it has to exist either
+# way
+# basefolder = "/srv/http"
+# what clients are challenged with. It is hashed into the digest response, so
+# changing it makes browsers ask for the password again.
+realm = "go-fs"
+
+# The web interface that edits this file, served by this server at
+# ?go-fs=admin on both listeners (http://host:9080/?go-fs=admin, or #/admin
+# from the listing). Only an account that sets isAdmin = true and has logged
+# in through the browser can reach it; nobody else is answered. The page shows
+# and edits every password in this file, so serve it over [https] rather than
+# the plain port. Applying a change there rewrites this file through the toml
+# writer: every key is written out and the comments in the file are lost,
+# with the previous file kept beside it as go-fs.toml.bak.
+enableAdminInterface = true
+
+# maximum simultaneous connections
+maxConnections = 100
+# Seconds, 0 disables one. writeTimeout is off by default because it would cap
+# how long a download may take.
+readTimeout = 120
+writeTimeout = 0
+idleTimeout = 120
+# largest accepted upload in bytes, 0 means no limit
+maxUploadSize = 0
+# Largest single Content-Range chunk of an upload, in bytes (see the docs on
+# chunked uploads). This is what keeps one HTTP request small and fast enough
+# to survive a reverse proxy with a hard per-request cap — Cloudflare's ~100
+# second rule and body-size limits were the motivating case. 0 turns off
+# chunked upload entirely: a PUT carrying a Content-Range header is refused.
+maxChunkSize = 52428800
+# Where the not-yet-finalized bytes of a chunked upload are kept while it is in
+# progress. Must not be inside basefolder: nothing here filters a partial
+# upload out of a directory listing, so it would be visible and downloadable
+# while still being written. Empty uses a "go-fs-uploads" folder under the
+# OS's temp directory. Keep it on the same filesystem as basefolder so
+# finishing an upload is a fast rename rather than a slow or failing
+# cross-device copy.
+uploadStagingFolder = ""
+# How long a browser stays logged in after using the login form, in seconds.
+# The token cannot be withdrawn once it is signed, so this is what bounds it.
+httpSessionTokenLifetime = 3600
+# The key the login tokens are signed with, base64 of at least 32 random bytes.
+# Empty generates one at every start, which logs every browser out on a restart
+# and stops two hosts serving the same folder from sharing a login. Changing it
+# needs a restart.
+httpSessionTokenSecret = ""
+# for instance: head -c 32 /dev/urandom | base64
+
+# seconds to wait before answering a request that could not be authenticated
+loginFailureDelay = 1
+# Wrong passwords a client address may send in loginLockout seconds before it
+# is refused; 0 turns the lock off. The lock answers at once, so it also bounds
+# how many loginFailureDelay waits one address can cause.
+loginAttempts = 5
+# seconds a locked address is refused, and the window the attempts are counted
+# over
+loginLockout = 60
+# Addresses or CIDR ranges of the proxies in front of this server, such as
+# 127.0.0.1 or 10.0.0.0/8. A request from one of them is recorded under the
+# client named in X-Forwarded-For, and X-Forwarded-Proto = https marks the
+# session cookie Secure. From anywhere else both headers are ignored.
+trustedProxies = []
+
+# Methods that always need an account. MKCOL and MOVE do not have to be listed:
+# MKCOL is protected wherever PUT is and MOVE wherever PUT or DELETE is.
+methodsRequireAuth = ["PUT", "DELETE", "POST", "MKCOL", "MOVE"]
+# Regular expressions; a request whose path matches one of these needs an
+# account whatever its method. Everything else is public.
+pathsRequireAuth = []
+
+# The TLS interface of the same HTTP server: it serves the folder, accounts and
+# limits of [http] above.
+[https]
+# Independent of http.enabled, so turning that one off serves HTTPS only.
+enabled = false
+
+port = 9443
+# The certificate and its key themselves, base64 of the PEM, not paths to them,
+# so the whole configuration stays in this one file. When both are empty a
+# self-signed certificate is generated at startup; it changes on every restart
+# and proves no identity, so set your own for anything but a quick test.
+cert = ""
+key = ""
+# to fill them in by hand: base64 < server.crt | tr -d "\n"
+
+# Folders that are kept from growing without bound: once an hour everything but
+# the newest "keep" files in them is deleted. No entry means no sweep. Paths
+# are relative to http.basefolder.
+# [[http.cleanup]]
+# path = "/iso"
+# keep = 10
+
+# The TFTP server. TFTP has no accounts and no passwords: the protocol has no
+# way to carry them, so anyone who can reach this port can read what allowRead
+# allows and write what allowWrite allows. Turn it off, or keep it on a network
+# where that is what you want.
+[tftp]
+enabled = true
+
+port = 69
+# interface to bind to, empty binds to all
+address = ""
+# udp4, udp6 or empty. Empty derives it from address and otherwise uses udp6,
+# which also accepts IPv4 clients on a dual stack host. Set udp4 explicitly on
+# hosts configured with bindv6only.
+type = ""
+# served folder, general.basefolder when not set; it has to exist either
+# way
+# basefolder = "/srv/tftp"
+
+# what anyone who reaches the port may do: read files, and write them
+allowRead = true
+allowWrite = false
+# allow a write request to replace an existing file
+allowOverwrite = false
+# allow a write request to create the folders leading up to the file
+allowCreateDirectory = true
+
+# maximum simultaneous transfers, and how many of them one client may hold
+maxConnections = 10
+maxConnectionsPerHost = 5
+# seconds before a packet is retransmitted
+timeout = 5
+# highest retransmit interval a client may negotiate with the timeout option
+maxTimeout = 60
+# retransmissions before a transfer is given up
+retries = 3
+# seconds a single transfer may take in total, 0 disables
+transferTimeout = 300
+# largest negotiable block size, larger requests are capped. The default keeps a
+# block inside a typical ethernet MTU so datagrams are not IP fragmented.
+maxBlockSize = 1468
+# largest negotiable window size, larger requests are capped
+maxWindowSize = 16
+# largest accepted upload in bytes, 0 means no limit
+maxFileSize = 0
