@@ -95,6 +95,9 @@ type Server struct {
 	// registry.go.
 	registryRepositoryLocks [64]sync.Mutex
 	registryUploadLocks     [64]sync.Mutex
+	// registrySummaries are the images the registry page has read; see
+	// summarize in registry_page.go.
+	registrySummaries summaryCache
 }
 
 // New prepares a server. The base folder has to exist and every configured
@@ -515,6 +518,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// and so does the update endpoint
 	if r.URL.Query().Get(sessionParam) == actionUpdate {
 		s.handleUpdate(set, w, r)
+		return
+	}
+	// and so does the registry page, which lets in whoever may pull
+	if action := registryPageAction(r); action != "" {
+		s.handleRegistryPage(set, w, r, target, action)
 		return
 	}
 

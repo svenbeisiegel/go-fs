@@ -311,20 +311,15 @@ func (q *registryRequest) deleteManifest() {
 			q.fail(errTagInvalid.with(ref))
 			return
 		}
-		target, ok := tags[ref]
-		if !ok {
+		err := q.s.untag(q.store, name, ref, tags, q.user, clientAddress(q.set, q.r))
+		switch {
+		case errors.Is(err, errRegistryNotFound):
 			q.fail(errManifestUnknown.with(ref))
-			return
-		}
-		delete(tags, ref)
-		if err := q.store.writeTags(name, tags); err != nil {
+		case err != nil:
 			q.internal("cannot delete a tag", err)
-			return
+		default:
+			q.w.WriteHeader(http.StatusAccepted)
 		}
-		q.dropMergedOrphan(target, tags)
-		q.s.log.Info("registry tag deleted", "repository", name, "tag", ref, "digest", target.String(),
-			"user", nameOf(q.user), "address", clientAddress(q.set, q.r))
-		q.w.WriteHeader(http.StatusAccepted)
 		return
 	}
 
@@ -363,6 +358,25 @@ func (q *registryRequest) deleteManifest() {
 	q.s.log.Info("registry manifest deleted", "repository", name, "digest", d.String(),
 		"user", nameOf(q.user), "address", clientAddress(q.set, q.r))
 	q.w.WriteHeader(http.StatusAccepted)
+}
+
+// untag removes a tag from a repository whose tags the caller has read, and
+// with it the index the registry merged for it, once nothing else points
+// there. The blobs are left to the garbage collection. The caller holds the
+// repository's lock.
+func (s *Server) untag(store *registryStore, name, tag string, tags map[string]digest.Digest, user *account, address string) error {
+	target, ok := tags[tag]
+	if !ok {
+		return errRegistryNotFound
+	}
+	delete(tags, tag)
+	if err := store.writeTags(name, tags); err != nil {
+		return err
+	}
+	s.dropMergedOrphan(store, name, target, tags)
+	s.log.Info("registry tag deleted", "repository", name, "tag", tag, "digest", target.String(),
+		"user", nameOf(user), "address", address)
+	return nil
 }
 
 // referrersOf lists the manifests whose subject is the given digest, as an
@@ -528,17 +542,21 @@ func (q *registryRequest) tagManifest(tag string, d digest.Digest, mediaType str
 // digest, and the garbage collection can then take it. The caller holds the
 // repository's lock.
 func (q *registryRequest) dropMergedOrphan(d digest.Digest, tags map[string]digest.Digest) {
+	q.s.dropMergedOrphan(q.store, q.route.name, d, tags)
+}
+
+func (s *Server) dropMergedOrphan(store *registryStore, name string, d digest.Digest, tags map[string]digest.Digest) {
 	for _, target := range tags {
 		if target == d {
 			return
 		}
 	}
-	rev, err := q.store.readRevision(q.route.name, d)
+	rev, err := store.readRevision(name, d)
 	if err != nil || !rev.Merged {
 		return
 	}
-	if err := q.store.removeRevision(q.route.name, d); err == nil {
-		q.s.log.Debug("registry dropped a merged index no tag points to", "repository", q.route.name,
+	if err := store.removeRevision(name, d); err == nil {
+		s.log.Debug("registry dropped a merged index no tag points to", "repository", name,
 			"digest", d.String())
 	}
 }
@@ -546,15 +564,31 @@ func (q *registryRequest) dropMergedOrphan(d digest.Digest, tags map[string]dige
 // platformOf reads the platform of an image from its configuration. An
 // artifact, whose configuration is not an image's, has none.
 func (q *registryRequest) platformOf(mediaType string, doc manifestDoc) (v1.Platform, bool) {
+	config, ok := q.store.imageConfig(mediaType, doc)
+	return config.platform, ok
+}
+
+// imageConfiguration is what the registry reads from the configuration of an
+// image: its platform, and when it was built.
+type imageConfiguration struct {
+	platform v1.Platform
+	// created is the time the configuration gives, zero where it gives none
+	// or one that does not parse. Reproducible builds set it to the epoch.
+	created time.Time
+}
+
+// imageConfig reads the configuration of an image. An artifact, whose
+// configuration is not an image's, has none.
+func (st *registryStore) imageConfig(mediaType string, doc manifestDoc) (imageConfiguration, bool) {
 	if !isImageType(mediaType) || doc.Config == nil {
-		return v1.Platform{}, false
+		return imageConfiguration{}, false
 	}
 	if doc.Config.MediaType != v1.MediaTypeImageConfig && doc.Config.MediaType != mediaTypeDockerConfig {
-		return v1.Platform{}, false
+		return imageConfiguration{}, false
 	}
-	data, err := q.store.readBlob(doc.Config.Digest, maxConfigSize)
+	data, err := st.readBlob(doc.Config.Digest, maxConfigSize)
 	if err != nil {
-		return v1.Platform{}, false
+		return imageConfiguration{}, false
 	}
 	var config struct {
 		OS           string   `json:"os"`
@@ -562,12 +596,17 @@ func (q *registryRequest) platformOf(mediaType string, doc manifestDoc) (v1.Plat
 		Variant      string   `json:"variant"`
 		OSVersion    string   `json:"os.version"`
 		OSFeatures   []string `json:"os.features"`
+		Created      string   `json:"created"`
 	}
 	if json.Unmarshal(data, &config) != nil || config.OS == "" || config.Architecture == "" {
-		return v1.Platform{}, false
+		return imageConfiguration{}, false
 	}
-	return v1.Platform{OS: config.OS, Architecture: config.Architecture, Variant: config.Variant,
-		OSVersion: config.OSVersion, OSFeatures: config.OSFeatures}, true
+	found := imageConfiguration{platform: v1.Platform{OS: config.OS, Architecture: config.Architecture,
+		Variant: config.Variant, OSVersion: config.OSVersion, OSFeatures: config.OSFeatures}}
+	if created, err := time.Parse(time.RFC3339Nano, config.Created); err == nil {
+		found.created = created
+	}
+	return found, true
 }
 
 // isAttestation reports an index entry that is not an image but the

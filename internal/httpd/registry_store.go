@@ -229,6 +229,20 @@ func (st *registryStore) readRevision(name string, d digest.Digest) (revision, e
 	return rev, nil
 }
 
+// revisionTime is when a manifest was last pushed to a repository, or merged
+// into one: the revision is written anew each time, and nothing else records
+// the time.
+func (st *registryStore) revisionTime(name string, d digest.Digest) (time.Time, error) {
+	info, err := os.Stat(st.revisionPath(name, d))
+	if errors.Is(err, fs.ErrNotExist) {
+		return time.Time{}, errRegistryNotFound
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	return info.ModTime(), nil
+}
+
 func (st *registryStore) writeRevision(name string, d digest.Digest, rev revision) error {
 	data, err := json.Marshal(rev)
 	if err != nil {

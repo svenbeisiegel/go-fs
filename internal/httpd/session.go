@@ -43,28 +43,55 @@ func sessionAction(r *http.Request) string {
 	}
 }
 
+// returnParam remembers, across the login and the logout, that they were
+// reached from a page that is itself served under the marker. The marker is
+// replaced by login or logout on the way there, and without this the browser
+// would come back to the folder rather than to the page it left.
+const returnParam = "go-fs-then"
+
 // cleanURL is this request's own URL with the marker taken off, which is the
-// only place a login or a logout ever sends the browser.
+// only place a login or a logout ever sends the browser. A page served under
+// the marker that the login was reached from gets its marker back.
 func cleanURL(u *url.URL) string {
 	stripped := *u
 	query := stripped.Query()
 	query.Del(sessionParam)
+	if query.Get(returnParam) == actionRegistry {
+		query.Set(sessionParam, actionRegistry)
+	}
+	query.Del(returnParam)
 	stripped.RawQuery = query.Encode()
 	return stripped.RequestURI()
 }
 
 // loginURL is this request's own URL with the marker put on.
 func loginURL(u *url.URL) string {
+	return markedURL(u, actionLogin)
+}
+
+// markedURL is this request's own URL with the marker set to action. The
+// registry page is the one page under the marker a login or a logout returns
+// to, so leaving it for one of them remembers where to come back to.
+func markedURL(u *url.URL, action string) string {
 	marked := *u
 	query := marked.Query()
-	query.Set(sessionParam, actionLogin)
+	if query.Get(sessionParam) == actionRegistry {
+		query.Set(returnParam, actionRegistry)
+	}
+	query.Set(sessionParam, action)
 	marked.RawQuery = query.Encode()
 	return marked.RequestURI()
 }
 
+// returnsToRegistry reports a login or a logout that was reached from the
+// registry page.
+func returnsToRegistry(u *url.URL) bool {
+	return u.Query().Get(returnParam) == actionRegistry
+}
+
 // handleSession routes the two endpoints.
 func (s *Server) handleSession(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, action string) {
-	if !canLogIn(set) {
+	if !canLogIn(set) && !canLogInToRegistry(set) {
 		// no account may log in, so these endpoints do not exist here
 		http.NotFound(w, r)
 		return
@@ -85,7 +112,8 @@ func (s *Server) handleSession(set *settings, w http.ResponseWriter, r *http.Req
 	// logging out is never a GET: browsers prefetch links, and a prefetched
 	// logout signs people out for reading a page
 	if action == actionLogin && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
-		if cred := s.identify(set, w, r); cred.token {
+		if cred := s.identify(set, w, r); cred.token ||
+			(returnsToRegistry(r.URL) && s.registrySession(set, r) != nil) {
 			http.Redirect(w, r, cleanURL(r.URL), http.StatusSeeOther)
 			return
 		}
@@ -150,9 +178,17 @@ func (s *Server) handleLogin(set *settings, w http.ResponseWriter, r *http.Reque
 }
 
 // checkLogin resolves a username and password to the account that may log in
-// with them.
+// with them. An account that sets registry may log in too, while the registry
+// is on, so that it can see the registry page; its session is no session of
+// the file tree, since checkToken only finds it there among the http accounts.
 func (s *Server) checkLogin(set *settings, name, password string) *account {
-	return matchAccount(set.accounts, name, password)
+	if user := matchAccount(set.accounts, name, password); user != nil {
+		return user
+	}
+	if set.registry == nil {
+		return nil
+	}
+	return matchAccount(set.registryAccounts, name, password)
 }
 
 // handleLogout drops the token, whatever it named. The token is read only to
@@ -180,8 +216,12 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request, target vfs.Ta
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
+	where := vfs.AsFolder(target.Virtual)
+	if returnsToRegistry(r.URL) || r.URL.Query().Get(sessionParam) == actionRegistry {
+		where = "Container registry"
+	}
 	page, err := renderLogin(loginData{
-		Path:    vfs.AsFolder(target.Virtual),
+		Path:    where,
 		Action:  loginURL(r.URL),
 		Cancel:  cleanURL(r.URL),
 		Message: message,
@@ -215,6 +255,10 @@ func (s *Server) sessionViewFor(set *settings, r *http.Request, cred credential)
 		Login:  loginURL(r.URL),
 		Logout: logoutURL(r.URL),
 	}
+	registryUser := s.registrySession(set, r)
+	if s.offersRegistry(set, cred, registryUser) {
+		who.Registry = registryURL(r.URL)
+	}
 	if cred.token && cred.user != nil {
 		who.User = cred.user.name
 		if s.admits(set, cred) {
@@ -222,19 +266,21 @@ func (s *Server) sessionViewFor(set *settings, r *http.Request, cred credential)
 		}
 		return who
 	}
+	// an account that sets registry and not http is signed in all the same,
+	// and has a session to log out of, even where the files do not know it
+	if registryUser != nil && cred.user == nil {
+		who.User = registryUser.name
+		return who
+	}
 	// someone who authenticated with a header has no session to log out of, so
 	// they are offered the login rather than a logout that would clear nothing
-	who.CanLogin = canLogIn(set)
+	who.CanLogin = canLogIn(set) || canLogInToRegistry(set)
 	return who
 }
 
 // logoutURL is this request's own URL with the logout marker on it.
 func logoutURL(u *url.URL) string {
-	marked := *u
-	query := marked.Query()
-	query.Set(sessionParam, actionLogout)
-	marked.RawQuery = query.Encode()
-	return marked.RequestURI()
+	return markedURL(u, actionLogout)
 }
 
 // adminURL is this request's own URL with the admin marker on it. It is the

@@ -312,6 +312,11 @@ func (s *Server) checkToken(set *settings, w http.ResponseWriter, r *http.Reques
 		return nil
 	}
 	user := accountNamed(set.accounts, claims.Subject)
+	if user == nil && s.registryClaims(set, claims) != nil {
+		// a session of an account that sets registry and not http: the file
+		// tree does not know it, but the registry page does, so it is kept
+		return nil
+	}
 	if user == nil {
 		s.log.Info("http session token names an account that is no longer configured",
 			"user", claims.Subject, "address", clientAddress(set, r))

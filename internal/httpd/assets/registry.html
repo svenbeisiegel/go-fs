@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%232f6f4f' d='M12 3 3.5 7.5v9L12 21l8.5-4.5v-9z'/%3E%3C/svg%3E">
+<title>{{.Title}}</title>
+<style nonce="{{.Nonce}}">{{.Style}}</style>
+<script nonce="{{.Nonce}}">document.documentElement.className = "js";</script>
+</head>
+<body>
+
+{{template "icons"}}
+
+<header>
+  <nav class="crumbs" aria-label="Path">
+    <svg class="ic"><use href="#i-box"/></svg>
+    {{range .Crumbs}}{{if .Link}}<a href="{{.Link}}">{{.Name}}</a>{{else}}<span class="here">{{.Name}}</span>{{end}}{{if .Sep}}<span class="sep">/</span>{{end}}{{end}}
+  </nav>
+  <div class="tools">
+    <input id="filter" class="needs-js" type="search" placeholder="Filter&#8230;" aria-label="Filter the registry">
+    <nav class="views" aria-label="View">
+      <a class="plain" href="{{.List}}"{{if not .Tree}} aria-current="page"{{end}}><svg class="ic"><use href="#i-list"/></svg>List</a>
+      <a class="plain" href="{{.Folders}}"{{if .Tree}} aria-current="page"{{end}}><svg class="ic"><use href="#i-folder"/></svg>Folders</a>
+    </nav>
+    <a id="files" class="plain" href="{{.Files}}"><svg class="ic"><use href="#i-folder"/></svg>Files</a>
+    {{template "session" .Session}}
+  </div>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<main>
+<table id="registry" class="registry" data-base="{{.Base}}">
+  <thead>
+    <tr>
+      {{range .Columns}}
+      <th class="{{.Class}}"{{if .Active}} aria-sort="{{.Order}}"{{end}}>{{if .Link}}<a href="{{.Link}}">{{.Label}} <span class="caret">{{.Caret}}</span></a>{{else}}<span class="head">{{.Label}}</span>{{end}}</th>
+      {{end}}
+      <th class="c-acts needs-js" aria-label="Actions"></th>
+    </tr>
+  </thead>
+  <tbody>
+    {{if .Parent}}
+    <tr>
+      <td><span class="name"><svg class="ic dir"><use href="#i-up"/></svg><a href="{{.Parent}}">..</a></span></td>
+      <td class="meta c-plat">&#8212;</td>
+      <td class="meta c-mod">&#8212;</td>
+      <td class="meta num c-size">&#8212;</td>
+      <td class="c-acts needs-js"></td>
+    </tr>
+    {{end}}
+    {{range .Entries}}
+    {{if .IsFolder}}
+    <tr data-name="{{.Name}}">
+      <td><span class="name"><svg class="ic dir"><use href="#i-folder"/></svg><a href="{{.Link}}">{{.Label}}</a></span></td>
+      <td class="meta c-plat">{{.Note}}</td>
+      <td class="meta c-mod">{{.Pushed}}</td>
+      <td class="meta num c-size">{{.Size}}</td>
+      <td class="c-acts needs-js"></td>
+    </tr>
+    {{else}}
+    <tr data-name="{{.Name}}" data-repository="{{.Repository}}" data-tag="{{.Tag}}" data-pull="{{.Pull}}">
+      <td><span class="name"><svg class="ic"><use href="#i-tag"/></svg><span class="label" title="{{.Repository}}:{{.Tag}}">{{range $i, $part := .Parts}}{{if $i}}<wbr>{{end}}{{$part}}{{end}}</span></span></td>
+      <td class="c-plat"><span class="badges">{{range .Platforms}}<span class="badge" title="{{.Title}}">{{.Label}}</span>{{else}}<span class="meta">&#8212;</span>{{end}}</span></td>
+      <td class="meta c-mod">{{.Pushed}}</td>
+      <td class="meta num c-size">{{.Size}}</td>
+      <td class="c-acts needs-js"><button type="button" data-do="menu" title="Options" aria-haspopup="menu" aria-expanded="false" aria-label="Options for {{.Repository}}:{{.Tag}}"><svg class="ic"><use href="#i-more"/></svg></button></td>
+    </tr>
+    {{end}}
+    {{end}}
+  </tbody>
+</table>
+{{with .Empty}}<p class="empty">{{.}}</p>{{end}}
+</main>
+
+<div id="menu" class="menu" role="menu" hidden>
+  <button type="button" role="menuitem" data-do="details"><svg class="ic"><use href="#i-info"/></svg>Details</button>
+  <button type="button" role="menuitem" data-do="copy"><svg class="ic"><use href="#i-copy"/></svg>Copy pull command</button>
+  {{if .Delete}}<button type="button" role="menuitem" class="remove" data-do="delete"><svg class="ic"><use href="#i-trash"/></svg>Delete tag</button>{{end}}
+</div>
+
+<dialog id="details" class="wide" aria-labelledby="details-title">
+  <form method="dialog">
+    <h2 id="details-title"></h2>
+    <div class="facts"></div>
+    <div class="row">
+      <button class="plain" type="submit" value="cancel">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="pull">
+  <form method="dialog">
+    <h2>Pull command</h2>
+    <p>Copy the command below.</p>
+    <input type="text" aria-label="Pull command" readonly>
+    <div class="row">
+      <button class="plain" type="submit" value="cancel">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="confirm">
+  <form method="dialog">
+    <h2></h2>
+    <p></p>
+    <div class="row">
+      <button class="go danger" type="submit" value="agree">Delete</button>
+      <button class="plain" type="submit" value="cancel">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<script nonce="{{.Nonce}}">{{.Script}}</script>
+</body>
+</html>

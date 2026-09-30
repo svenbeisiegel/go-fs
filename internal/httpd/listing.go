@@ -204,7 +204,7 @@ var assets embed.FS
 
 // listingTemplate is parsed once: a page that cannot be built is a bug in the
 // embedded template rather than something a request can cause.
-var listingTemplate = template.Must(template.ParseFS(assets, "assets/listing.html"))
+var listingTemplate = template.Must(template.ParseFS(assets, "assets/listing.html", "assets/partials.html"))
 
 // loginTemplate is the page that asks for a password. It is a template of its
 // own rather than a branch inside the listing, so that "the login page shows no
@@ -288,6 +288,9 @@ type sessionView struct {
 	// Admin is the link to the admin interface, empty for everyone but an
 	// admin account signed in with a session while the interface is on.
 	Admin string
+	// Registry is the link to the registry page, empty while the registry is
+	// off or for an account that is signed in and may not use it.
+	Registry string
 }
 
 // loginData is the login page.

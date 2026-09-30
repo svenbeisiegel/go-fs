@@ -792,6 +792,26 @@ the tag as they are. The push is answered with the digest of what was pushed,
 and the tag then names the index, which the registry keeps only for as long as
 a tag points to it.
 
+**Browsing the registry.** While the registry is on, the listing has a
+**Registry** button next to **Log in**. It opens a page that looks like the
+listing and has its own **Files** button to go back. By default the page lists
+every tag on a row of its own, such as `my-company/tool:1.2.3`. **Folders**
+shows namespaces and repositories as folders instead, and opening a
+repository shows its tags. Each tag carries a badge for every architecture it
+holds (`amd64`, `arm64`, `arm/v7`; the OS is only shown when it is not Linux),
+and the columns can be sorted by name, push time and size. The options menu
+of a tag offers:
+
+- **Details:** digests, media types, push time, sizes, the configuration and
+  layers of each platform, and the other tags on the same image.
+- **Copy pull command.**
+- **Delete tag:** only for a session of an account that sets `registry`.
+
+Who may see the page follows who may pull. With
+`http.registryAnonymousRead = false` a visitor is sent to the login page
+first. The form then also accepts accounts that set only `registry`; their
+session reaches the registry page and nothing in the file tree.
+
 What is served:
 
 - **Pulling.** Manifests by tag or digest, blobs with ranges, the tag list and

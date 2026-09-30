@@ -10,18 +10,7 @@
 </head>
 <body>
 
-<svg id="icons" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 5.5h5.5l2 2.5H21v10.5H3z"/></symbol>
-  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/></symbol>
-  <symbol id="i-up" viewBox="0 0 24 24"><path d="M9 5H4v14h16v-9h-7z"/><path d="M12 15V9m-2.5 2.5L12 9l2.5 2.5"/></symbol>
-  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17z"/></symbol>
-  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 7V4h4v3m-8 0 1 13h10l1-13"/></symbol>
-  <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3 5.5h5.5l2 2.5H21v10.5H3z"/><path d="M12 11v5m-2.5-2.5h5"/></symbol>
-  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M4 16v4h16v-4"/><path d="M12 4v11m-4-7 4-4 4 4"/></symbol>
-  <symbol id="i-login" viewBox="0 0 24 24"><path d="M13 4h6v16h-6"/><path d="M4 12h10m-3.5-3.5L14 12l-3.5 3.5"/></symbol>
-  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M11 4H5v16h6"/><path d="M20 12H10m3.5-3.5L17 12l-3.5 3.5"/></symbol>
-  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3m0 13v3M2.5 12h3m13 0h3M5.3 5.3l2.1 2.1m9.2 9.2 2.1 2.1m0-13.4-2.1 2.1m-9.2 9.2-2.1 2.1"/></symbol>
-</svg>
+{{template "icons"}}
 
 <header>
   <nav class="crumbs" aria-label="Path">
@@ -37,16 +26,10 @@
     <button id="upload" class="plain needs-js" type="button"><svg class="ic"><use href="#i-upload"/></svg>Upload</button>
     <input id="picker" type="file" multiple hidden>
     {{end}}
-    {{with .Session}}
-    {{if .User}}
-    {{if .Admin}}
-    <a class="plain" href="{{.Admin}}"><svg class="ic"><use href="#i-gear"/></svg>Admin</a>
+    {{if .Session.Registry}}
+    <a class="plain" href="{{.Session.Registry}}"><svg class="ic"><use href="#i-box"/></svg>Registry</a>
     {{end}}
-    <form class="inline" method="post" action="{{.Logout}}"><button class="plain" type="submit"><svg class="ic"><use href="#i-logout"/></svg>Log out {{.User}}</button></form>
-    {{else if .CanLogin}}
-    <a class="plain" href="{{.Login}}"><svg class="ic"><use href="#i-login"/></svg>Log in</a>
-    {{end}}
-    {{end}}
+    {{template "session" .Session}}
   </div>
 </header>
 
