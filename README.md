@@ -2,9 +2,7 @@
 
 go-fileserver: FTP, FTPS, SFTP, HTTP, HTTPS and TFTP in a single statically
 linked binary, configured from one TOML file, with hot reload and a web
-interface for editing it, served by the HTTP server to its admin accounts. The FTP and TFTP servers are a
-port of the Node.js [jsftpd](https://github.com/svenbeisiegel/jsftpd); the HTTP
-server is a port of an Express one.
+interface for editing it, served by the HTTP server to its admin accounts.
 
 ## Build
 
@@ -462,7 +460,7 @@ carries its own style and script, so every URL the server answers stays a path i
 `basefolder`. Without JavaScript the listing still renders and the column headers
 still sort, as ordinary links.
 
-Access has two layers, which is what the Express server it replaces did:
+Access has two layers:
 
 ```toml
 [[users]]
@@ -514,15 +512,14 @@ slash, so `^/private/.*` covers the listing of `/private` itself and not only
 what is inside it — a listing names every file in the folder, so it cannot be
 the one public thing about it.
 
-Both Digest and Basic authentication are accepted, and a **program** is
-challenged exactly as it always was: the challenge offers Digest, with SHA-256
-for Chromium and Firefox and MD5 for everything else, which is what those
-clients handle; `realm` is hashed into the response, so changing it makes saved
+Both Digest and Basic authentication are accepted. A **program** is challenged
+with Digest, using SHA-256 for Chromium and Firefox and MD5 for everything
+else, which is what those clients handle; `realm` is hashed into the response, so changing it makes saved
 credentials stop matching. A digest response is bound to the path it was made
 for and to a nonce that is good for five minutes, so a header captured off the
 wire cannot be turned on another path or replayed later; a client that still has
-the credentials answers the stale challenge without asking anyone. `curl -u`,
-scripts and the legacy client are unaffected by everything below.
+the credentials answers the stale challenge without asking anyone. `curl -u`
+and scripts are unaffected by everything below.
 
 **Wrong passwords are counted per client address.** The login form, Basic and
 Digest share one count: an address that sends `loginAttempts` of them inside
@@ -736,11 +733,10 @@ own TLS listener does. From any other address both headers are the client's
 word and are ignored, so without the setting every client behind a proxy
 shares the proxy's address and the cookie is only `Secure` on `[https]`.
 
-A browser that still remembers Basic credentials from before the login form
-existed sends them with everything. Beside a session for the same account they
-count as that session, so the page offers its logout and the admin interface
-opens; beside a session for another account, or none, the header is what it
-always was.
+A browser that remembers Basic credentials sends them with every request.
+Beside a session for the same account they count as that session, so the page
+offers its logout and the admin interface opens; beside a session for another
+account, or none, the header authenticates the request on its own.
 
 `httpSessionTokenSecret` is the signing key, base64 of at least 32 random bytes:
 
@@ -860,13 +856,12 @@ point out of the base folder.
 `application/octet-stream` and multipart uploads, `DELETE` for a file or an
 empty folder, Basic (RFC 7617) and Digest (RFC 7616, with the RFC 2069 form)
 authentication, bearer tokens (RFC 6750) for scripts, browser login with a signed session token (JWT, RFC 7519), and
-the legacy `dls_directory_reader` listing endpoint. Downloads answer range requests, so a large one can be resumed.
+the `dls_directory_reader` listing endpoint. Downloads answer range requests, so a large one can be resumed.
 
 **TFTP** — the protocol has no accounts and no passwords and no way to carry
 them, so anyone who can reach `tftp.port` can read what `allowRead` allows and
-write what `allowWrite` allows. It is on by default, read only, because that is
-what the implementation it replaces did; turn it off unless the network it sits
-on is one where that is what you want. An upload is written beside its
+write what `allowWrite` allows. It is on by default, read only; turn it off
+unless the network it sits on is one where that is what you want. An upload is written beside its
 destination and renamed over it when it completes, so a transfer that breaks off
 leaves neither an empty file nor a truncated one.
 
