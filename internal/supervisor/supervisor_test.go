@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -347,7 +348,13 @@ func TestAdminInterfaceIsServedByTheHTTPServer(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("the admin session was answered %d: %s", res.StatusCode, body)
 	}
-	if !strings.Contains(string(body), sup.path) {
+	// the state is JSON, so the path appears the way JSON writes it: a
+	// Windows path with every backslash doubled
+	quoted, err := json.Marshal(sup.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), string(quoted)) {
 		t.Errorf("the state does not name the file the supervisor was given: %s", body)
 	}
 

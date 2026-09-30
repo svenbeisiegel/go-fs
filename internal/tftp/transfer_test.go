@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -425,6 +426,9 @@ func TestShutdownAbortsRunningTransfers(t *testing.T) {
 func TestReadErrorIsReported(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root reads a mode 000 file anyway")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no mode that makes a file unreadable to its owner")
 	}
 	server := newServer(t, nil)
 	path := server.write(t, "locked.txt", []byte("secret"))

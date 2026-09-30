@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -249,6 +250,9 @@ func TestChunkedUploadRefusesATotalOverMaxUploadSize(t *testing.T) {
 func TestChunkedUploadRecoversAfterAFinalizeFailure(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root writes into a read-only folder anyway")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("the read-only flag on a Windows folder does not stop files being created in it")
 	}
 	server := chunkedServer(t, nil)
 

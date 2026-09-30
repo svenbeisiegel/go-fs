@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -249,6 +250,9 @@ func TestListingRootHasNoParentLink(t *testing.T) {
 // A name with characters that mean something in HTML or in a URL is escaped,
 // in the link, in the text and in the attributes the script reads it back from.
 func TestListingEscapesNames(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not allow < and > in a file name, so no listing there holds one")
+	}
 	server := newServer(t, publicServer)
 	server.write(t, "a b&c<d>.txt", "x")
 

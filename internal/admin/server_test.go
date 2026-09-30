@@ -161,16 +161,22 @@ func TestApplyReportsAFileItCannotWrite(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
 
-	if state := get(t, front); state.Writable || !strings.Contains(state.WriteError, "permission denied") {
+	if state := get(t, front); state.Writable || !deniedMessage(state.WriteError) {
 		t.Errorf("a read-only file reported writable=%v error=%q", state.Writable, state.WriteError)
 	}
 	status, answer := post(t, front, body.Values, nil)
 	if status != http.StatusConflict {
 		t.Fatalf("writing a read-only file answered %d: %s", status, answer)
 	}
-	if !strings.Contains(answer, "permission denied") {
+	if !deniedMessage(answer) {
 		t.Errorf("the message was %q", answer)
 	}
+}
+
+// deniedMessage reports whether a message is the platform's refusal to write:
+// "permission denied" on unix, "Access is denied." on Windows.
+func deniedMessage(message string) bool {
+	return strings.Contains(message, "permission denied") || strings.Contains(message, "Access is denied")
 }
 
 // TestApplyRefusesAnotherOrigin covers the two guards against a page on another

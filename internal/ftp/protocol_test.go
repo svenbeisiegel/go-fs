@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -240,14 +241,21 @@ func TestSiteChmod(t *testing.T) {
 	c := connect(t, server)
 	c.login()
 
-	c.send("SITE CHMOD 600 hello.txt")
+	// Windows keeps no unix mode, only a read-only flag, which chmod sets
+	// when the owner's write bit is off and reports as 0444 or 0666
+	mode, want := "600", os.FileMode(0o600)
+	if runtime.GOOS == "windows" {
+		mode, want = "444", 0o444
+		t.Cleanup(func() { _ = os.Chmod(path, 0o666) })
+	}
+	c.send("SITE CHMOD %s hello.txt", mode)
 	c.expect("200 SITE CHMOD command successful")
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Errorf("mode = %o, want 600", got)
+	if got := info.Mode().Perm(); got != want {
+		t.Errorf("mode = %o, want %o", got, want)
 	}
 
 	c.send("SITE HELP")

@@ -29,9 +29,11 @@ func freePort(t *testing.T) int {
 // somewhere that exists.
 func writeConfig(t *testing.T, path, folder string, port int, users string) {
 	t.Helper()
+	// basefolder is a literal string: in a basic one the \U of a Windows path
+	// such as C:\Users would start a unicode escape
 	body := `
 [general]
-basefolder = "` + folder + `"
+basefolder = '` + folder + `'
 reloadInterval = 1
 
 [ftp]
