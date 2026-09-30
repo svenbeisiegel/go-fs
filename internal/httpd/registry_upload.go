@@ -242,14 +242,20 @@ func (q *registryRequest) appendChunk(id string, upload *registryUpload, start, 
 	if limit > 0 {
 		body = io.LimitReader(body, limit-upload.Size+1)
 	}
+	started := time.Now()
 	written, err := io.Copy(io.MultiWriter(file, sum), body)
 	undo := func() { _ = file.Truncate(upload.Size) }
 	if err != nil {
 		undo()
-		if isClientGone(err) {
-			q.s.log.Info("registry upload interrupted", "repository", q.route.name, "upload", id,
-				"user", nameOf(q.user), "address", clientAddress(q.set, q.r), "error", err)
+		// a body that ends early is the client, or a proxy in front of the
+		// server, going away halfway: an info record, anything else an error
+		log := q.s.log.Error
+		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || isClientGone(err) {
+			log = q.s.log.Info
 		}
+		log("registry upload interrupted", "repository", q.route.name, "upload", id,
+			"user", nameOf(q.user), "address", clientAddress(q.set, q.r), "offset", upload.Size,
+			"bytes", written, "took", time.Since(started).Round(time.Millisecond), "error", err)
 		return errUploadInvalid.with("the chunk could not be read completely")
 	}
 	if limit > 0 && upload.Size+written > limit {

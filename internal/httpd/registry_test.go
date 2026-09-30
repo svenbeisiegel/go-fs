@@ -1,8 +1,12 @@
 package httpd
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -129,6 +133,53 @@ func TestRegistryStreamedUploadWithTheLastChunkInThePut(t *testing.T) {
 	_, body = server.reg(t, http.MethodGet, "/v2/app/blobs/"+d.String(), nil)
 	if string(body) != "streamed and finished" {
 		t.Errorf("blob = %q", body)
+	}
+}
+
+// A proxy that gives up on a streamed layer, as Cloudflare does past its
+// request size limit, ends the body halfway. The server says so at info level
+// and the upload stays where it was.
+func TestRegistryStreamedUploadCutOffIsLogged(t *testing.T) {
+	server := newRegistryServer(t, nil)
+	res, body := server.reg(t, http.MethodPost, "/v2/app/blobs/uploads/", nil, asPusher)
+	expectStatus(t, res, body, http.StatusAccepted)
+	location := res.Header.Get("Location")
+
+	req, err := http.NewRequest(http.MethodPatch, server.url(location), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asPusher(req)
+	conn, err := net.Dial("tcp", req.URL.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// one chunk of the body, and then no more of it
+	fmt.Fprintf(conn, "PATCH %s HTTP/1.1\r\nHost: test\r\nAuthorization: %s\r\n"+
+		"Transfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n", location, req.Header.Get("Authorization"))
+	if err := conn.(*net.TCPConn).CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	res, err = http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Errorf("status %d", res.StatusCode)
+	}
+	record := server.logs.find("registry upload interrupted")
+	if record == nil {
+		t.Fatal("the cut-off upload was not logged")
+	}
+	if record["level"] != slog.LevelInfo || record["bytes"] != int64(5) {
+		t.Errorf("record = %v", record)
+	}
+	res, body = server.reg(t, http.MethodGet, location, nil, asPusher)
+	expectStatus(t, res, body, http.StatusNoContent)
+	if got := res.Header.Get("Range"); got != "0-0" {
+		t.Errorf("Range = %q", got)
 	}
 }
 

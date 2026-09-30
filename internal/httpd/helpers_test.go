@@ -67,7 +67,7 @@ type recorder struct {
 func (r *recorder) Enabled(context.Context, slog.Level) bool { return true }
 
 func (r *recorder) Handle(_ context.Context, record slog.Record) error {
-	fields := map[string]any{"msg": record.Message}
+	fields := map[string]any{"msg": record.Message, "level": record.Level}
 	for _, attr := range r.attrs {
 		fields[attr.Key] = attr.Value.Any()
 	}
