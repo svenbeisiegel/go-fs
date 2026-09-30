@@ -100,7 +100,11 @@ type settings struct {
 	// tokens are the [[tokens]] entries, resolved as accounts of their own.
 	// They are kept apart from accounts, so that nothing that looks an
 	// account up by name — a session, the login form — can reach one.
-	tokens         []*account
+	tokens []*account
+	// s3accounts are the [[users]] entries that set s3, which sign their
+	// requests to the S3 API. An entry that sets s3 and not http is only
+	// here, so it can neither log in through the browser nor send Basic.
+	s3accounts     []*account
 	protectedPaths []*regexp.Regexp
 	// proxies are http.trustedProxies compiled, the addresses whose
 	// X-Forwarded-For and X-Forwarded-Proto are believed.
@@ -112,12 +116,27 @@ func (s *Server) settings() *settings {
 }
 
 // newSettings compiles a section into what the request path needs. users are
-// the [[users]] entries that set http, which the supervisor hands over already
-// filtered. root is the served folder: where it ignores case the path patterns
-// have to as well, and it is the folder a token without its own is served.
+// the [[users]] entries that set http or s3, which the supervisor hands over
+// already filtered. root is the served folder: where it ignores case the path
+// patterns have to as well, and it is the folder a token without its own is
+// served.
 func newSettings(cfg config.HTTP, https config.HTTPS, users []config.User, tokens []config.Token, root *vfs.Root) (*settings, error) {
 	fold := root.CaseInsensitive()
-	accounts, err := buildAccounts(users, fold)
+	var web, s3 []config.User
+	for _, user := range users {
+		// an entry that sets s3 alone is an S3 account and nothing else
+		if user.HTTP || !user.S3 {
+			web = append(web, user)
+		}
+		if user.S3 {
+			s3 = append(s3, user)
+		}
+	}
+	accounts, err := buildAccounts(web, fold)
+	if err != nil {
+		return nil, err
+	}
+	s3accounts, err := buildAccounts(s3, fold)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +161,7 @@ func newSettings(cfg config.HTTP, https config.HTTPS, users []config.User, token
 		proxies = append(proxies, prefix)
 	}
 	return &settings{cfg: cfg, https: https, accounts: accounts, tokens: bearers,
-		protectedPaths: protected, proxies: proxies}, nil
+		s3accounts: s3accounts, protectedPaths: protected, proxies: proxies}, nil
 }
 
 // Reload swaps the accounts, the tokens, the paths and the limits that are read
@@ -420,6 +439,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"took", time.Since(started).Round(time.Millisecond))
 	}()
 	w = recorder
+
+	// a request signed for S3 is an S3 request, whatever its path: the path
+	// names a bucket and a key there, and a trailing slash is part of the key,
+	// so it is not resolved the way a path of the file tree is
+	if isS3Request(r) {
+		s.handleS3(set, w, r)
+		return
+	}
 
 	target := s.root.Resolve("/", r.URL.Path)
 	if !target.Valid {

@@ -32,19 +32,22 @@ func TestCredentialsAreCheckedOnEveryProtocol(t *testing.T) {
 	}
 }
 
-// ftp, sftp and http switch an account on for one protocol each; an account
-// that one of them leaves off does not exist there at all.
+// ftp, sftp, http and s3 switch an account on for one protocol each; an
+// account that one of them leaves off does not exist there at all. http and
+// s3 are served by the same server and are still two switches.
 func TestProtocolSwitchesAreIndependent(t *testing.T) {
 	only := func(name string, protocol string) config.User {
 		user := account(name, "secret", allRights...)
 		user.HTTP = protocol == "http"
 		user.FTP = protocol == "ftp"
 		user.SFTP = protocol == "sftp"
+		user.S3 = protocol == "s3"
 		return user
 	}
-	c := newCluster(t, []config.User{only("webonly", "http"), only("ftponly", "ftp"), only("sftponly", "sftp")}, nil)
+	c := newCluster(t, []config.User{only("webonly", "http"), only("ftponly", "ftp"),
+		only("sftponly", "sftp"), only("s3only", "s3")}, nil)
 
-	for _, user := range []string{"webonly", "ftponly", "sftponly"} {
+	for _, user := range []string{"webonly", "ftponly", "sftponly", "s3only"} {
 		for _, proto := range protocols {
 			want := strings.HasPrefix(user, proto.name) || (user == "webonly" && proto.name == "http")
 			_, err := proto.login(t, c, user, "secret")

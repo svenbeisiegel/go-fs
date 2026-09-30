@@ -50,12 +50,18 @@ logFormat = "text"
 # ftp = true
 # sftp = true
 # http = true
+# Let this account use the S3 API of the http server (see http.enableS3), with
+# the username as the access key and the password as the secret key. It is
+# independent of http, and the paths and rights below apply to it alike.
+# s3 = true
 # own folder for this account on ftp and sftp, the server's basefolder when
 # empty
 # basefolder = "/srv/files/john"
 # What this account may reach over http: regular expressions matched against
 # the request path after it has been normalized, so ".." cannot be used to
-# slip past one. An http account with no pattern can reach nothing.
+# slip past one. An http account with no pattern can reach nothing. Over s3 the
+# path is the object key with a leading slash, so s3://main/docs/a.txt is
+# matched as /docs/a.txt, the same file http serves at that path.
 # paths = ["^/.*"]
 # accept this account on ftp without a password, off by default. SSH and HTTP
 # have no anonymous login, so it does nothing there.
@@ -287,6 +293,15 @@ enableAdminInterface = true
 # sets isAdmin = true. The folder holding the executable has to be writable by
 # the account go-fs runs as.
 enableSelfUpdate = false
+
+# Answer requests signed with AWS Signature Version 4 as the S3 API, on both
+# listeners, for the [[users]] entries that set s3 = true. There is one
+# bucket, "main", which holds the served folder exactly as http shows it, in
+# one region, "us-east-1"; neither can be changed, and buckets cannot be made
+# or removed. Clients have to address it path style,
+# https://host:9443/main/key. A request without such a signature is served as
+# it always was, so a folder called main is still reached as /main.
+enableS3 = true
 
 # maximum simultaneous connections
 maxConnections = 100

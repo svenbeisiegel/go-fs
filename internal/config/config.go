@@ -103,6 +103,10 @@ type User struct {
 	FTP  bool `toml:"ftp,omitempty"`
 	SFTP bool `toml:"sftp,omitempty"`
 	HTTP bool `toml:"http,omitempty"`
+	// S3 lets the account use the S3 API of the HTTP server, with its username
+	// as the access key and its password as the secret key. It is independent
+	// of HTTP, and the same Paths and rights apply to it.
+	S3 bool `toml:"s3,omitempty"`
 
 	// Basefolder is the folder this account sees on FTP and SFTP instead of
 	// the server's own. HTTP scopes an account by Paths instead and ignores
@@ -232,12 +236,20 @@ func (t Token) ExpiresAt() (time.Time, bool) {
 	return at, true
 }
 
-// FTPUsers, SFTPUsers and HTTPUsers are the entries a server serves: the ones
-// that switch it on. Each server is handed its own list, so it never sees an
-// account that is not meant for it.
+// FTPUsers, SFTPUsers, HTTPUsers and S3Users are the entries a server serves:
+// the ones that switch it on. Each server is handed its own list, so it never
+// sees an account that is not meant for it.
 func (c Config) FTPUsers() []User  { return c.usersFor(func(u User) bool { return u.FTP }) }
 func (c Config) SFTPUsers() []User { return c.usersFor(func(u User) bool { return u.SFTP }) }
 func (c Config) HTTPUsers() []User { return c.usersFor(func(u User) bool { return u.HTTP }) }
+func (c Config) S3Users() []User   { return c.usersFor(func(u User) bool { return u.S3 }) }
+
+// HTTPServerUsers are the entries the HTTP server serves in either way, over
+// http, over its S3 API or over both. The server tells the two apart itself,
+// by the http and s3 switches of each entry.
+func (c Config) HTTPServerUsers() []User {
+	return c.usersFor(func(u User) bool { return u.HTTP || u.S3 })
+}
 
 func (c Config) usersFor(serves func(User) bool) []User {
 	var users []User
@@ -360,6 +372,10 @@ type HTTP struct {
 	// built into this binary is accepted, and only from a token that sets
 	// allowSelfUpdate or from the session of an account that sets isAdmin.
 	EnableSelfUpdate bool `toml:"enableSelfUpdate"`
+	// EnableS3 answers requests signed with AWS Signature Version 4 as the S3
+	// API, on both listeners. The served folder is the one bucket, S3Bucket, in
+	// the one region, S3Region, and only the accounts that set s3 may use it.
+	EnableS3 bool `toml:"enableS3"`
 
 	MaxConnections int `toml:"maxConnections"`
 	// ReadTimeout, WriteTimeout and IdleTimeout are seconds, 0 disables one.
@@ -426,6 +442,14 @@ type HTTP struct {
 
 	Cleanup []Cleanup `toml:"cleanup"`
 }
+
+// S3Bucket and S3Region are what the S3 API of the HTTP server serves: one
+// bucket holding http.basefolder as it is, in one region. Neither is a key of
+// the file, because there is nothing to choose between.
+const (
+	S3Bucket = "main"
+	S3Region = "us-east-1"
+)
 
 // HTTPS configures the TLS interface of the HTTP server. It is a section of
 // its own because TOML tables are top level; the folder, accounts and limits
@@ -511,6 +535,7 @@ func Default() Config {
 			Port:                 9080,
 			Realm:                "go-fs",
 			EnableAdminInterface: true,
+			EnableS3:             true,
 			MaxConnections:       100,
 			ReadTimeout:          120,
 			IdleTimeout:          120,
@@ -820,15 +845,26 @@ func (c Config) validateUsers() error {
 					"so it could never log in to sftp", where, user.Username)
 			}
 		}
-		if user.HTTP {
+		if user.HTTP || user.S3 {
+			server := "http"
+			if !user.HTTP {
+				server = "s3"
+			}
 			if user.Password == "" {
-				return fmt.Errorf("%s %q has no password, which http needs", where, user.Username)
+				return fmt.Errorf("%s %q has no password, which %s needs", where, user.Username, server)
 			}
 			for k, pattern := range user.Paths {
 				if _, err := regexp.Compile(pattern); err != nil {
 					return fmt.Errorf("%s.paths[%d]: %w", where, k, err)
 				}
 			}
+		}
+		// the username is the access key, and a signature names it in a
+		// "Credential=<key>/<date>/<region>/s3/aws4_request" field, which a
+		// slash, a comma or a space would cut short
+		if user.S3 && strings.ContainsAny(user.Username, "/, \t\r\n") {
+			return fmt.Errorf("%s %q sets s3, and an S3 access key cannot hold a slash, "+
+				"a comma or white space", where, user.Username)
 		}
 		// the admin interface is reached with a session, and only an http
 		// account ever holds one

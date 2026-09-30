@@ -76,6 +76,43 @@ type Field struct {
 	// index locates the field in its struct, so that reading and writing a
 	// value walks the same path the schema was built from.
 	index int
+	// fixed is the value of a field that is not a key of the file at all but
+	// a constant of the server, shown beside the keys it belongs with: the S3
+	// bucket and region. It is read from here, never from the file, and what
+	// the page posts for it is ignored.
+	fixed    string
+	constant bool
+}
+
+// fixedFields are the constants shown on a section's tab, each after the key
+// it is placed behind. They are read-only, since there is nothing to choose.
+var fixedFields = map[string][]struct {
+	after string
+	field Field
+}{
+	"http": {
+		{"enableS3", Field{Key: "s3Bucket", Label: "s3Bucket", Kind: kindText, ReadOnly: true,
+			Help:  "The one bucket the S3 API serves, holding the served folder as http shows it. It is fixed and cannot be changed, made or removed.",
+			fixed: config.S3Bucket, constant: true}},
+		{"s3Bucket", Field{Key: "s3Region", Label: "s3Region", Kind: kindText, ReadOnly: true,
+			Help:  "The one region the S3 API answers for; clients have to sign their requests for it. It is fixed and cannot be changed.",
+			fixed: config.S3Region, constant: true}},
+	},
+}
+
+// withFixed places the constants of a section among its fields.
+func withFixed(section string, fields []Field) []Field {
+	for _, entry := range fixedFields[section] {
+		at := len(fields)
+		for i, field := range fields {
+			if field.Key == entry.after {
+				at = i + 1
+				break
+			}
+		}
+		fields = append(fields[:at], append([]Field{entry.field}, fields[at:]...)...)
+	}
+	return fields
 }
 
 const (
@@ -141,6 +178,7 @@ func build() (Schema, []string) {
 			}
 		}
 		pairUp(section.Fields)
+		section.Fields = withFixed(key, section.Fields)
 		schema.Sections = append(schema.Sections, section)
 	}
 	return schema, skipped
@@ -338,6 +376,10 @@ func (s Schema) Summaries(values map[string]any) map[string]string {
 func (s Section) values(from reflect.Value) map[string]any {
 	values := make(map[string]any, len(s.Fields)+len(s.Tables))
 	for _, field := range s.Fields {
+		if field.constant {
+			values[field.Key] = field.fixed
+			continue
+		}
 		values[field.Key] = read(from.Field(field.index))
 	}
 	for _, table := range s.Tables {
@@ -412,7 +454,7 @@ func (s Schema) Apply(values map[string]any) (config.Config, error) {
 func (s Section) apply(into reflect.Value, posted map[string]any) error {
 	for _, field := range s.Fields {
 		value, ok := posted[field.Key]
-		if !ok {
+		if !ok || field.constant {
 			continue
 		}
 		if err := write(into.Field(field.index), value); err != nil {

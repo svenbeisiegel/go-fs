@@ -72,6 +72,9 @@ basefolder = "{{folder}}"
 	if !cfg.HTTP.EnableAdminInterface {
 		t.Error("the admin interface has to be on by default")
 	}
+	if !cfg.HTTP.EnableS3 {
+		t.Error("the S3 API has to be on by default")
+	}
 }
 
 func TestUserPermissionDefaults(t *testing.T) {
@@ -149,6 +152,15 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		{"ftps port", func(c *Config) { c.FTPS.Enabled = true; c.FTPS.Port = 0 }, "ftps.port"},
 		{"half a tls pair", func(c *Config) { c.FTPS.Enabled = true; c.FTPS.Cert = "cert.pem" }, "together"},
 		{"user without name", func(c *Config) { c.Users = []User{{Password: "x", FTP: true}} }, "no username"},
+		{"s3 without password", func(c *Config) {
+			c.Users = []User{{Username: "keys", S3: true}}
+		}, "no password, which s3 needs"},
+		{"s3 access key with a slash", func(c *Config) {
+			c.Users = []User{{Username: "team/keys", Password: "x", S3: true}}
+		}, "S3 access key cannot hold a slash"},
+		{"s3 paths", func(c *Config) {
+			c.Users = []User{{Username: "keys", Password: "x", S3: true, Paths: []string{"("}}}
+		}, "users[0].paths[0]"},
 		{"user basefolder", func(c *Config) {
 			c.Users = []User{{Username: "john", FTP: true, Basefolder: filepath.Join(folder, "nope")}}
 		}, "users[0].basefolder"},
@@ -307,6 +319,9 @@ func TestValidateAcceptsAccountsAsTheyAreMeant(t *testing.T) {
 		{Username: "john", Password: "doe", FTP: true, SFTP: true, HTTP: true},
 		// an admin is an http account
 		{Username: "root", Password: "x", HTTP: true, IsAdmin: true},
+		// an s3 account needs no http, and the same name may be on both
+		{Username: "s3keys", Password: "x", S3: true},
+		{Username: "both", Password: "x", HTTP: true, S3: true},
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -317,8 +332,15 @@ func TestValidateAcceptsAccountsAsTheyAreMeant(t *testing.T) {
 	if got := cfg.SFTPUsers(); len(got) != 2 || got[0].Username != "keys" {
 		t.Errorf("SFTPUsers = %v", names(got))
 	}
-	if got := cfg.HTTPUsers(); len(got) != 2 || got[0].Username != "john" || got[1].Username != "root" {
+	if got := cfg.HTTPUsers(); len(got) != 3 || got[0].Username != "john" || got[1].Username != "root" {
 		t.Errorf("HTTPUsers = %v", names(got))
+	}
+	if got := cfg.S3Users(); len(got) != 2 || got[0].Username != "s3keys" || got[1].Username != "both" {
+		t.Errorf("S3Users = %v", names(got))
+	}
+	// the http server serves both, and tells them apart itself
+	if got := cfg.HTTPServerUsers(); len(got) != 4 {
+		t.Errorf("HTTPServerUsers = %v", names(got))
 	}
 }
 

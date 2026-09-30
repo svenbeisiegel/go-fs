@@ -1,7 +1,8 @@
 // Package e2e runs the HTTP, FTP and SFTP servers side by side over one served
 // folder and one list of accounts, the way the supervisor does, and checks that
 // the protocols agree: a right granted or withheld in [[users]] has to mean the
-// same thing whichever protocol the client arrives by.
+// same thing whichever protocol the client arrives by, the S3 API of the HTTP
+// server included.
 package e2e
 
 import (
@@ -23,6 +24,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 
@@ -64,6 +68,7 @@ func account(name, password string, rights ...right) config.User {
 		HTTP:     true,
 		FTP:      true,
 		SFTP:     true,
+		S3:       true,
 		Paths:    []string{"^/.*"},
 	}
 	for _, r := range rights {
@@ -150,7 +155,7 @@ func newCluster(t *testing.T, users []config.User, tune func(*config.Config)) *c
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	web, err := httpd.New(cfg.HTTP, cfg.HTTPS, cfg.HTTPUsers(), cfg.Tokens, "", log)
+	web, err := httpd.New(cfg.HTTP, cfg.HTTPS, cfg.HTTPServerUsers(), cfg.Tokens, "", log)
 	if err != nil {
 		t.Fatalf("httpd.New: %v", err)
 	}
@@ -179,7 +184,7 @@ func newCluster(t *testing.T, users []config.User, tune func(*config.Config)) *c
 func (c *cluster) reload(t *testing.T, users []config.User) {
 	t.Helper()
 	c.cfg.Users = users
-	if err := c.http.Reload(c.cfg.HTTP, c.cfg.HTTPS, c.cfg.HTTPUsers(), c.cfg.Tokens); err != nil {
+	if err := c.http.Reload(c.cfg.HTTP, c.cfg.HTTPS, c.cfg.HTTPServerUsers(), c.cfg.Tokens); err != nil {
 		t.Fatalf("http Reload: %v", err)
 	}
 	if err := c.ftp.Reload(c.cfg.FTP, c.cfg.FTPS, c.cfg.FTPUsers()); err != nil {
@@ -276,6 +281,7 @@ var protocols = []struct {
 	{"http", loginHTTP},
 	{"ftp", loginFTP},
 	{"sftp", loginSFTP},
+	{"s3", loginS3},
 }
 
 // ---- HTTP
@@ -385,6 +391,78 @@ func (c *httpClient) rmdir(path string) error {
 func (c *httpClient) rename(from, to string) error {
 	_, err := c.expect("MOVE", from, nil, http.Header{"Destination": {(&url.URL{Path: to}).EscapedPath()}})
 	return err
+}
+
+// ---- S3
+
+// s3Client is an AWS SDK client of the S3 API, which the HTTP server serves on
+// its own listener. A path is a key in the one bucket, without its slash.
+type s3Client struct {
+	api *s3.Client
+}
+
+// loginS3 checks the credentials with ListBuckets: S3 has no login, and every
+// request carries its signature.
+func loginS3(t *testing.T, c *cluster, name, password string) (client, error) {
+	t.Helper()
+	api := s3.New(s3.Options{
+		Region:           config.S3Region,
+		Credentials:      credentials.NewStaticCredentialsProvider(name, password, ""),
+		BaseEndpoint:     aws.String("http://" + net.JoinHostPort("127.0.0.1", portOf(c.http.Addr()))),
+		UsePathStyle:     true,
+		RetryMaxAttempts: 1,
+	})
+	if _, err := api.ListBuckets(context.Background(), &s3.ListBucketsInput{}); err != nil {
+		return nil, fmt.Errorf("s3 login refused: %w", err)
+	}
+	return &s3Client{api: api}, nil
+}
+
+func keyOf(path string) *string {
+	return aws.String(strings.TrimPrefix(path, "/"))
+}
+
+func (c *s3Client) get(path string) ([]byte, error) {
+	out, err := c.api.GetObject(context.Background(), &s3.GetObjectInput{
+		Bucket: aws.String(config.S3Bucket), Key: keyOf(path)})
+	if err != nil {
+		return nil, err
+	}
+	defer out.Body.Close()
+	return io.ReadAll(out.Body)
+}
+
+func (c *s3Client) put(path string, content []byte) error {
+	_, err := c.api.PutObject(context.Background(), &s3.PutObjectInput{
+		Bucket: aws.String(config.S3Bucket), Key: keyOf(path), Body: bytes.NewReader(content)})
+	return err
+}
+
+func (c *s3Client) remove(path string) error {
+	_, err := c.api.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+		Bucket: aws.String(config.S3Bucket), Key: keyOf(path)})
+	return err
+}
+
+// mkdir and rmdir name the folder as S3 does, by a key that ends with a slash.
+func (c *s3Client) mkdir(path string) error {
+	return c.put(path+"/", nil)
+}
+
+func (c *s3Client) rmdir(path string) error {
+	return c.remove(path + "/")
+}
+
+// rename is what every S3 client does, since S3 has no rename: a copy, and a
+// delete of what was copied.
+func (c *s3Client) rename(from, to string) error {
+	_, err := c.api.CopyObject(context.Background(), &s3.CopyObjectInput{
+		Bucket: aws.String(config.S3Bucket), Key: keyOf(to),
+		CopySource: aws.String(config.S3Bucket + "/" + strings.TrimPrefix(from, "/"))})
+	if err != nil {
+		return err
+	}
+	return c.remove(from)
 }
 
 // ---- FTP

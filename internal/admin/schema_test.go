@@ -78,6 +78,7 @@ func TestSummaryFields(t *testing.T) {
 		"users.users.sftp":                true,
 		"users.users.http":                true,
 		"users.users.isAdmin":             true,
+		"users.users.s3":                  true,
 		"users.users.password":            false,
 		"users.users.basefolder":          false,
 		"users.users.allowUserFileCreate": false,
@@ -114,6 +115,10 @@ func TestFieldKinds(t *testing.T) {
 		"http.methodsRequireAuth":           kindLines,
 		"general.logLevel":                  kindText,
 		"http.enableAdminInterface":         kindBool,
+		"http.enableS3":                     kindBool,
+		"http.s3Bucket":                     kindText,
+		"http.s3Region":                     kindText,
+		"users.users.s3":                    kindBool,
 		"users.users.isAdmin":               kindBool,
 		"sftp.hostkey":                      kindSecret,
 		"users.users.password":              kindSecret,
@@ -312,5 +317,51 @@ func TestApplyCoercesNumbers(t *testing.T) {
 	values["ftp"].(map[string]any)["port"] = "twentyone"
 	if _, err := schema.Apply(values); err == nil {
 		t.Error("a port that is not a number was accepted")
+	}
+}
+
+// The S3 bucket and region are constants of the server rather than keys of the
+// file. They are shown on the HTTP tab beside the switch they belong to, and
+// what the page posts for them is never written anywhere.
+func TestFixedS3Fields(t *testing.T) {
+	schema, _ := build()
+	var http Section
+	for _, section := range schema.Sections {
+		if section.Key == "http" {
+			http = section
+		}
+	}
+	var order []string
+	for _, field := range http.Fields {
+		order = append(order, field.Key)
+		if field.Key == "s3Bucket" || field.Key == "s3Region" {
+			if !field.ReadOnly || field.Help == "" {
+				t.Errorf("%s is not a documented read-only field: %+v", field.Key, field)
+			}
+		}
+	}
+	joined := strings.Join(order, ",")
+	if !strings.Contains(joined, "enableS3,s3Bucket,s3Region") {
+		t.Errorf("the http fields are %s", joined)
+	}
+
+	values := schema.Values(config.Default())
+	held := values["http"].(map[string]any)
+	if held["s3Bucket"] != "main" || held["s3Region"] != "us-east-1" {
+		t.Errorf("the page is shown bucket %v and region %v", held["s3Bucket"], held["s3Region"])
+	}
+	held["s3Bucket"] = "other"
+	held["s3Region"] = "eu-west-1"
+	held["enableS3"] = false
+	applied, err := schema.Apply(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied.HTTP.EnableS3 {
+		t.Error("the switch next to the constants was not applied")
+	}
+	if again := schema.Values(applied)["http"].(map[string]any); again["s3Bucket"] != "main" ||
+		again["s3Region"] != "us-east-1" {
+		t.Errorf("a posted constant stuck: %v and %v", again["s3Bucket"], again["s3Region"])
 	}
 }

@@ -500,7 +500,13 @@ func (s *Server) permits(set *settings, user *account, method, virtual string, a
 	if user == nil || !user.allows(virtual) {
 		return false
 	}
-	perms := user.perms
+	return granted(user.perms, act)
+}
+
+// granted reports whether a set of rights covers an action, once the path has
+// been found to be one the account may reach at all. It is what HTTP and S3
+// share, so the two cannot come to disagree on what a right means.
+func granted(perms config.Permissions, act action) bool {
 	switch act {
 	case actRead:
 		return perms.FileRetrieve

@@ -1,7 +1,9 @@
 package httpd
 
 import (
+	"bytes"
 	"encoding/base64"
+	"io"
 	"strings"
 	"testing"
 )
@@ -75,6 +77,26 @@ func FuzzParseContentRange(f *testing.F) {
 		}
 		if parsed.start < 0 || parsed.start > parsed.end || parsed.end >= parsed.total {
 			t.Fatalf("parseContentRange(%q) = %+v, which is not a slice of the file", header, parsed)
+		}
+	})
+}
+
+// FuzzChunkedReader feeds the aws-chunked decoder whatever arrives: it has to
+// end in the object or in an error, never in a panic or a read that does not
+// end, and it never hands out more bytes than the chunks declared.
+func FuzzChunkedReader(f *testing.F) {
+	f.Add([]byte("5\r\nhello\r\n0\r\nx-amz-checksum-crc32:DUoRhQ==\r\n\r\n"))
+	f.Add([]byte("0\r\n\r\n"))
+	f.Add([]byte("ffffffffffffffff\r\n"))
+	f.Add([]byte("5;chunk-signature=00\r\nhello\r\n"))
+	f.Fuzz(func(t *testing.T, body []byte) {
+		for _, payload := range []string{payloadStreamingUnsignedTrailer, payloadStreaming} {
+			reader := newChunkedReader(bytes.NewReader(body), &s3Signature{payload: payload,
+				key: []byte("key"), date: "20130524T000000Z", scope: "20130524/us-east-1/s3/aws4_request"})
+			data, _ := io.ReadAll(reader)
+			if len(data) > len(body) {
+				t.Fatalf("decoded %d bytes out of a body of %d", len(data), len(body))
+			}
 		}
 	})
 }

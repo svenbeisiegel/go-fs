@@ -17,6 +17,10 @@ type operation struct {
 	// happened reports from the disk alone whether the operation took effect,
 	// so that a refusal which still changed something is caught too
 	happened func(t *testing.T, c *cluster) bool
+	// s3Needs and s3Happened replace needs and happened over S3, for the one
+	// operation S3 does differently
+	s3Needs    []right
+	s3Happened func(t *testing.T, c *cluster) bool
 }
 
 var (
@@ -87,6 +91,12 @@ var operations = []operation{
 		happened: func(t *testing.T, c *cluster) bool {
 			return !c.exists("/seed.txt") || c.exists("/renamed.txt")
 		},
+		// S3 has no rename: a client copies and deletes, and a copy reads
+		// what it copies. An account that may read and create but not
+		// delete is left with the copy, which it could have made anyway by
+		// downloading and uploading; what it must not do is remove the source
+		s3Needs:    []right{retrieve, create, deleteFile},
+		s3Happened: func(t *testing.T, c *cluster) bool { return !c.exists("/seed.txt") },
 	},
 }
 
@@ -136,13 +146,17 @@ func TestRightsMeanTheSameOnEveryProtocol(t *testing.T) {
 				}
 				for _, op := range operations {
 					fixture(t, c)
-					want := grants(p.rights, op.needs)
+					needs, happened := op.needs, op.happened
+					if proto.name == "s3" && op.s3Needs != nil {
+						needs, happened = op.s3Needs, op.s3Happened
+					}
+					want := grants(p.rights, needs)
 					err := op.do(cl)
 					if allowed := err == nil; allowed != want {
 						t.Errorf("%s %s: allowed=%v, want %v (err: %v)", proto.name, op.name, allowed, want, err)
 					}
-					if op.happened != nil {
-						if happened := op.happened(t, c); happened != want {
+					if happened != nil {
+						if happened := happened(t, c); happened != want {
 							t.Errorf("%s %s: took effect=%v, want %v", proto.name, op.name, happened, want)
 						}
 					}

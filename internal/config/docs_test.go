@@ -67,6 +67,14 @@ func TestTemplateDocs(t *testing.T) {
 	if !strings.HasPrefix(docs["http.trustedProxies"], "Addresses or CIDR ranges") {
 		t.Errorf("http.trustedProxies is described as %q", docs["http.trustedProxies"])
 	}
+	// the s3 switch of an account is described on its own, not as one of the
+	// servers above it, and the server switch names the bucket and the region
+	if !strings.HasPrefix(docs["users.s3"], "Let this account use the S3 API") {
+		t.Errorf("users.s3 is described as %q", docs["users.s3"])
+	}
+	if !strings.Contains(docs["http.enableS3"], `"main"`) || !strings.Contains(docs["http.enableS3"], `"us-east-1"`) {
+		t.Errorf("http.enableS3 is described as %q", docs["http.enableS3"])
+	}
 	for key := range docs {
 		if strings.ContainsAny(key, " \"[]") {
 			t.Errorf("a line of prose was read as a table: %q", key)

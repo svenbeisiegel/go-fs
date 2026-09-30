@@ -117,4 +117,28 @@ func (s *Server) sweepStaging() {
 		}
 		s.log.Info("http cleanup removed an orphaned upload", "path", path, "age", stagingMaxAge)
 	}
+	s.sweepMultipart(folder, cutoff)
+}
+
+// sweepMultipart removes the S3 multipart uploads nothing has been added to
+// since cutoff. A folder is touched every time a part lands in it, so an
+// upload that is still sending parts is never taken for an abandoned one.
+func (s *Server) sweepMultipart(staging string, cutoff time.Time) {
+	folder := filepath.Join(staging, multipartFolder)
+	entries, err := os.ReadDir(folder)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil || !entry.IsDir() || info.ModTime().After(cutoff) {
+			continue
+		}
+		path := filepath.Join(folder, entry.Name())
+		if err := os.RemoveAll(path); err != nil {
+			s.log.Error("http cleanup cannot remove an abandoned s3 upload", "path", path, "error", err)
+			continue
+		}
+		s.log.Info("http cleanup removed an abandoned s3 upload", "path", path, "age", stagingMaxAge)
+	}
 }
