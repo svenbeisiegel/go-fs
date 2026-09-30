@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/crypto/ssh"
@@ -36,6 +37,7 @@ func Template() []byte {
 type Config struct {
 	General General `toml:"general"`
 	Users   []User  `toml:"users"`
+	Tokens  []Token `toml:"tokens"`
 	FTP     FTP     `toml:"ftp"`
 	FTPS    FTPS    `toml:"ftps"`
 	SFTP    SFTP    `toml:"sftp"`
@@ -160,6 +162,71 @@ type Permissions struct {
 	FileDelete      bool
 	FolderDelete    bool
 	FolderCreate    bool
+}
+
+// Token is a bearer token for the HTTP server: a credential a script or an API
+// client sends as "Authorization: Bearer <token>" instead of a username and a
+// password. Only the HTTP server reads tokens, on its plain and its TLS
+// listener alike; FTP, SFTP and TFTP never see them.
+//
+// The file holds a hash of the token, never the token itself, so whoever reads
+// the file or its backup cannot use one. The admin interface shows a new
+// token once, when it creates it; a token that is lost is replaced, not
+// recovered.
+type Token struct {
+	// Name labels the token in the admin interface and in the logs, where it
+	// appears as "token:<name>".
+	Name string `toml:"name"`
+	// Hash is the SHA-256 of the token, hex encoded. The admin interface
+	// fills it in when it creates a token.
+	Hash string `toml:"hash"`
+	// Expires is when the token stops being accepted, as an RFC 3339 time
+	// such as 2026-12-31T23:59:59Z. A token without one never expires.
+	Expires string `toml:"expires,omitempty"`
+
+	// Basefolder is the folder a request with this token is served from: the
+	// request path / is this folder. Without one the token sees the HTTP
+	// server's own folder.
+	Basefolder string `toml:"basefolder,omitempty"`
+	// Paths are regular expressions matched against the request path, which
+	// is relative to the token's base folder, after it has been normalized. A
+	// token with no pattern can reach nothing.
+	Paths []string `toml:"paths,omitempty"`
+
+	AllowUserFileCreate    *bool `toml:"allowUserFileCreate,omitempty"`
+	AllowUserFileRetrieve  *bool `toml:"allowUserFileRetrieve,omitempty"`
+	AllowUserFileOverwrite *bool `toml:"allowUserFileOverwrite,omitempty"`
+	AllowUserFileDelete    *bool `toml:"allowUserFileDelete,omitempty"`
+	AllowUserFolderDelete  *bool `toml:"allowUserFolderDelete,omitempty"`
+	AllowUserFolderCreate  *bool `toml:"allowUserFolderCreate,omitempty"`
+}
+
+// Permissions resolves the token entry the way User.Permissions resolves an
+// account: every right has to be granted explicitly.
+func (t Token) Permissions() Permissions {
+	return Permissions{
+		Basefolder:    t.Basefolder,
+		FileCreate:    boolOr(t.AllowUserFileCreate, false),
+		FileRetrieve:  boolOr(t.AllowUserFileRetrieve, false),
+		FileOverwrite: boolOr(t.AllowUserFileOverwrite, false),
+		FileDelete:    boolOr(t.AllowUserFileDelete, false),
+		FolderDelete:  boolOr(t.AllowUserFolderDelete, false),
+		FolderCreate:  boolOr(t.AllowUserFolderCreate, false),
+	}
+}
+
+// ExpiresAt is when the token stops being accepted, and false for a token that
+// never expires. A value that does not parse is refused by Validate, so here it
+// reads as already expired rather than as forever.
+func (t Token) ExpiresAt() (time.Time, bool) {
+	if t.Expires == "" {
+		return time.Time{}, false
+	}
+	at, err := time.Parse(time.RFC3339, t.Expires)
+	if err != nil {
+		return time.Time{}, true
+	}
+	return at, true
 }
 
 // FTPUsers, SFTPUsers and HTTPUsers are the entries a server serves: the ones
@@ -680,6 +747,9 @@ func (c Config) Validate() error {
 	if err := c.validateUsers(); err != nil {
 		return err
 	}
+	if err := c.validateTokens(); err != nil {
+		return err
+	}
 	if c.FTP.Enabled || c.FTPS.Enabled {
 		if err := c.validateFTP(); err != nil {
 			return err
@@ -757,6 +827,53 @@ func (c Config) validateUsers() error {
 		if user.IsAdmin && !user.HTTP {
 			return fmt.Errorf("%s %q sets isAdmin but not http, "+
 				"which the admin interface needs to log in", where, user.Username)
+		}
+	}
+	return nil
+}
+
+// validateTokens checks the bearer tokens. Like validateUsers it runs whether
+// or not the HTTP server is enabled.
+func (c Config) validateTokens() error {
+	names := map[string]bool{}
+	hashes := map[string]bool{}
+	for i, token := range c.Tokens {
+		where := fmt.Sprintf("tokens[%d]", i)
+		if token.Name == "" {
+			return fmt.Errorf("%s has no name", where)
+		}
+		if names[token.Name] {
+			return fmt.Errorf("%s: %q is configured twice", where, token.Name)
+		}
+		names[token.Name] = true
+		if !ValidTokenHash(token.Hash) {
+			return fmt.Errorf("%s %q: hash has to be the hex encoded SHA-256 of the token, "+
+				"64 characters", where, token.Name)
+		}
+		// two entries with the same hash are one token with two sets of rights
+		if hashes[strings.ToLower(token.Hash)] {
+			return fmt.Errorf("%s %q has the same hash as another token", where, token.Name)
+		}
+		hashes[strings.ToLower(token.Hash)] = true
+		if token.Expires != "" {
+			if _, err := time.Parse(time.RFC3339, token.Expires); err != nil {
+				return fmt.Errorf("%s %q: expires %q is not an RFC 3339 time "+
+					"such as 2026-12-31T23:59:59Z", where, token.Name, token.Expires)
+			}
+		}
+		if token.Basefolder != "" {
+			if !filepath.IsAbs(token.Basefolder) {
+				return fmt.Errorf("%s.basefolder %q has to be an absolute path",
+					where, token.Basefolder)
+			}
+			if err := checkFolder(where+".basefolder", token.Basefolder); err != nil {
+				return err
+			}
+		}
+		for k, pattern := range token.Paths {
+			if _, err := regexp.Compile(pattern); err != nil {
+				return fmt.Errorf("%s.paths[%d]: %w", where, k, err)
+			}
 		}
 	}
 	return nil

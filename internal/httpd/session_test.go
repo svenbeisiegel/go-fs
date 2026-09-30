@@ -252,7 +252,7 @@ func TestASessionTokenFollowsTheAccount(t *testing.T) {
 	reload := func(users ...config.User) {
 		t.Helper()
 		next := server.settings().cfg
-		if err := server.Reload(next, server.settings().https, users); err != nil {
+		if err := server.Reload(next, server.settings().https, users, nil); err != nil {
 			t.Fatalf("Reload: %v", err)
 		}
 	}
@@ -291,7 +291,7 @@ func TestASessionTokenDoesNotSurviveAPasswordChange(t *testing.T) {
 	session := login(t, server, "/private/secret.txt", "john", "doe")
 
 	next := server.settings().cfg
-	if err := server.Reload(next, server.settings().https, []config.User{fullUser("john", "something else")}); err != nil {
+	if err := server.Reload(next, server.settings().https, []config.User{fullUser("john", "something else")}, nil); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 

@@ -118,6 +118,39 @@ logFormat = "text"
 # paths = ["^/public/.*"]
 # allowUserFileRetrieve = true
 
+# Bearer tokens for the http server, one table per token: what a script or an
+# API client sends as "Authorization: Bearer <token>" instead of a username and
+# a password. Only the http server accepts them, on the plain and the TLS port
+# alike; ftp, sftp and tftp never do. A token is never a session, so it cannot
+# open the admin interface. They are made in the admin interface, on the
+# TOKENS tab, which shows a new token once: this file holds only its hash, so a
+# lost token is replaced rather than recovered.
+# [[tokens]]
+# What the token is called in the admin interface and in the logs, where it
+# appears as token:<name>.
+# name = "backup-job"
+# The SHA-256 of the token, hex encoded, filled in by the admin interface.
+# hash = "…64 hex characters…"
+# When the token stops being accepted, as an RFC 3339 time. A token without one
+# never expires.
+# expires = "2026-12-31T23:59:59Z"
+# The folder requests with this token are served from: the request path / is
+# this folder, and the http server's folder is out of its reach. Without one
+# the token sees the http server's folder, and what is public there stays
+# public to it.
+# basefolder = "/srv/files/backup"
+# What the token may reach: regular expressions matched against the request
+# path, relative to the token's basefolder, after it has been normalized. A
+# token with no pattern can reach nothing.
+# paths = ["^/.*"]
+# What the token may do, as for an http account. All false when not set.
+# allowUserFileCreate = true
+# allowUserFileRetrieve = true
+# allowUserFileOverwrite = true
+# allowUserFileDelete = true
+# allowUserFolderDelete = true
+# allowUserFolderCreate = true
+
 [ftp]
 # Serve the plain control port. The TLS listener has its own switch in [ftps];
 # everything else in this section applies to both of them.

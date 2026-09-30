@@ -534,6 +534,48 @@ The credential check takes the same time whichever name is sent: the name and
 the password are compared for every account, so an account that exists is
 refused no faster than one that does not.
 
+### Bearer tokens
+
+A script or an API client can use a **bearer token** instead of an account.
+Tokens are listed under `[[tokens]]` and managed on the **TOKENS** tab of the
+admin interface, next to USERS:
+
+1. Give the token a name and a lifetime in days; `0` means it never expires.
+2. The page shows the new token once. Copy it before pressing **Apply**, which
+   writes the entry. The file holds only the token's SHA-256 hash, so a lost
+   token has to be replaced; it cannot be recovered.
+
+Clients send the token as a header, on the plain port and the TLS port alike:
+
+```sh
+curl -H "Authorization: Bearer gofs_…" https://host:9443/reports/today.csv
+curl -H "Authorization: Bearer gofs_…" -H "Content-Type: application/octet-stream" \
+     -T build.zip https://host:9443/uploads/build.zip
+```
+
+What a token may do is set on its own entry:
+
+- **Rights:** the same `allowUser*` rights as an account.
+- **`paths`:** regular expressions matched against the request path. A token
+  with no pattern can reach nothing.
+- **`basefolder`:** optional. When set, requests with the token are served from
+  that folder instead of the HTTP server's, so `/` is the token's folder and
+  nothing outside it can be reached. What is public in the server's folder is
+  not public there either, so only the token's own rights count.
+- **`expires`:** an RFC 3339 time. Edit it to extend a token, or clear it to
+  make the token permanent.
+
+Only the HTTP server accepts tokens. FTP, SFTP and TFTP never see them.
+
+A token is not a session, so it cannot open the admin interface. It also
+counts in the login lock: an unknown token is counted as a wrong password.
+
+An unknown or expired token is answered `401` with
+`WWW-Authenticate: Bearer error="invalid_token"`, even on a public path, so the
+client learns that its token is not accepted.
+
+Removing a token from the file revokes it within one reload.
+
 ### Logging in from a browser
 
 Any HTTP account may log in through the page; programs keep using Basic or
@@ -709,7 +751,7 @@ point out of the base folder.
 **HTTP** — `GET` for downloads and a browsable listing, `PUT` for
 `application/octet-stream` and multipart uploads, `DELETE` for a file or an
 empty folder, Basic (RFC 7617) and Digest (RFC 7616, with the RFC 2069 form)
-authentication, browser login with a signed session token (JWT, RFC 7519), and
+authentication, bearer tokens (RFC 6750) for scripts, browser login with a signed session token (JWT, RFC 7519), and
 the legacy `dls_directory_reader` listing endpoint. Downloads answer range requests, so a large one can be resumed.
 
 **TFTP** — the protocol has no accounts and no passwords and no way to carry

@@ -339,8 +339,11 @@ func (s *Server) handleChunkedPut(set *settings, w http.ResponseWriter, r *http.
 		return
 	}
 
-	staging := stagingPath(set, target.Virtual)
-	lock := s.uploadLock(target.Virtual)
+	// both are keyed by the file on disk rather than by the request path: a
+	// bearer token with a base folder of its own sees another tree under the
+	// same paths, and its upload must not meet an account's
+	staging := stagingPath(set, target.Path)
+	lock := s.uploadLock(target.Path)
 	lock.Lock()
 	defer lock.Unlock()
 
@@ -516,10 +519,10 @@ func stagingFolder(set *settings) string {
 }
 
 // stagingPath is where one target's chunked upload is staged while it is in
-// progress: one file per virtual path, named from a hash of it so the served
-// tree's own folder structure needs no mirroring here.
-func stagingPath(set *settings, virtual string) string {
-	sum := sha256.Sum256([]byte(virtual))
+// progress: one file per target, named from a hash of its path on disk so the
+// served tree's own folder structure needs no mirroring here.
+func stagingPath(set *settings, target string) string {
+	sum := sha256.Sum256([]byte(target))
 	return filepath.Join(stagingFolder(set), hex.EncodeToString(sum[:])+".part")
 }
 
@@ -571,8 +574,8 @@ func copyFile(src, dst string, replace bool) error {
 // is one cheap mutex, retained for as many distinct target paths as have ever
 // been chunk-uploaded to this server, which is bounded by the size of the
 // served tree itself rather than by request volume.
-func (s *Server) uploadLock(virtual string) *sync.Mutex {
-	value, _ := s.uploadLocks.LoadOrStore(virtual, &sync.Mutex{})
+func (s *Server) uploadLock(target string) *sync.Mutex {
+	value, _ := s.uploadLocks.LoadOrStore(target, &sync.Mutex{})
 	return value.(*sync.Mutex)
 }
 
@@ -865,7 +868,7 @@ func (s *Server) destinationOf(set *settings, w http.ResponseWriter, r *http.Req
 		return vfs.Target{}, false
 	}
 
-	destination := s.root.Resolve("/", parsed.Path)
+	destination := s.rootFor(user).Resolve("/", parsed.Path)
 	if !destination.Valid || destination.IsRoot() {
 		s.log.Debug("http rename destination refused", "destination", parsed.Path)
 		http.NotFound(w, r)
@@ -946,7 +949,7 @@ func (s *Server) handleDirectoryReader(set *settings, w http.ResponseWriter, r *
 	// the request path names the reader script, so the listing is relative to
 	// the folder that script sits in
 	base := path.Dir(target.Virtual)
-	listed := s.root.Resolve(base, folder)
+	listed := s.rootFor(user).Resolve(base, folder)
 	if !listed.Valid {
 		s.log.Debug("http directory reader path refused", "dir", folder)
 		http.NotFound(w, r)

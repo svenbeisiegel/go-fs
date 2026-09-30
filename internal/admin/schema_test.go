@@ -2,6 +2,7 @@ package admin
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"go-fs/internal/config"
@@ -20,7 +21,7 @@ func TestSchemaCoversTheWholeFile(t *testing.T) {
 	for _, section := range schema.Sections {
 		sections[section.Key] = section
 	}
-	for _, name := range []string{"general", "users", "ftp", "ftps", "sftp", "http", "https", "tftp"} {
+	for _, name := range []string{"general", "users", "tokens", "ftp", "ftps", "sftp", "http", "https", "tftp"} {
 		if _, ok := sections[name]; !ok {
 			t.Errorf("the schema has no %s section", name)
 		}
@@ -30,26 +31,31 @@ func TestSchemaCoversTheWholeFile(t *testing.T) {
 			len(sections), reflect.TypeOf(config.Config{}).NumField())
 	}
 
-	tables := map[string]int{"ftp": 0, "sftp": 0, "http": 1, "general": 0, "users": 1}
+	tables := map[string]int{"ftp": 0, "sftp": 0, "http": 1, "general": 0, "users": 1, "tokens": 1}
 	for name, want := range tables {
 		if got := len(sections[name].Tables); got != want {
 			t.Errorf("%s has %d repeated tables, want %d", name, got, want)
 		}
 	}
 
-	// the accounts are a list at the top of the file, and their tab sits
-	// where the file has them: between general and the first server
-	if !sections["users"].Direct || sections["ftp"].Direct {
-		t.Error("users is the direct section, and the only one")
+	// the accounts and the tokens are lists at the top of the file, and their
+	// tabs sit where the file has them: between general and the first server
+	for _, name := range []string{"users", "tokens"} {
+		if !sections[name].Direct {
+			t.Errorf("%s is not a direct section", name)
+		}
+		if len(sections[name].Fields) != 0 || sections[name].Fields == nil {
+			t.Errorf("%s has fields of its own: %v", name, sections[name].Fields)
+		}
 	}
-	if len(sections["users"].Fields) != 0 || sections["users"].Fields == nil {
-		t.Errorf("users has fields of its own: %v", sections["users"].Fields)
+	if sections["ftp"].Direct {
+		t.Error("ftp is a direct section")
 	}
 	var order []string
-	for _, section := range schema.Sections[:3] {
+	for _, section := range schema.Sections[:4] {
 		order = append(order, section.Key)
 	}
-	if want := []string{"general", "users", "ftp"}; !reflect.DeepEqual(order, want) {
+	if want := []string{"general", "users", "tokens", "ftp"}; !reflect.DeepEqual(order, want) {
 		t.Errorf("the tabs open %v, want %v", order, want)
 	}
 }
@@ -101,21 +107,25 @@ func TestFieldKinds(t *testing.T) {
 	}
 
 	for key, want := range map[string]string{
-		"ftp.enabled":                     kindBool,
-		"ftp.port":                        kindInt,
-		"ftp.basefolder":                  kindText,
-		"http.maxUploadSize":              kindInt,
-		"http.methodsRequireAuth":         kindLines,
-		"general.logLevel":                kindText,
-		"http.enableAdminInterface":       kindBool,
-		"users.users.isAdmin":             kindBool,
-		"sftp.hostkey":                    kindSecret,
-		"users.users.password":            kindSecret,
-		"users.users.ftp":                 kindBool,
-		"users.users.allowUserFileCreate": kindBool,
-		"users.users.authorizedKeys":      kindLines,
-		"users.users.paths":               kindLines,
-		"http.cleanup.keep":               kindInt,
+		"ftp.enabled":                       kindBool,
+		"ftp.port":                          kindInt,
+		"ftp.basefolder":                    kindText,
+		"http.maxUploadSize":                kindInt,
+		"http.methodsRequireAuth":           kindLines,
+		"general.logLevel":                  kindText,
+		"http.enableAdminInterface":         kindBool,
+		"users.users.isAdmin":               kindBool,
+		"sftp.hostkey":                      kindSecret,
+		"users.users.password":              kindSecret,
+		"users.users.ftp":                   kindBool,
+		"users.users.allowUserFileCreate":   kindBool,
+		"users.users.authorizedKeys":        kindLines,
+		"users.users.paths":                 kindLines,
+		"http.cleanup.keep":                 kindInt,
+		"tokens.tokens.hash":                kindText,
+		"tokens.tokens.expires":             kindText,
+		"tokens.tokens.paths":               kindLines,
+		"tokens.tokens.allowUserFileCreate": kindBool,
 	} {
 		if kinds[key] != want {
 			t.Errorf("%s is %q, want %q", key, kinds[key], want)
@@ -172,6 +182,10 @@ func TestValuesRoundTrip(t *testing.T) {
 		{Username: "max", SFTP: true, AuthorizedKeys: []string{"ssh-ed25519 AAAA max@laptop"}},
 	}
 	cfg.HTTP.Cleanup = []config.Cleanup{{Path: "/iso", Keep: 10}}
+	cfg.Tokens = []config.Token{
+		{Name: "ci", Hash: strings.Repeat("ab", 32), Expires: "2030-01-02T03:04:05Z",
+			Basefolder: "/srv/ci", Paths: []string{"^/.*"}, AllowUserFileCreate: &yes},
+	}
 
 	first := schema.Values(cfg)
 	if records, ok := first["users"].([]any); !ok || len(records) != 3 {
@@ -206,6 +220,47 @@ func TestValuesRoundTrip(t *testing.T) {
 	}
 	if applied.Users[2].AuthorizedKeys[0] != "ssh-ed25519 AAAA max@laptop" {
 		t.Errorf("the authorized key did not survive: %+v", applied.Users[2])
+	}
+	// the rights come back as pointers to false where they were unset, which
+	// is the same thing, so they are compared resolved
+	if len(applied.Tokens) != 1 {
+		t.Fatalf("the tokens did not survive: %+v", applied.Tokens)
+	}
+	got, want := applied.Tokens[0], cfg.Tokens[0]
+	if got.Name != want.Name || got.Hash != want.Hash || got.Expires != want.Expires ||
+		got.Basefolder != want.Basefolder || !reflect.DeepEqual(got.Paths, want.Paths) ||
+		got.Permissions() != want.Permissions() {
+		t.Errorf("the token did not survive: %+v", got)
+	}
+}
+
+// A token is made by the server, so the page asks it for one instead of
+// adding a blank record, and does not let its hash be typed over. A folded
+// token says until when it works.
+func TestTokenTable(t *testing.T) {
+	schema, _ := build()
+	var table Table
+	for _, section := range schema.Sections {
+		if section.Key == "tokens" {
+			table = section.Tables[0]
+		}
+		for _, other := range section.Tables {
+			if other.Create != "" && section.Key != "tokens" {
+				t.Errorf("%s.%s is created by the server", section.Key, other.Key)
+			}
+		}
+	}
+	if table.Create != config.KindToken {
+		t.Errorf("tokens are created as %q, want %q", table.Create, config.KindToken)
+	}
+	for _, field := range table.Fields {
+		if field.ReadOnly != (field.Key == "hash") {
+			t.Errorf("tokens.%s read-only is %v", field.Key, field.ReadOnly)
+		}
+		wantSummary := field.Key == "name" || field.Key == "expires"
+		if field.Summary != wantSummary {
+			t.Errorf("tokens.%s summary is %v, want %v", field.Key, field.Summary, wantSummary)
+		}
 	}
 }
 

@@ -40,6 +40,10 @@ type Table struct {
 	Label  string  `json:"label"`
 	Help   string  `json:"help,omitempty"`
 	Fields []Field `json:"fields"`
+	// Create is what a new record is made from, empty for a record that
+	// starts blank. "token" makes the page ask the server for a new bearer
+	// token, which it shows once and keeps only the hash of.
+	Create string `json:"create,omitempty"`
 
 	// index locates the slice in its section, as it does for a field.
 	index int
@@ -65,6 +69,9 @@ type Field struct {
 	// the name of no setting, so which fields those are is decided here, by
 	// their shape.
 	Summary bool `json:"summary,omitempty"`
+	// ReadOnly is a value the page shows and sends back but does not let
+	// anyone type into, because it is made by the server: a token's hash.
+	ReadOnly bool `json:"readOnly,omitempty"`
 
 	// index locates the field in its struct, so that reading and writing a
 	// value walks the same path the schema was built from.
@@ -149,6 +156,12 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 		index:  index,
 		Fields: make([]Field, 0, element.NumField()),
 	}
+	// a token is not typed in: its hash comes from the server, which made the
+	// token, and so does when it expires
+	isToken := element == reflect.TypeOf(config.Token{})
+	if isToken {
+		table.Create = config.KindToken
+	}
 	hasText := false
 	for i := range element.NumField() {
 		inner := element.Field(i)
@@ -166,6 +179,15 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 		// and the switches, which are the plain bools; the pointers are the
 		// rights, and a record is not summed up by its rights
 		field.Summary = (kind == kindText && !hasText) || inner.Type.Kind() == reflect.Bool
+		if isToken {
+			switch inner.Name {
+			case "Hash":
+				field.ReadOnly = true
+			case "Expires":
+				// a folded token says until when it works
+				field.Summary = true
+			}
+		}
 		if kind == kindText {
 			hasText = true
 		}

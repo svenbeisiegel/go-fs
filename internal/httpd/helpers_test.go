@@ -115,10 +115,12 @@ func fullUser(name, password string) config.User {
 }
 
 // httpConfig is the [http] section together with the accounts the file keeps
-// under [[users]], so that one closure tunes both.
+// under [[users]] and the bearer tokens under [[tokens]], so that one closure
+// tunes them all.
 type httpConfig struct {
 	config.HTTP
-	Users []config.User
+	Users  []config.User
+	Tokens []config.Token
 	// ConfigPath is the file the admin interface edits, empty for a server
 	// without one, which is what most tests want.
 	ConfigPath string
@@ -157,7 +159,7 @@ func newServerWith(t *testing.T, tune func(*httpConfig), tuneTLS func(*config.HT
 	}
 
 	logs := &logStore{}
-	server, err := New(cfg.HTTP, https, cfg.Users, cfg.ConfigPath, slog.New(&recorder{store: logs}))
+	server, err := New(cfg.HTTP, https, cfg.Users, cfg.Tokens, cfg.ConfigPath, slog.New(&recorder{store: logs}))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

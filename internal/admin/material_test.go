@@ -7,8 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"go-fs/internal/config"
 	"go-fs/internal/tlsconf"
@@ -313,5 +315,73 @@ func TestMaterialEndpointsAreGuarded(t *testing.T) {
 			map[string]string{"Origin": "https://elsewhere.example"}); status != http.StatusForbidden {
 			t.Errorf("%s took a request from another origin: %d", path, status)
 		}
+	}
+}
+
+// A generated token comes with its hash and its expiry, and nothing else: the
+// page keeps the hash and shows the token once.
+func TestGenerateToken(t *testing.T) {
+	_, front := testServer(t, testConfig(t))
+
+	status, answer, body := send(t, front, "/?go-fs=admin-generate",
+		map[string]any{"kind": config.KindToken, "name": "ci", "days": 30}, nil)
+	if status != http.StatusOK {
+		t.Fatalf("generating a token: %d %s", status, body)
+	}
+	plain, _ := answer["value"].(string)
+	hash, _ := answer["hash"].(string)
+	if !strings.HasPrefix(plain, "gofs_") || hash != config.HashToken(plain) {
+		t.Errorf("token %q hash %q", plain, hash)
+	}
+	expires, err := time.Parse(time.RFC3339, answer["expires"].(string))
+	if err != nil {
+		t.Fatalf("expires: %v", err)
+	}
+	if want := time.Now().Add(30 * 24 * time.Hour); expires.Sub(want).Abs() > time.Minute {
+		t.Errorf("expires %v, want about %v", expires, want)
+	}
+
+	_, forever, _ := send(t, front, "/?go-fs=admin-generate",
+		map[string]any{"kind": config.KindToken, "days": 0}, nil)
+	if forever["expires"] != "" {
+		t.Errorf("a token for 0 days expires %v, want never", forever["expires"])
+	}
+	if forever["value"] == plain {
+		t.Error("two tokens came out the same")
+	}
+
+	if status, _, _ := send(t, front, "/?go-fs=admin-generate",
+		map[string]any{"kind": config.KindToken, "days": -1}, nil); status != http.StatusBadRequest {
+		t.Errorf("a negative lifetime was answered %d, want 400", status)
+	}
+}
+
+// A token added through the page is written to the file as its hash.
+func TestGeneratedTokenSurvivesApply(t *testing.T) {
+	path := testConfig(t)
+	_, front := testServer(t, path)
+	_, generated, _ := send(t, front, "/?go-fs=admin-generate",
+		map[string]any{"kind": config.KindToken, "days": 1}, nil)
+
+	values := get(t, front).Values
+	values["tokens"] = []any{map[string]any{
+		"name": "ci", "hash": generated["hash"], "expires": generated["expires"],
+		"paths": []string{"^/.*"}, "allowUserFileRetrieve": true,
+	}}
+	if status, body := post(t, front, roundTripJSON(t, values), nil); status != http.StatusOK {
+		t.Fatalf("applying a token: %d %s", status, body)
+	}
+
+	written, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(written.Tokens) != 1 || written.Tokens[0].Hash != generated["hash"] ||
+		!written.Tokens[0].Permissions().FileRetrieve {
+		t.Errorf("the file holds %+v", written.Tokens)
+	}
+	raw, _ := os.ReadFile(path)
+	if strings.Contains(string(raw), generated["value"].(string)) {
+		t.Error("the token itself was written to the file")
 	}
 }

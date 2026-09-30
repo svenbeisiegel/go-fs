@@ -19,6 +19,10 @@ let selected = 0;
 // list is redrawn on every add and remove, and the objects survive that, while
 // a fresh read of the file replaces them all and so folds everything up again
 const openRecords = new WeakSet();
+// the bearer tokens created on this page, keyed by their record. A token is
+// shown only here and only until the file is read again: the record, and so
+// the file, holds nothing but its hash
+const newTokens = new WeakMap();
 
 const banner = document.getElementById("banner");
 const tabs = document.getElementById("tabs");
@@ -205,6 +209,9 @@ function tableBlock(holder, key, table, heading) {
       summary.append(remove);
       card.append(summary);
 
+      if (newTokens.has(record)) {
+        card.append(tokenNotice(newTokens.get(record)));
+      }
       card.append(fieldGrid(table.fields, record, ""));
       // the line the record folds up to follows what is typed into it
       const refresh = () => (title.textContent = describe(table, record));
@@ -214,26 +221,137 @@ function tableBlock(holder, key, table, heading) {
     });
   };
 
+  const append = (record) => {
+    if (!holder[key]) {
+      holder[key] = [];
+    }
+    holder[key].push(record);
+    // a new record is there to be filled in, so it starts open
+    openRecords.add(record);
+    draw();
+  };
+
+  draw();
+  if (table.create === "token") {
+    block.append(tokenCreator(table, (record) => {
+      append(record);
+      list.lastElementChild.scrollIntoView({ block: "nearest" });
+    }));
+    return block;
+  }
+
   const add = document.createElement("button");
   add.type = "button";
   add.className = "plain";
   add.textContent = "Add " + table.key;
   add.addEventListener("click", () => {
-    if (!holder[key]) {
-      holder[key] = [];
-    }
-    const record = blank(table.fields);
-    holder[key].push(record);
-    // a new record is there to be filled in, so it starts open
-    openRecords.add(record);
-    draw();
+    append(blank(table.fields));
     const first = list.lastElementChild.querySelector("input, textarea");
     if (first) first.focus();
   });
-
-  draw();
   block.append(add);
   return block;
+}
+
+// tokenCreator is the Add button of a list whose records the server makes: a
+// bearer token is random, and the file keeps only its hash, so a new one is
+// asked for with a name and a lifetime rather than typed in. done is handed
+// the new record.
+function tokenCreator(table, done) {
+  const form = document.createElement("div");
+  form.className = "create";
+
+  const name = document.createElement("input");
+  name.type = "text";
+  name.id = "field-" + ++sequence;
+  name.spellcheck = false;
+  name.placeholder = "what uses it, e.g. backup-job";
+  const nameLabel = document.createElement("label");
+  nameLabel.textContent = "name";
+  nameLabel.htmlFor = name.id;
+
+  const days = document.createElement("input");
+  days.type = "number";
+  days.id = "field-" + ++sequence;
+  days.min = "0";
+  days.step = "1";
+  days.value = "0";
+  const daysLabel = document.createElement("label");
+  daysLabel.textContent = "lifetime in days (0 = never expires)";
+  daysLabel.htmlFor = days.id;
+
+  const problem = paragraph("", "problem");
+  problem.hidden = true;
+  const report = (text) => {
+    problem.textContent = text;
+    problem.hidden = text === "";
+  };
+
+  const create = plainButton("Create " + table.key.replace(/s$/, ""), async () => {
+    report("");
+    const label = name.value.trim();
+    if (label === "") {
+      report("A token needs a name.");
+      name.focus();
+      return;
+    }
+    const lifetime = Number(days.value || "0");
+    if (!Number.isInteger(lifetime) || lifetime < 0) {
+      report("The lifetime is a whole number of days, 0 for a token that never expires.");
+      days.focus();
+      return;
+    }
+    try {
+      const result = await post("?go-fs=admin-generate",
+        { kind: "token", name: label, days: lifetime });
+      const record = blank(table.fields);
+      record.name = label;
+      record.hash = result.hash;
+      record.expires = result.expires;
+      newTokens.set(record, result.value);
+      name.value = "";
+      days.value = "0";
+      done(record);
+    } catch (error) {
+      report(String(error.message || error));
+    }
+  });
+
+  const row = document.createElement("div");
+  row.className = "inputs";
+  row.append(nameLabel, name, daysLabel, days, create);
+  form.append(row, problem);
+  return form;
+}
+
+// tokenNotice shows a token that was just created, the one time it is shown.
+function tokenNotice(token) {
+  const notice = document.createElement("div");
+  notice.className = "token-notice";
+  notice.append(paragraph("Copy this token now: it is shown only until the page "
+    + "is read again, and it is accepted once Apply has written it. Send it as "
+    + "\"Authorization: Bearer <token>\".", ""));
+  const row = document.createElement("div");
+  row.className = "secret";
+  const value = document.createElement("input");
+  value.type = "text";
+  value.readOnly = true;
+  value.value = token;
+  value.addEventListener("focus", () => value.select());
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.textContent = "copy";
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(token);
+      copy.textContent = "copied";
+    } catch {
+      value.select();
+    }
+  });
+  row.append(value, copy);
+  notice.append(row);
+  return notice;
 }
 
 // describe is the line a folded record is named by: the fields the schema
@@ -318,6 +436,12 @@ function editor(field, holder) {
   input.type = field.kind === "secret" ? "password" : "text";
   input.value = holder[field.key] ?? "";
   input.addEventListener("input", () => set(input.value));
+  if (field.readOnly) {
+    // made by the server and sent back as it came
+    input.readOnly = true;
+    input.className = "readonly";
+    return { element: input, id };
+  }
   if (field.kind !== "secret") {
     return { element: input, id };
   }

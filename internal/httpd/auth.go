@@ -33,6 +33,13 @@ type account struct {
 	// isAdmin lets the account into the admin interface, once it holds a
 	// session.
 	isAdmin bool
+
+	// The rest is only set for a bearer token. hash is what the token is
+	// matched by, expires when it stops being accepted (zero for never), and
+	// root the folder it is served from, nil for the server's own.
+	hash    string
+	expires time.Time
+	root    *vfs.Root
 }
 
 // allows reports whether this account may reach a normalized request path.
@@ -114,9 +121,14 @@ type credential struct {
 	// locked says the address has sent too many wrong passwords and its
 	// credentials were not looked at.
 	locked bool
+	// rejected says a bearer token was presented and refused. The request is
+	// answered 401 even where it needs no account: a program that sent a
+	// token has to learn that it is wrong or has expired, not be served as
+	// anyone would be.
+	rejected bool
 	// method is how the request identified itself, for the records: basic,
-	// digest, token, none, or unsupported for a scheme this server does not
-	// speak.
+	// digest, bearer, token (the session cookie), none, or unsupported for a
+	// scheme this server does not speak.
 	method string
 }
 
@@ -134,6 +146,10 @@ func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Requ
 		s.log.Debug("http authenticated", "user", cred.user.name, "method", cred.method,
 			"address", clientAddress(set, r), "path", virtual)
 		return cred, true
+	}
+	if cred.rejected {
+		s.refuseBearer(set, w, r)
+		return credential{}, false
 	}
 	if !s.needsAuth(set, r.Method, virtual) {
 		return cred, true
@@ -184,6 +200,20 @@ func (s *Server) identify(set *settings, w http.ResponseWriter, r *http.Request)
 			cred.token = s.sessionMatches(set, r, cred.user)
 		}
 		return cred
+	case strings.HasPrefix(header, "Bearer "):
+		if remaining, locked := s.lockedOut(set, r); locked {
+			s.log.Info("http login refused, the address is locked out", "method", "bearer",
+				"address", clientAddress(set, r), "remaining", remaining.Round(time.Second))
+			return credential{locked: true, method: "bearer"}
+		}
+		// a token is never a session: it cannot log out, and it cannot
+		// reach the admin interface, which takes one
+		user := s.checkBearer(set, r, strings.TrimPrefix(header, "Bearer "))
+		if user == nil {
+			return credential{rejected: true, method: "bearer"}
+		}
+		s.logins.clear(clientAddress(set, r))
+		return credential{user: user, method: "bearer"}
 	case header != "":
 		scheme, _, _ := strings.Cut(header, " ")
 		s.log.Debug("http authorization scheme not supported", "scheme", scheme,
@@ -466,7 +496,10 @@ func actionOf(method string, target vfs.Target) action {
 // one exception: a public PUT never replaced what was there, and it still does
 // not — only an account granted allowUserFileOverwrite may.
 func (s *Server) permits(set *settings, user *account, method, virtual string, act action) bool {
-	if act != actOverwrite && !s.needsAuth(set, method, virtual) {
+	// what is public is public in the served folder; a token with a base
+	// folder of its own sees another tree, where only its own rights count
+	ownTree := user != nil && user.root != nil
+	if act != actOverwrite && !ownTree && !s.needsAuth(set, method, virtual) {
 		return true
 	}
 	if user == nil || !user.allows(virtual) {

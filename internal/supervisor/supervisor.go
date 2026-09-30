@@ -68,10 +68,10 @@ var services = []entry{
 		name:    "http",
 		enabled: func(e env) bool { return e.cfg.HTTP.Enabled || e.cfg.HTTPS.Enabled },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
-			return httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.HTTPUsers(), e.path, log)
+			return httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.HTTPUsers(), e.cfg.Tokens, e.path, log)
 		},
 		reload: func(s service.Server, e env) error {
-			return s.(*httpd.Server).Reload(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.HTTPUsers())
+			return s.(*httpd.Server).Reload(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.HTTPUsers(), e.cfg.Tokens)
 		},
 	},
 	{

@@ -91,9 +91,13 @@ type Server struct {
 // settings is the part of the server a reload can replace: the section and
 // everything compiled from it.
 type settings struct {
-	cfg            config.HTTP
-	https          config.HTTPS
-	accounts       []*account
+	cfg      config.HTTP
+	https    config.HTTPS
+	accounts []*account
+	// tokens are the [[tokens]] entries, resolved as accounts of their own.
+	// They are kept apart from accounts, so that nothing that looks an
+	// account up by name — a session, the login form — can reach one.
+	tokens         []*account
 	protectedPaths []*regexp.Regexp
 	// proxies are http.trustedProxies compiled, the addresses whose
 	// X-Forwarded-For and X-Forwarded-Proto are believed.
@@ -106,10 +110,15 @@ func (s *Server) settings() *settings {
 
 // newSettings compiles a section into what the request path needs. users are
 // the [[users]] entries that set http, which the supervisor hands over already
-// filtered. fold says the served folder ignores case, which the path patterns
-// then have to as well.
-func newSettings(cfg config.HTTP, https config.HTTPS, users []config.User, fold bool) (*settings, error) {
+// filtered. root is the served folder: where it ignores case the path patterns
+// have to as well, and it is the folder a token without its own is served.
+func newSettings(cfg config.HTTP, https config.HTTPS, users []config.User, tokens []config.Token, root *vfs.Root) (*settings, error) {
+	fold := root.CaseInsensitive()
 	accounts, err := buildAccounts(users, fold)
+	if err != nil {
+		return nil, err
+	}
+	bearers, err := buildTokens(tokens, fold)
 	if err != nil {
 		return nil, err
 	}
@@ -129,14 +138,14 @@ func newSettings(cfg config.HTTP, https config.HTTPS, users []config.User, fold 
 		}
 		proxies = append(proxies, prefix)
 	}
-	return &settings{cfg: cfg, https: https, accounts: accounts,
+	return &settings{cfg: cfg, https: https, accounts: accounts, tokens: bearers,
 		protectedPaths: protected, proxies: proxies}, nil
 }
 
-// Reload swaps the accounts, the paths and the limits that are read per
-// request. The ports, the folder, the certificate and the settings baked into
+// Reload swaps the accounts, the tokens, the paths and the limits that are read
+// per request. The ports, the folder, the certificate and the settings baked into
 // the http.Server and its listener at Start report ErrNeedsRestart.
-func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, users []config.User) error {
+func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, users []config.User, tokens []config.Token) error {
 	current := s.settings()
 	if cfg.Enabled != current.cfg.Enabled || cfg.Port != current.cfg.Port ||
 		cfg.Address != current.cfg.Address ||
@@ -150,7 +159,7 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, users []config.User
 		https.Cert != current.https.Cert || https.Key != current.https.Key {
 		return service.ErrNeedsRestart
 	}
-	next, err := newSettings(cfg, https, users, s.root.CaseInsensitive())
+	next, err := newSettings(cfg, https, users, tokens, s.root)
 	if err != nil {
 		// a broken account or pattern leaves the running one in place
 		return err
@@ -164,15 +173,16 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, users []config.User
 	return nil
 }
 
-// New prepares a server. configPath is the file the admin interface edits;
-// empty leaves the interface out.
-func New(cfg config.HTTP, https config.HTTPS, users []config.User, configPath string, logger *slog.Logger) (*Server, error) {
+// New prepares a server. bearers are the bearer tokens, which only this server
+// reads. configPath is the file the admin interface edits; empty leaves the
+// interface out.
+func New(cfg config.HTTP, https config.HTTPS, users []config.User, bearers []config.Token, configPath string, logger *slog.Logger) (*Server, error) {
 	root, err := vfs.New(cfg.Basefolder)
 	if err != nil {
 		return nil, fmt.Errorf("http.basefolder: %w", err)
 	}
 
-	set, err := newSettings(cfg, https, users, root.CaseInsensitive())
+	set, err := newSettings(cfg, https, users, bearers, root)
 	if err != nil {
 		return nil, err
 	}
@@ -435,6 +445,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := cred.user
+	if user != nil && user.root != nil {
+		// a token with a base folder of its own is served from it: the path
+		// names the same place relative to another folder
+		target = user.root.Resolve("/", r.URL.Path)
+		if !target.Valid {
+			s.log.Debug("http path refused", "url", r.URL.Path, "user", user.name)
+			http.NotFound(w, r)
+			return
+		}
+	}
 	act := actionOf(r.Method, target)
 	if !s.permits(set, user, r.Method, target.Virtual, act) {
 		s.log.Debug("http request not allowed for the account",

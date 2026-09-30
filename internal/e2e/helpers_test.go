@@ -150,7 +150,7 @@ func newCluster(t *testing.T, users []config.User, tune func(*config.Config)) *c
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	web, err := httpd.New(cfg.HTTP, cfg.HTTPS, cfg.HTTPUsers(), "", log)
+	web, err := httpd.New(cfg.HTTP, cfg.HTTPS, cfg.HTTPUsers(), cfg.Tokens, "", log)
 	if err != nil {
 		t.Fatalf("httpd.New: %v", err)
 	}
@@ -179,7 +179,7 @@ func newCluster(t *testing.T, users []config.User, tune func(*config.Config)) *c
 func (c *cluster) reload(t *testing.T, users []config.User) {
 	t.Helper()
 	c.cfg.Users = users
-	if err := c.http.Reload(c.cfg.HTTP, c.cfg.HTTPS, c.cfg.HTTPUsers()); err != nil {
+	if err := c.http.Reload(c.cfg.HTTP, c.cfg.HTTPS, c.cfg.HTTPUsers(), c.cfg.Tokens); err != nil {
 		t.Fatalf("http Reload: %v", err)
 	}
 	if err := c.ftp.Reload(c.cfg.FTP, c.cfg.FTPS, c.cfg.FTPUsers()); err != nil {

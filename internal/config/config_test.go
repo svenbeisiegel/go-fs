@@ -184,6 +184,33 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		{"broken user path pattern", func(c *Config) {
 			c.Users = []User{{Username: "john", Password: "doe", HTTP: true, Paths: []string{"([bad"}}}
 		}, "users[0].paths[0]"},
+		{"token without a name", func(c *Config) {
+			c.Tokens = []Token{{Hash: HashToken("a")}}
+		}, "tokens[0] has no name"},
+		{"token configured twice", func(c *Config) {
+			c.Tokens = []Token{{Name: "ci", Hash: HashToken("a")}, {Name: "ci", Hash: HashToken("b")}}
+		}, "tokens[1]: \"ci\" is configured twice"},
+		{"token without a hash", func(c *Config) {
+			c.Tokens = []Token{{Name: "ci"}}
+		}, "hash has to be"},
+		{"token hash that is not hex", func(c *Config) {
+			c.Tokens = []Token{{Name: "ci", Hash: strings.Repeat("z", 64)}}
+		}, "hash has to be"},
+		{"two tokens with one hash", func(c *Config) {
+			c.Tokens = []Token{{Name: "a", Hash: HashToken("x")}, {Name: "b", Hash: HashToken("x")}}
+		}, "same hash"},
+		{"token expiry", func(c *Config) {
+			c.Tokens = []Token{{Name: "ci", Hash: HashToken("a"), Expires: "tomorrow"}}
+		}, "RFC 3339"},
+		{"token basefolder", func(c *Config) {
+			c.Tokens = []Token{{Name: "ci", Hash: HashToken("a"), Basefolder: filepath.Join(folder, "nope")}}
+		}, "tokens[0].basefolder"},
+		{"relative token basefolder", func(c *Config) {
+			c.Tokens = []Token{{Name: "ci", Hash: HashToken("a"), Basefolder: "files"}}
+		}, "absolute path"},
+		{"broken token path pattern", func(c *Config) {
+			c.Tokens = []Token{{Name: "ci", Hash: HashToken("a"), Paths: []string{"([bad"}}}
+		}, "tokens[0].paths[0]"},
 		{"broken protected path pattern", func(c *Config) {
 			c.HTTP.Enabled = true
 			c.HTTP.Basefolder = folder
@@ -526,6 +553,47 @@ func TestDocumentedPasswordsAreReported(t *testing.T) {
 	if len(template.Users) != 0 {
 		t.Errorf("the shipped template defines %d accounts, it should define none",
 			len(template.Users))
+	}
+	if len(template.Tokens) != 0 {
+		t.Errorf("the shipped template defines %d tokens, it should define none",
+			len(template.Tokens))
+	}
+}
+
+// A token is stored as its hash, and a valid token is accepted with its
+// rights as granted and nothing more.
+func TestTokens(t *testing.T) {
+	plain, hash, err := GenerateToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(plain, "gofs_") || hash != HashToken(plain) || !ValidTokenHash(hash) {
+		t.Errorf("token %q hash %q", plain, hash)
+	}
+	if other, _, _ := GenerateToken(); other == plain {
+		t.Error("two tokens came out the same")
+	}
+
+	yes := true
+	token := Token{Name: "ci", Hash: hash, Basefolder: t.TempDir(), AllowUserFileRetrieve: &yes,
+		Expires: "2030-01-02T03:04:05Z", Paths: []string{"^/.*"}}
+	perms := token.Permissions()
+	if !perms.FileRetrieve || perms.FileCreate || perms.FileDelete || perms.Basefolder != token.Basefolder {
+		t.Errorf("permissions %+v", perms)
+	}
+	if at, ok := token.ExpiresAt(); !ok || at.Year() != 2030 {
+		t.Errorf("expires %v %v", at, ok)
+	}
+	if _, ok := (Token{}).ExpiresAt(); ok {
+		t.Error("a token without an expiry expires")
+	}
+
+	cfg := Default()
+	cfg.FTP.Basefolder = token.Basefolder
+	cfg.TFTP.Basefolder = token.Basefolder
+	cfg.Tokens = []Token{token}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("a valid token was refused: %v", err)
 	}
 }
 
