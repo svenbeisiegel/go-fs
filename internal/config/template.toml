@@ -296,11 +296,14 @@ loginLockout = 60
 # session cookie Secure. From anywhere else both headers are ignored.
 trustedProxies = []
 
-# Methods that always need an account. MKCOL and MOVE do not have to be listed:
-# MKCOL is protected wherever PUT is and MOVE wherever PUT or DELETE is.
+# Methods that always need an account. HEAD, MKCOL and MOVE do not have to be
+# listed: HEAD is protected wherever GET is, MKCOL wherever PUT is and MOVE
+# wherever PUT or DELETE is.
 methodsRequireAuth = ["PUT", "DELETE", "POST", "MKCOL", "MOVE"]
 # Regular expressions; a request whose path matches one of these needs an
-# account whatever its method. Everything else is public.
+# account whatever its method. Everything else is public. On a filesystem that
+# ignores case (the default on Windows and macOS) these and the users' paths
+# ignore case too, so "^/private/" also protects /PRIVATE.
 pathsRequireAuth = []
 
 # The TLS interface of the same HTTP server: it serves the folder, accounts and

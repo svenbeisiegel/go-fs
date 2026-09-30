@@ -57,11 +57,23 @@ func matchesPath(patterns []*regexp.Regexp, virtual string) bool {
 	return false
 }
 
+// compilePattern compiles one of the path patterns. fold is set when the
+// served folder is on a filesystem that ignores case: there /PRIVATE is the
+// folder /private, and a pattern that told them apart would protect one
+// spelling of it and serve the other.
+func compilePattern(pattern string, fold bool) (*regexp.Regexp, error) {
+	if fold {
+		pattern = "(?i)" + pattern
+	}
+	return regexp.Compile(pattern)
+}
+
 // buildAccounts resolves the accounts once, at startup and on every reload. An
 // error names the account rather than its position: the list is the file's
 // filtered down to this server. The base folder and the anonymous login of an
-// entry belong to the other servers and are not read here.
-func buildAccounts(users []config.User) ([]*account, error) {
+// entry belong to the other servers and are not read here. fold is as for
+// compilePattern.
+func buildAccounts(users []config.User, fold bool) ([]*account, error) {
 	accounts := make([]*account, 0, len(users))
 	seen := map[string]bool{}
 	for _, user := range users {
@@ -79,7 +91,7 @@ func buildAccounts(users []config.User) ([]*account, error) {
 			isAdmin:  user.IsAdmin,
 		}
 		for k, pattern := range user.Paths {
-			compiled, err := regexp.Compile(pattern)
+			compiled, err := compilePattern(pattern, fold)
 			if err != nil {
 				return nil, fmt.Errorf("users %q paths[%d]: %w", user.Username, k, err)
 			}
@@ -366,8 +378,14 @@ func (s *Server) needsAuth(set *settings, method, virtual string) bool {
 // them. They are the same two writes under another verb — creating something,
 // and creating it while removing what was there — so an upgrade that left them
 // to be listed by hand would quietly open them to anyone.
+//
+// HEAD is GET without the body. It still answers whether a file is there, how
+// large it is and when it changed, so a server that protects GET protects HEAD
+// with it.
 func impliedBy(method string) []string {
 	switch strings.ToUpper(method) {
+	case http.MethodHead:
+		return []string{http.MethodGet}
 	case methodMkcol:
 		return []string{http.MethodPut}
 	case methodMove:

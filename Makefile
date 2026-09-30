@@ -39,7 +39,7 @@ define crosscompile
 	@$(MAKE) --no-print-directory checksums
 endef
 
-.PHONY: all build test race vet fmt lint clean release checksums version
+.PHONY: all build test race cover fuzz vet fmt lint clean release checksums version
 
 all: vet test build
 
@@ -54,6 +54,24 @@ test:
 race:
 	go test ./... -race -count=1
 
+# cover is race with a coverage profile, whose total is printed last.
+cover:
+	go test ./... -race -count=1 -coverprofile=coverage.out
+	@go tool cover -func=coverage.out | tail -1
+
+# fuzz runs every Fuzz target in the module for FUZZTIME each. go test takes
+# one target per run, so they are found and run one after the other. Their
+# seed corpora already run as part of test.
+FUZZTIME ?= 20s
+fuzz:
+	@set -e; for file in $$(grep -rl --include='*_test.go' '^func Fuzz' .); do \
+		dir=./$$(dirname $${file#./}); \
+		for fn in $$(grep -oE '^func Fuzz[A-Za-z0-9_]+' $$file | cut -d' ' -f2); do \
+			echo "fuzzing $$dir $$fn for $(FUZZTIME)"; \
+			go test $$dir -run '^$$' -fuzz "^$$fn\$$" -fuzztime $(FUZZTIME); \
+		done; \
+	done
+
 vet:
 	go vet ./...
 
@@ -67,7 +85,7 @@ version:
 	@echo $(VERSION)
 
 clean:
-	rm -rf $(DIST) $(BINARY)
+	rm -rf $(DIST) $(BINARY) coverage.out
 
 # release cross compiles every supported platform at the released version and
 # writes the checksums.

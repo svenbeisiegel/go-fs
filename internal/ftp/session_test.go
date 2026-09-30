@@ -448,3 +448,17 @@ func TestReloadEndsASessionWhoseAccountIsGone(t *testing.T) {
 	c.send("PWD")
 	c.expect("421 Account no longer available, closing control connection")
 }
+
+// An account with no password that does not set allowLoginWithoutPassword
+// cannot log in at all: an empty PASS is not a match for an empty password.
+func TestAnEmptyPasswordDoesNotOpenAnAccountWithoutOne(t *testing.T) {
+	server := newServer(t, func(cfg *ftpConfig) {
+		yes := true
+		cfg.Users = []config.User{{Username: "closed", FTP: true, AllowUserFileRetrieve: &yes}}
+	})
+	c := connect(t, server)
+	c.send("USER closed")
+	c.expectCode("331")
+	c.send("PASS ")
+	c.expectCode("530")
+}

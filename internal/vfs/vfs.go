@@ -10,13 +10,18 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // Root is a base folder that client paths are resolved against.
 type Root struct {
 	base string
+	// folds says the filesystem under base ignores case, so that two
+	// spellings of a path which differ only in case name the same file.
+	folds bool
 }
 
 // New resolves base, following symbolic links, and returns a Root for it. The
@@ -42,12 +47,54 @@ func New(base string) (*Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Root{base: resolved}, nil
+	return &Root{base: resolved, folds: foldsCase(resolved)}, nil
 }
 
 // Base returns the resolved base folder.
 func (r *Root) Base() string {
 	return r.base
+}
+
+// CaseInsensitive reports whether the filesystem under the base folder ignores
+// case. Anything that decides by the spelling of a path, as the HTTP path
+// patterns do, has to ignore it too, or /PRIVATE reaches what /private
+// protects.
+func (r *Root) CaseInsensitive() bool {
+	return r.folds
+}
+
+// foldsCase asks the filesystem rather than guessing from the platform: macOS
+// can be formatted case sensitive, and Linux can mount a folder that is not.
+// The closest component of the path that has a letter in it is looked up with
+// its case swapped; the filesystem folds case if that finds the same folder.
+// A path without a single letter leaves only the platform's default to go by.
+func foldsCase(folder string) bool {
+	for current := folder; ; {
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		name := filepath.Base(current)
+		if swapped := swapCase(name); swapped != name {
+			original, err := os.Stat(current)
+			if err != nil {
+				return false
+			}
+			other, err := os.Stat(filepath.Join(parent, swapped))
+			return err == nil && os.SameFile(original, other)
+		}
+		current = parent
+	}
+	return runtime.GOOS == "windows" || runtime.GOOS == "darwin"
+}
+
+func swapCase(name string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsUpper(r) {
+			return unicode.ToLower(r)
+		}
+		return unicode.ToUpper(r)
+	}, name)
 }
 
 // Target is a client supplied path resolved against a Root.
@@ -69,8 +116,36 @@ func (r *Root) Resolve(cwd, arg string) Target {
 	return Target{
 		Virtual: virtual,
 		Path:    osPath,
-		Valid:   !escaped && r.Contains(osPath),
+		Valid:   !escaped && segmentsAllowed(virtual) && r.Contains(osPath),
 	}
+}
+
+// onWindows is read once: it decides which names are other spellings of a path.
+var onWindows = runtime.GOOS == "windows"
+
+func segmentsAllowed(virtual string) bool {
+	for _, segment := range strings.Split(virtual, "/") {
+		if !segmentAllowed(segment, onWindows) {
+			return false
+		}
+	}
+	return true
+}
+
+// segmentAllowed reports whether one segment of a normalized path names what
+// it appears to. On Windows a backslash separates folders as a slash does, a
+// colon opens a drive or an alternate data stream, and a trailing dot or space
+// is dropped from a name, so "private\x", "private." and "x::$DATA" all reach
+// a path the client did not spell, past any pattern that decides by the
+// spelling. Elsewhere these are ordinary characters in a name.
+func segmentAllowed(segment string, windows bool) bool {
+	if !windows {
+		return true
+	}
+	if strings.ContainsAny(segment, `\:`) {
+		return false
+	}
+	return !strings.HasSuffix(segment, ".") && !strings.HasSuffix(segment, " ")
 }
 
 // Contains reports whether osPath stays inside the base folder once symbolic

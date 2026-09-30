@@ -191,12 +191,6 @@ func newServerWith(t *testing.T, tune func(*ftpConfig), tuneTLS func(*config.FTP
 	return &testServer{Server: server, base: base, port: portOf(server.Addr()), logs: logs}
 }
 
-// dataPort is the first port of the passive range, which a passive transfer
-// takes when nothing else holds it.
-func (s *testServer) dataPort() int {
-	return s.settings().cfg.PassiveMinPort
-}
-
 func (s *testServer) write(t *testing.T, name, content string) string {
 	t.Helper()
 	path := filepath.Join(s.base, name)

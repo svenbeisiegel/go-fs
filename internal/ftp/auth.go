@@ -55,7 +55,10 @@ func (c *conn) authenticateUser(password string) bool {
 			continue
 		}
 		permissions := user.Permissions()
-		if permissions.LoginNoPassword || secrets.Match(password, user.Password) {
+		// an account without a password logs in only by the switch that says
+		// so: an empty PASS must not match an empty password by accident
+		hasPassword := user.Password != ""
+		if permissions.LoginNoPassword || (hasPassword && secrets.Match(password, user.Password)) {
 			c.applyPermissions(permissions)
 			success = true
 		}

@@ -316,14 +316,6 @@ func sha256Hex(in string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func names(entries []entry) []string {
-	out := make([]string, 0, len(entries))
-	for _, item := range entries {
-		out = append(out, item.Name)
-	}
-	return out
-}
-
 var _ = url.PathEscape
 
 // publicServer makes everything public, which is what the listing tests need:

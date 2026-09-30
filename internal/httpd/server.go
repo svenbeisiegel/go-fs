@@ -106,15 +106,16 @@ func (s *Server) settings() *settings {
 
 // newSettings compiles a section into what the request path needs. users are
 // the [[users]] entries that set http, which the supervisor hands over already
-// filtered.
-func newSettings(cfg config.HTTP, https config.HTTPS, users []config.User) (*settings, error) {
-	accounts, err := buildAccounts(users)
+// filtered. fold says the served folder ignores case, which the path patterns
+// then have to as well.
+func newSettings(cfg config.HTTP, https config.HTTPS, users []config.User, fold bool) (*settings, error) {
+	accounts, err := buildAccounts(users, fold)
 	if err != nil {
 		return nil, err
 	}
 	protected := make([]*regexp.Regexp, 0, len(cfg.PathsRequireAuth))
 	for i, pattern := range cfg.PathsRequireAuth {
-		compiled, err := regexp.Compile(pattern)
+		compiled, err := compilePattern(pattern, fold)
 		if err != nil {
 			return nil, fmt.Errorf("http.pathsRequireAuth[%d]: %w", i, err)
 		}
@@ -149,7 +150,7 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, users []config.User
 		https.Cert != current.https.Cert || https.Key != current.https.Key {
 		return service.ErrNeedsRestart
 	}
-	next, err := newSettings(cfg, https, users)
+	next, err := newSettings(cfg, https, users, s.root.CaseInsensitive())
 	if err != nil {
 		// a broken account or pattern leaves the running one in place
 		return err
@@ -171,7 +172,7 @@ func New(cfg config.HTTP, https config.HTTPS, users []config.User, configPath st
 		return nil, fmt.Errorf("http.basefolder: %w", err)
 	}
 
-	set, err := newSettings(cfg, https, users)
+	set, err := newSettings(cfg, https, users, root.CaseInsensitive())
 	if err != nil {
 		return nil, err
 	}
@@ -470,7 +471,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		s.handleDirectoryReader(set, w, r, target)
+		s.handleDirectoryReader(set, w, r, target, user)
 	default:
 		s.log.Debug("http method not allowed", "method", r.Method, "url", r.URL.Path)
 		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, POST, MKCOL, MOVE")

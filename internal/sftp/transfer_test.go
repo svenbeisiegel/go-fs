@@ -373,3 +373,53 @@ func TestReloadReachesALiveSession(t *testing.T) {
 		t.Error("the account is gone, its session has to be refused")
 	}
 }
+
+// A POSIX rename is served as a plain rename, which never replaces what is at
+// the destination, whatever rights the account holds. An account without
+// overwrite in particular must not get a replace through it.
+func TestPosixRenameNeverReplacesWithoutOverwrite(t *testing.T) {
+	no := false
+	server := newServer(t, func(cfg *sftpConfig) {
+		user := fullUser("john", "doe")
+		user.AllowUserFileOverwrite = &no
+		cfg.Users = []config.User{user}
+	})
+	server.write(t, "new.txt", "new")
+	server.write(t, "taken.txt", "precious")
+	client := login(t, server)
+
+	if err := client.PosixRename("/new.txt", "/taken.txt"); err == nil {
+		t.Fatal("a POSIX rename over an existing file has to be refused without overwrite")
+	}
+	if got := server.read(t, "taken.txt"); got != "precious" {
+		t.Errorf("the destination was replaced, it holds %q", got)
+	}
+
+	// onto a free name it is a plain rename, which create and delete cover
+	if err := client.PosixRename("/new.txt", "/free.txt"); err != nil {
+		t.Errorf("a POSIX rename onto a free name: %v", err)
+	}
+}
+
+// An account that may only create must not be able to open an existing file
+// for writing through any combination of flags.
+func TestCreateOnlyCannotOpenAnExistingFile(t *testing.T) {
+	no := false
+	server := newServer(t, func(cfg *sftpConfig) {
+		user := fullUser("john", "doe")
+		user.AllowUserFileOverwrite = &no
+		cfg.Users = []config.User{user}
+	})
+	server.write(t, "taken.txt", "precious")
+	client := login(t, server)
+
+	for _, flags := range []int{os.O_WRONLY, os.O_WRONLY | os.O_CREATE, os.O_RDWR | os.O_APPEND} {
+		if file, err := client.OpenFile("/taken.txt", flags); err == nil {
+			_ = file.Close()
+			t.Errorf("flags %#x opened an existing file for writing", flags)
+		}
+	}
+	if got := server.read(t, "taken.txt"); got != "precious" {
+		t.Errorf("the file changed, it holds %q", got)
+	}
+}

@@ -926,7 +926,12 @@ func contentPolicy(nonce string) string {
 
 // handleDirectoryReader answers the legacy listing endpoint: a form field dir,
 // resolved against the folder the request path is in, answered as links.
-func (s *Server) handleDirectoryReader(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target) {
+//
+// The request was permitted for the script's path, and the folder it lists is
+// another path, which dir can point anywhere in the served tree. So the folder
+// is checked on its own, as the GET that would list it is: the reader must not
+// show what a listing of that folder would refuse.
+func (s *Server) handleDirectoryReader(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
 	if err := r.ParseForm(); err != nil {
 		http.NotFound(w, r)
 		return
@@ -944,6 +949,14 @@ func (s *Server) handleDirectoryReader(set *settings, w http.ResponseWriter, r *
 	listed := s.root.Resolve(base, folder)
 	if !listed.Valid {
 		s.log.Debug("http directory reader path refused", "dir", folder)
+		http.NotFound(w, r)
+		return
+	}
+	if !s.permits(set, user, http.MethodGet, listed.Virtual, actRead) {
+		// answered as a folder that is not there, as the escapes above are,
+		// so the reader does not tell which protected folders exist
+		s.log.Debug("http directory reader folder not allowed for the account",
+			"user", nameOf(user), "dir", listed.Virtual)
 		http.NotFound(w, r)
 		return
 	}

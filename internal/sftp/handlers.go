@@ -145,7 +145,10 @@ func (s *session) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	if pflags.Trunc {
 		flags |= os.O_TRUNC
 	}
-	if pflags.Excl {
+	// a write that was permitted as a create stays one: without O_EXCL a file
+	// that appeared between the stat above and the open would be overwritten
+	// by an account that may not overwrite
+	if pflags.Excl || !exists {
 		flags |= os.O_EXCL
 	}
 	if pflags.Append && exists {
@@ -246,12 +249,19 @@ func (s *session) Filecmd(r *sftp.Request) error {
 		if destination.IsRoot() {
 			return s.denied(r, "the base folder is not a rename target")
 		}
-		if r.Method == "Rename" {
-			// plain rename must not clobber, POSIX rename may
-			if _, err := os.Stat(destination.Path); err == nil {
+		if _, err := os.Stat(destination.Path); err == nil {
+			// plain rename must not clobber. POSIX rename may, but replacing
+			// a file is an overwrite and needs that right as STOR does. The
+			// library serves POSIX rename as a plain rename unless this type
+			// implements PosixRenameFileCmder, so this is the guard for the
+			// day it does.
+			if r.Method == "Rename" {
 				s.log.Debug("sftp rename refused, the destination exists",
 					"from", target.Virtual, "to", destination.Virtual)
 				return sftp.ErrSSHFxFailure
+			}
+			if !user.perms.FileOverwrite {
+				return s.denied(r, "allowUserFileOverwrite")
 			}
 		}
 		if err := os.Rename(target.Path, destination.Path); err != nil {

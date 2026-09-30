@@ -3,6 +3,7 @@ package vfs
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -123,5 +124,62 @@ func TestNewRejectsMissingBase(t *testing.T) {
 	}
 	if _, err := New(""); err == nil {
 		t.Error("an empty base folder should be an error")
+	}
+}
+
+// On Windows a backslash and a colon are separators, and a trailing dot or
+// space is dropped from a name, so each is another spelling of a path the
+// client did not write. Elsewhere they are ordinary name characters.
+func TestSegmentAllowed(t *testing.T) {
+	cases := []struct {
+		segment string
+		windows bool
+	}{
+		{"plain.txt", true},
+		{"with space.txt", true},
+		{".hidden", true},
+		{"a\\b", false},
+		{"file.txt::$DATA", false},
+		{"c:", false},
+		{"private.", false},
+		{"private ", false},
+		{"...", false},
+	}
+	for _, tc := range cases {
+		if got := segmentAllowed(tc.segment, true); got != tc.windows {
+			t.Errorf("segmentAllowed(%q, windows) = %v, want %v", tc.segment, got, tc.windows)
+		}
+		if !segmentAllowed(tc.segment, false) {
+			t.Errorf("segmentAllowed(%q, other) = false, want true", tc.segment)
+		}
+	}
+}
+
+func TestResolveRefusesWindowsVariants(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range []string{`/private\secret.txt`, "/private./secret.txt", "/file.txt::$DATA"} {
+		target := root.Resolve("/", arg)
+		if want := runtime.GOOS != "windows"; target.Valid != want {
+			t.Errorf("Resolve(%q).Valid = %v, want %v", arg, target.Valid, want)
+		}
+	}
+}
+
+// CaseInsensitive has to agree with what the filesystem actually does.
+func TestCaseInsensitiveMatchesTheFilesystem(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "Served")
+	if err := os.Mkdir(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, statErr := os.Stat(filepath.Join(filepath.Dir(base), "sERVED"))
+	if want := statErr == nil; root.CaseInsensitive() != want {
+		t.Errorf("CaseInsensitive() = %v, the filesystem says %v", root.CaseInsensitive(), want)
 	}
 }

@@ -61,18 +61,6 @@ func (r request) option(key string) (string, bool) {
 	return "", false
 }
 
-// optionMap is what handlers see, for logging and policy.
-func (r request) optionMap() map[string]string {
-	if len(r.options) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(r.options))
-	for _, opt := range r.options {
-		out[opt.key] = opt.value
-	}
-	return out
-}
-
 // parseRequest decodes an RRQ or WRQ. It returns false for a packet that is
 // not a well formed request.
 //

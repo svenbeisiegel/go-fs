@@ -407,3 +407,79 @@ func TestChunkedUploadCleanupSweepsAnAbandonedStagingFile(t *testing.T) {
 		t.Error("the sweep has to be reported")
 	}
 }
+
+// Uploads to different names run side by side, each in its own staging file,
+// and none of them sees a byte of another.
+func TestChunkedUploadsToDifferentNamesDoNotMix(t *testing.T) {
+	server := chunkedServer(t, nil)
+	const uploads, chunks, size = 8, 4, 1024
+	contents := make([]string, uploads)
+	for i := range contents {
+		contents[i] = strings.Repeat(string(rune('a'+i)), chunks*size)
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, uploads)
+	for i := range uploads {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			path := fmt.Sprintf("/private/upload-%d.bin", i)
+			for c := range chunks {
+				start := int64(c * size)
+				end := start + size - 1
+				status, err := putChunkRaw(server, path, start, end, chunks*size, contents[i][start:end+1])
+				if err != nil || status < 200 || status > 299 {
+					errs[i] = fmt.Errorf("chunk %d: status %d, err %v", c, status, err)
+					return
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	for i := range uploads {
+		if errs[i] != nil {
+			t.Errorf("upload %d: %v", i, errs[i])
+			continue
+		}
+		if got := server.read(t, fmt.Sprintf("private/upload-%d.bin", i)); got != contents[i] {
+			t.Errorf("upload %d holds bytes of another upload", i)
+		}
+	}
+}
+
+// A client that retries a chunk while the first attempt is still in flight
+// sends the same bytes twice at once. Whichever lands first, the other is
+// either taken as the retry it is or told where the upload stands, and the
+// finished file holds every byte exactly once.
+func TestConcurrentRetriesOfAChunkWriteItOnce(t *testing.T) {
+	server := chunkedServer(t, nil)
+	if res := putChunk(t, server, "/private/retry.bin", 0, 3, 12, "abcd"); res.StatusCode/100 != 2 {
+		t.Fatalf("first chunk: %d", res.StatusCode)
+	}
+
+	const retries = 6
+	var wg sync.WaitGroup
+	statuses := make([]int, retries)
+	for i := range retries {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			statuses[i], _ = putChunkRaw(server, "/private/retry.bin", 4, 7, 12, "efgh")
+		}(i)
+	}
+	wg.Wait()
+	for i, status := range statuses {
+		if status/100 != 2 && status != http.StatusRequestedRangeNotSatisfiable {
+			t.Errorf("retry %d: status %d, want a success or 416", i, status)
+		}
+	}
+
+	if res := putChunk(t, server, "/private/retry.bin", 8, 11, 12, "ijkl"); res.StatusCode/100 != 2 {
+		t.Fatalf("last chunk: %d", res.StatusCode)
+	}
+	if got := server.read(t, "private/retry.bin"); got != "abcdefghijkl" {
+		t.Errorf("file = %q, want abcdefghijkl", got)
+	}
+}
