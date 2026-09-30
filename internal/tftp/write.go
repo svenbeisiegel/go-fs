@@ -158,21 +158,23 @@ func (t *writeTransfer) run(ctx context.Context) {
 			return
 		}
 		t.bytesWritten += int64(len(data))
-
-		t.send(encodeACK(block))
 		t.expectedBlock++
 
-		// the final block is shorter than the block size
+		// the final block is shorter than the block size, and is acknowledged
+		// by finish once the upload is in place
 		if len(data) < t.blockSize {
 			t.finish(ctx)
 			return
 		}
+		t.send(encodeACK(block))
 	}
 }
 
-// finish flushes the file and then keeps answering a retransmitted final block
-// for one retransmit interval, so that a client whose last acknowledgement was
-// lost still gets an answer to its retry.
+// finish puts the upload in place and only then acknowledges the final block,
+// so a client that sees that acknowledgement knows the file is there, and one
+// whose upload could not be stored gets an error instead. It then keeps
+// answering a retransmitted final block for one retransmit interval, so that a
+// client whose last acknowledgement was lost still gets an answer to its retry.
 func (t *writeTransfer) finish(ctx context.Context) {
 	if t.netascii != nil {
 		if err := t.netascii.Flush(); err != nil {
@@ -210,6 +212,7 @@ func (t *writeTransfer) finish(ctx context.Context) {
 		"mode", t.req.mode,
 		"took", time.Since(t.started).Round(time.Millisecond))
 
+	t.send(encodeACK(uint16(t.expectedBlock - 1)))
 	t.dally(ctx)
 }
 

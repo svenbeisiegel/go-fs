@@ -346,8 +346,27 @@ func (c *client) upload(filename, mode string, content []byte, options ...option
 			c.reply(encodeDATA(block, chunk))
 			offset = end
 			if done {
-				// give the server a moment to close the file
-				time.Sleep(150 * time.Millisecond)
+				return c.awaitFinalACK(block)
+			}
+		}
+	}
+}
+
+// awaitFinalACK waits for the acknowledgement of the last block, which the
+// server only sends once the upload is in place. It returns the ERROR packet if
+// the server could not store the upload.
+func (c *client) awaitFinalACK(block uint16) (failure []byte) {
+	c.t.Helper()
+	for {
+		packet := c.receive(5 * time.Second)
+		if packet == nil {
+			c.t.Fatalf("no acknowledgement for the final block %d", block)
+		}
+		switch opcodeOf(packet) {
+		case opERROR:
+			return packet
+		case opACK:
+			if blockOf(packet) == block {
 				return nil
 			}
 		}
