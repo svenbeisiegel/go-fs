@@ -1,7 +1,7 @@
 // The page is complete without this script: the listing is rendered by the
 // server and the sort headers are ordinary links. What is added here is the
-// part a link cannot do — sorting without a round trip, filtering, and the
-// requests that create, rename, remove and upload.
+// part a link cannot do — sorting without a round trip, filtering, the options
+// menu of a row, and the requests that create, rename, remove and upload.
 (function () {
   "use strict";
 
@@ -419,21 +419,141 @@
     });
   }
 
+  // --- the options menu ------------------------------------------------
+  //
+  // One menu serves every row, as on the registry page. It is placed below
+  // the button that opened it and remembers the row, which is what the items
+  // act on. What the row is decides what the menu holds: a folder downloads
+  // as an archive, and Delete is there only where the account may delete
+  // that kind of thing.
+
+  var menu = document.getElementById("menu");
+  var download = menu.querySelector("[data-do='download']");
+  var removal = menu.querySelector("[data-do='delete']");
+  var opener = null;
+
+  function items() {
+    return Array.prototype.filter.call(menu.querySelectorAll("button, a"), function (item) {
+      return !item.hidden;
+    });
+  }
+
+  function openMenu(button) {
+    var row = button.closest("tr");
+    var isFolder = row.dataset.dir === "1";
+    download.href = isFolder ? segment(row.dataset.name) + "/?go-fs=archive" : segment(row.dataset.name);
+    download.querySelector("span").textContent = isFolder ? "Download as .tar.xz" : "Download";
+    if (removal) {
+      removal.hidden = row.dataset.delete !== "1";
+    }
+    opener = button;
+    button.setAttribute("aria-expanded", "true");
+    menu.hidden = false;
+    var box = button.getBoundingClientRect();
+    var left = box.right + window.scrollX - menu.offsetWidth;
+    menu.style.left = Math.max(window.scrollX + 8, left) + "px";
+    var top = box.bottom + window.scrollY + 4;
+    // a menu that would run off the bottom opens above its button instead
+    if (box.bottom + menu.offsetHeight + 8 > window.innerHeight) {
+      top = box.top + window.scrollY - menu.offsetHeight - 4;
+    }
+    menu.style.top = top + "px";
+    items()[0].focus();
+  }
+
+  function closeMenu(refocus) {
+    if (!opener) {
+      return;
+    }
+    menu.hidden = true;
+    opener.setAttribute("aria-expanded", "false");
+    if (refocus) {
+      opener.focus();
+    }
+    opener = null;
+  }
+
   body.addEventListener("click", function (event) {
-    var button = event.target.closest("button[data-do]");
+    var button = event.target.closest("button[data-do='menu']");
     if (!button) {
       return;
     }
+    event.stopPropagation();
     clear();
-    var row = button.closest("tr");
-    var name = row.dataset.name;
-    var isFolder = row.dataset.dir === "1";
-    if (button.dataset.do === "rename") {
-      ask("Rename", decodeURI(folder) + name, name, "Rename", function (typed) {
-        send("rename", "MOVE", segment(name), { Destination: segment(typed) }).then(done).catch(failed);
-      });
+    if (opener === button) {
+      closeMenu(true);
       return;
     }
+    closeMenu(false);
+    openMenu(button);
+  });
+
+  document.addEventListener("click", function (event) {
+    if (opener && !menu.contains(event.target)) {
+      closeMenu(false);
+    }
+  });
+
+  window.addEventListener("resize", function () {
+    closeMenu(false);
+  });
+
+  menu.addEventListener("keydown", function (event) {
+    var list = items();
+    var at = list.indexOf(document.activeElement);
+    switch (event.key) {
+      case "Escape":
+        event.preventDefault();
+        closeMenu(true);
+        break;
+      case "Tab":
+        closeMenu(false);
+        break;
+      case "ArrowDown":
+        event.preventDefault();
+        list[(at + 1) % list.length].focus();
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        list[(at - 1 + list.length) % list.length].focus();
+        break;
+      case "Home":
+        event.preventDefault();
+        list[0].focus();
+        break;
+      case "End":
+        event.preventDefault();
+        list[list.length - 1].focus();
+        break;
+    }
+  });
+
+  // Download is a link and is left to the browser: the answer is an
+  // attachment, so following it saves the file and leaves the page as it is.
+  menu.addEventListener("click", function (event) {
+    var item = event.target.closest("[data-do]");
+    if (!item || !opener) {
+      return;
+    }
+    var row = opener.closest("tr");
+    closeMenu(item.dataset.do === "download");
+    if (item.dataset.do === "rename") {
+      renameEntry(row);
+    } else if (item.dataset.do === "delete") {
+      deleteEntry(row);
+    }
+  });
+
+  function renameEntry(row) {
+    var name = row.dataset.name;
+    ask("Rename", decodeURI(folder) + name, name, "Rename", function (typed) {
+      send("rename", "MOVE", segment(name), { Destination: segment(typed) }).then(done).catch(failed);
+    });
+  }
+
+  function deleteEntry(row) {
+    var name = row.dataset.name;
+    var isFolder = row.dataset.dir === "1";
     checking.querySelector("h2").textContent = isFolder ? "Delete folder" : "Delete file";
     checking.querySelector("p").textContent = isFolder
       ? "Delete " + decodeURI(folder) + name + "? Only an empty folder can be removed."
@@ -442,7 +562,7 @@
       send(isFolder ? "folder" : "file", "DELETE", segment(name)).then(done).catch(failed);
     };
     checking.showModal();
-  });
+  }
 
   // --- fetching from a URL ---------------------------------------------
   //

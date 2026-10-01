@@ -42,7 +42,7 @@
       {{range .Columns}}
       <th class="{{.Class}}"{{if .Active}} aria-sort="{{.Order}}"{{end}} data-key="{{.Key}}"><a href="{{.Link}}">{{.Label}} <span class="caret">{{.Caret}}</span></a></th>
       {{end}}
-      {{if .Rights.Any}}<th class="c-acts"><span class="head">Actions</span></th>{{end}}
+      <th class="c-acts needs-js" aria-label="Actions"></th>
     </tr>
   </thead>
   <tbody>
@@ -52,21 +52,16 @@
       <td class="meta c-mod">&#8212;</td>
       <td class="meta c-kind">&#8212;</td>
       <td class="meta num c-size">&#8212;</td>
-      {{if $.Rights.Any}}<td class="c-acts"></td>{{end}}
+      <td class="c-acts needs-js"></td>
     </tr>
     {{end}}
     {{range .Entries}}
-    <tr data-name="{{.Name}}" data-dir="{{.Group}}" data-size="{{.Bytes}}" data-time="{{.Unix}}" data-kind="{{.Kind}}">
+    <tr data-name="{{.Name}}" data-dir="{{.Group}}" data-size="{{.Bytes}}" data-time="{{.Unix}}" data-kind="{{.Kind}}"{{if (or (and .IsDir $.Rights.DeleteFolder) (and (not .IsDir) $.Rights.DeleteFile))}} data-delete="1"{{end}}>
       <td><span class="name"><svg class="ic{{if .IsDir}} dir{{end}}"><use href="{{if .IsDir}}#i-folder{{else}}#i-file{{end}}"/></svg><a href="{{.Link}}">{{.Label}}</a></span></td>
       <td class="meta c-mod">{{.Modified}}</td>
       <td class="meta c-kind">{{.Kind}}</td>
       <td class="meta num c-size">{{.Size}}</td>
-      {{if $.Rights.Any}}
-      <td class="c-acts needs-js">
-        {{if $.Rights.Rename}}<button type="button" data-do="rename" title="Rename" aria-label="Rename {{.Name}}"><svg class="ic"><use href="#i-pencil"/></svg></button>{{end}}
-        {{if (or (and .IsDir $.Rights.DeleteFolder) (and (not .IsDir) $.Rights.DeleteFile))}}<button type="button" class="remove" data-do="delete" title="Delete" aria-label="Delete {{.Name}}"><svg class="ic"><use href="#i-trash"/></svg></button>{{end}}
-      </td>
-      {{end}}
+      <td class="c-acts needs-js"><button type="button" data-do="menu" title="Options" aria-haspopup="menu" aria-expanded="false" aria-label="Options for {{.Name}}"><svg class="ic"><use href="#i-more"/></svg></button></td>
     </tr>
     {{end}}
   </tbody>
@@ -84,6 +79,12 @@
 <ul id="queue" class="queue" hidden></ul>
 {{end}}
 </main>
+
+<div id="menu" class="menu" role="menu" hidden>
+  <a role="menuitem" data-do="download" download><svg class="ic"><use href="#i-download"/></svg><span>Download</span></a>
+  {{if .Rights.Rename}}<button type="button" role="menuitem" data-do="rename"><svg class="ic"><use href="#i-pencil"/></svg>Rename&#8230;</button>{{end}}
+  {{if or .Rights.DeleteFile .Rights.DeleteFolder}}<button type="button" role="menuitem" class="remove" data-do="delete"><svg class="ic"><use href="#i-trash"/></svg>Delete</button>{{end}}
+</div>
 
 <dialog id="prompt">
   <form method="dialog">

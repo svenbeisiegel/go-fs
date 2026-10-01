@@ -24,7 +24,8 @@ import (
 	"go-fs/internal/vfs"
 )
 
-// handleGet serves a file as a download and a folder as the browsable listing.
+// handleGet serves a file as a download and a folder as the browsable listing,
+// or as an archive when the marker asks for one.
 func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, cred credential) {
 	user := cred.user
 	info, err := os.Stat(target.Path)
@@ -35,6 +36,11 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 	}
 
 	if info.IsDir() {
+		// the archive names the folder itself, so it needs no trailing slash
+		if r.URL.Query().Get(sessionParam) == actionArchive {
+			s.handleArchive(set, w, r, target, cred)
+			return
+		}
 		// The links in a listing are relative, so a folder has to be reached
 		// with a trailing slash for them to point inside it: without this,
 		// /photos would link to /sub/ instead of /photos/sub/.

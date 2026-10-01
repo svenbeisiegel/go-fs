@@ -240,12 +240,6 @@ type rights struct {
 	Fetch bool
 }
 
-// Any reports whether any per-row action is offered, which is what decides
-// whether the actions column is there at all.
-func (r rights) Any() bool {
-	return r.Rename || r.DeleteFile || r.DeleteFolder
-}
-
 type crumb struct {
 	Name string
 	// Link is empty for the folder being shown, which is not a link to itself.

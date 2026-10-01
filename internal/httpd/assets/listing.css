@@ -141,7 +141,8 @@ th[aria-sort] a { color: var(--ink); }
 th .caret { visibility: hidden; font-size: 0.7em; }
 th[aria-sort] .caret { visibility: visible; }
 .num a, .num span.head { justify-content: flex-end; }
-th.c-acts { width: 5.5rem; }
+/* one button a row, which opens the options menu */
+th.c-acts { width: 2.75rem; }
 th.c-mod { width: 12rem; }
 th.c-kind { width: 7.5rem; }
 th.c-size { width: 6.5rem; }
@@ -182,7 +183,6 @@ tr:hover td.c-acts button, td.c-acts button:focus-visible { opacity: 1; }
   td.c-acts button { opacity: 1; }
 }
 td.c-acts button:hover { background: var(--ground); color: var(--ink); }
-td.c-acts button.remove:hover { color: var(--bad); }
 
 .empty { padding: 1.5rem 0.55rem; color: var(--faint); font-style: italic; }
 
@@ -303,8 +303,8 @@ dialog .choices .meta { color: var(--faint); font-size: 0.8rem; }
 /* after every rule above that sets a display, so hidden wins over them */
 dialog [hidden] { display: none; }
 
-/* The registry page. It is the listing's table with a column of badges, one
-   options menu shared by every row, and a dialog of details. */
+/* The registry page. It is the listing's table with a column of badges and a
+   dialog of details. */
 .views { display: inline-flex; }
 .views .plain { border-radius: 0; }
 .views .plain:first-child { border-radius: 4px 0 0 4px; }
@@ -317,8 +317,6 @@ dialog [hidden] { display: none; }
 }
 
 th.c-plat { width: 14rem; }
-/* one button a row, so the column only has to hold that */
-.registry th.c-acts { width: 2.75rem; }
 td.c-plat { white-space: normal; }
 .registry .name .label { overflow: hidden; text-overflow: ellipsis; }
 .badges { display: flex; flex-wrap: wrap; gap: 0.25rem; }

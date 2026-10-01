@@ -468,7 +468,9 @@ independent.
 
 Browsing it in a browser gives a listing that sorts on any column, filters as you
 type, and — for an account that holds the rights — uploads by drag and drop,
-creates folders, renames and deletes. It needs no assets from anywhere: the page
+creates folders, renames and deletes. Each row has an options menu with
+**Download** — a folder downloads as one `.tar.xz` — and, where the account may,
+**Rename** and **Delete**. It needs no assets from anywhere: the page
 carries its own style and script, so every URL the server answers stays a path in
 `basefolder`. Without JavaScript the listing still renders and the column headers
 still sort, as ordinary links.
@@ -1053,6 +1055,28 @@ loads, and says on startup that it is ignored.
 `[[http.cleanup]]` keeps a folder from growing without bound: once an hour
 everything but the newest `keep` files in it is removed. It is the one thing in
 go-fs that deletes without a client asking, so every removal is logged.
+
+### Downloading a folder
+
+**Download** on a folder in the listing saves the whole folder as
+`<folder>.tar.xz`. The endpoint is `?go-fs=archive` on the folder (`GET`, or
+`HEAD` for the headers alone), so a program can ask for it too:
+
+```shell
+curl -u john:doe -o photos.tar.xz 'https://example.com/photos/?go-fs=archive'
+```
+
+The archive is packed while it is sent, so nothing is staged on the server and
+the answer carries no `Content-Length`. It needs the right that listing the
+folder needs, and what goes into it is decided entry by entry as a `GET` of that
+entry would be: a sub-folder that `pathsRequireAuth` or the account's `paths`
+keep from the requester is left out. A symbolic link goes in as the file it
+points to while that file is inside `basefolder`; a link to a folder, or to
+anything outside, is left out. Compressing takes one CPU core of the server:
+text and other data that compresses well packs at around 80 MB/s, but data that
+does not — video, images, archives — at well under 10 MB/s, so a large folder of
+those takes a while. `writeTimeout`, where set, caps an archive the way it caps
+any download.
 
 ### Fetching a file from a URL
 

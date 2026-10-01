@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -281,6 +282,12 @@ func TestListingOffersOnlyWhatTheAccountMayDo(t *testing.T) {
 
 	res := basic(t, server, http.MethodGet, "/", "reader", "pw", nil)
 	body := bodyOf(t, res)
+	// downloading is reading, so every row has its menu all the same
+	for _, want := range []string{`data-do="menu"`, `data-do="download"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("a read-only account is not offered %q", want)
+		}
+	}
 	for _, gone := range []string{`id="new-folder"`, `id="upload"`, `data-do="rename"`, `data-do="delete"`, `id="drop"`} {
 		if strings.Contains(body, gone) {
 			t.Errorf("a read-only account is offered %q", gone)
@@ -296,8 +303,9 @@ func TestListingOffersOnlyWhatTheAccountMayDo(t *testing.T) {
 	}
 }
 
-// Deleting a file and deleting a folder are two rights, so the trash button is
-// offered per row: on the files for the one, on the folders for the other.
+// Deleting a file and deleting a folder are two rights, so Delete is offered
+// per row: on the files for the one, on the folders for the other. The menu is
+// shared, and the row says whether it holds Delete.
 func TestListingOffersDeletePerRow(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
 		files := fullUser("files", "pw")
@@ -311,7 +319,8 @@ func TestListingOffersDeletePerRow(t *testing.T) {
 	server.mkdir(t, "sub")
 
 	trash := func(body, name string) bool {
-		return strings.Contains(body, `aria-label="Delete `+name+`"`)
+		row := regexp.MustCompile(`<tr data-name="` + regexp.QuoteMeta(name) + `"[^>]*>`).FindString(body)
+		return strings.Contains(row, `data-delete="1"`)
 	}
 	body := bodyOf(t, basic(t, server, http.MethodGet, "/", "files", "pw", nil))
 	if !trash(body, "one.txt") || trash(body, "sub") {
