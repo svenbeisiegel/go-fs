@@ -68,7 +68,7 @@ func (s *Server) checkBearer(set *settings, r *http.Request, presented string) *
 
 // refuseBearer answers a request whose bearer token was refused, as RFC 6750
 // section 3.1 asks: 401 with a challenge that says the token is the problem.
-func (s *Server) refuseBearer(set *settings, w http.ResponseWriter, r *http.Request) {
+func (s *Server) refuseBearer(set *settings, w http.ResponseWriter) {
 	if delay := set.cfg.LoginFailureDelay; delay > 0 {
 		time.Sleep(time.Duration(delay) * time.Second)
 	}

@@ -148,7 +148,7 @@ func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Requ
 		return cred, true
 	}
 	if cred.rejected {
-		s.refuseBearer(set, w, r)
+		s.refuseBearer(set, w)
 		return credential{}, false
 	}
 	if !s.needsAuth(set, method, virtual) {
@@ -197,7 +197,7 @@ func (s *Server) identify(set *settings, w http.ResponseWriter, r *http.Request)
 		}
 		if cred.user != nil {
 			s.logins.clear(clientAddress(set, r))
-			cred.token = s.sessionMatches(set, r, cred.user)
+			cred.token = s.sessionMatches(r, cred.user)
 		}
 		return cred
 	case strings.HasPrefix(header, "Bearer "):
@@ -235,7 +235,7 @@ func (s *Server) identify(set *settings, w http.ResponseWriter, r *http.Request)
 // the account a header has just authenticated. Unlike checkToken it clears
 // nothing and logs nothing: whatever else the cookie says is not this
 // request's concern, since the header already answered who it is from.
-func (s *Server) sessionMatches(set *settings, r *http.Request, user *account) bool {
+func (s *Server) sessionMatches(r *http.Request, user *account) bool {
 	cookie, err := r.Cookie(sessionCookie)
 	if err != nil {
 		return false

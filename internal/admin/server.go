@@ -122,11 +122,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case action == ActionGenerate && post:
 		h.handleGenerate(w, r)
 	default:
-		if action == ActionPage {
+		switch action {
+		case ActionPage:
 			w.Header().Set("Allow", "GET, HEAD")
-		} else if action == ActionConfig {
+		case ActionConfig:
 			w.Header().Set("Allow", "GET, HEAD, POST")
-		} else {
+		default:
 			w.Header().Set("Allow", "POST")
 		}
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)

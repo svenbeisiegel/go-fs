@@ -195,7 +195,7 @@ func TestPassiveRangeIsHonoured(t *testing.T) {
 
 	c := connect(t, server)
 	c.login()
-	data := c.passive(server)
+	data := c.passive()
 	defer func() { _ = data.Close() }()
 
 	port := sourcePortOf(t, data) // the port the client dialled is the server's
@@ -297,7 +297,7 @@ func TestDataPortsReloadWithoutARestart(t *testing.T) {
 	// and the next transfer uses them
 	c := connect(t, server)
 	c.login()
-	data := c.passive(server)
+	data := c.passive()
 	defer func() { _ = data.Close() }()
 	if got := sourcePortOf(t, data); got != next.PassiveMinPort {
 		t.Errorf("the passive port is %d, want %d", got, next.PassiveMinPort)

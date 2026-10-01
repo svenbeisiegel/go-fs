@@ -296,7 +296,7 @@ func openArchive(r io.Reader) (io.Reader, func(), error) {
 			"build an OCI image from it, or push it with singularity push")
 	case bytes.HasPrefix(head, []byte("PK\x03\x04")):
 		err = errors.New("a zip file cannot be imported: save the image as a tar, " +
-			"with docker save or skopeo copy to oci-archive:")
+			"with docker save or with skopeo copy to an oci-archive destination")
 	default:
 		err = errors.New("this is not a tar archive, plain or compressed with gzip, zstd, xz or bzip2")
 	}

@@ -186,7 +186,10 @@ func (c *chunkedReader) readTrailer() error {
 			continue
 		}
 		c.trailers[name] = value
-		canonical.WriteString(name + ":" + value + "\n")
+		canonical.WriteString(name)
+		canonical.WriteString(":")
+		canonical.WriteString(value)
+		canonical.WriteString("\n")
 	}
 	if !c.signed {
 		return nil

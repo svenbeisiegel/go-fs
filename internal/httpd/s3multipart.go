@@ -232,7 +232,7 @@ func (s *Server) stagePartCopy(q *s3Request, folder, copySource string) (string,
 		}
 		offset, length = first, last-first+1
 	}
-	return s.stageCopy(q, source, folder, offset, length)
+	return s.stageCopy(source, folder, offset, length)
 }
 
 // uploadedPart is a part as it is on disk.

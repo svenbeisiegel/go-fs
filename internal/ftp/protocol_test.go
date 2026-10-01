@@ -179,7 +179,7 @@ func TestSymlinkOutOfBasefolderIsRefused(t *testing.T) {
 	c := connect(t, server)
 	c.login()
 
-	data := c.passive(server)
+	data := c.passive()
 	defer func() { _ = data.Close() }()
 	c.send("RETR link.txt")
 	c.expect(`550 Transfer failed "link.txt"`)

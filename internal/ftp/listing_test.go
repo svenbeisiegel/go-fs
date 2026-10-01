@@ -24,7 +24,7 @@ func TestNlstReturnsBareNames(t *testing.T) {
 	c := connect(t, server)
 	c.login()
 
-	listing, reply := c.download(server, "NLST")
+	listing, reply := c.download("NLST")
 	names := strings.Split(strings.TrimSpace(listing), "\r\n")
 	sort.Strings(names)
 	if len(names) != 2 || names[0] != "hello.txt" || names[1] != "sub" {
@@ -42,7 +42,7 @@ func TestListingsHonourAPathArgument(t *testing.T) {
 	c.login()
 
 	for _, command := range []string{"NLST sub", "LIST sub", "MLSD sub"} {
-		listing, _ := c.download(server, command)
+		listing, _ := c.download(command)
 		if !strings.Contains(listing, "inner.txt") {
 			t.Errorf("%s = %q, want inner.txt", command, listing)
 		}
@@ -58,12 +58,12 @@ func TestListSkipsUnixStyleFlags(t *testing.T) {
 	c := connect(t, server)
 	c.login()
 
-	listing, _ := c.download(server, "LIST -la")
+	listing, _ := c.download("LIST -la")
 	if !strings.Contains(listing, "hello.txt") {
 		t.Errorf("LIST -la = %q", listing)
 	}
 
-	listing, _ = c.download(server, "LIST -la sub")
+	listing, _ = c.download("LIST -la sub")
 	if !strings.Contains(listing, "inner.txt") || strings.Contains(listing, "hello.txt") {
 		t.Errorf("LIST -la sub = %q", listing)
 	}
@@ -75,7 +75,7 @@ func TestListOfASingleFile(t *testing.T) {
 	c := connect(t, server)
 	c.login()
 
-	listing, _ := c.download(server, "LIST hello.txt")
+	listing, _ := c.download("LIST hello.txt")
 	if !strings.Contains(listing, "hello.txt") {
 		t.Errorf("listing = %q", listing)
 	}
@@ -90,7 +90,7 @@ func TestListFormats(t *testing.T) {
 	c := connect(t, server)
 	c.login()
 
-	listing, _ := c.download(server, "LIST")
+	listing, _ := c.download("LIST")
 	if !regexp.MustCompile(`-r--r--r-- 1 john john\s+12 \w{3} \d\d \d\d:\d\d hello\.txt`).MatchString(listing) {
 		t.Errorf("LIST line does not look right: %q", listing)
 	}
@@ -98,7 +98,7 @@ func TestListFormats(t *testing.T) {
 		t.Errorf("a folder should be marked as one: %q", listing)
 	}
 
-	listing, _ = c.download(server, "MLSD")
+	listing, _ = c.download("MLSD")
 	if !regexp.MustCompile(`type=file;size=12;modify=\d{14}; hello\.txt`).MatchString(listing) {
 		t.Errorf("MLSD line does not look right: %q", listing)
 	}
@@ -130,7 +130,7 @@ func TestListSkipsEntriesThatCannotBeStatted(t *testing.T) {
 
 	c := connect(t, server)
 	c.login()
-	listing, reply := c.download(server, "LIST")
+	listing, reply := c.download("LIST")
 	if !strings.HasPrefix(reply, "226") {
 		t.Errorf("reply = %q", reply)
 	}
@@ -195,7 +195,7 @@ func TestOptsMlstSelectsFacts(t *testing.T) {
 	c.send("OPTS MLST type;size;")
 	c.expect("200 MLST OPTS type;size;")
 
-	listing, _ := c.download(server, "MLSD")
+	listing, _ := c.download("MLSD")
 	if !strings.Contains(listing, "type=file;size=12; hello.txt") {
 		t.Errorf("listing = %q", listing)
 	}
@@ -211,7 +211,7 @@ func TestOptsMlstSelectsFacts(t *testing.T) {
 	c.send("OPTS MLST")
 	c.expect("200 MLST OPTS ")
 
-	listing, _ = c.download(server, "MLSD")
+	listing, _ = c.download("MLSD")
 	if !strings.Contains(listing, " hello.txt") || strings.Contains(listing, "type=") {
 		t.Errorf("listing = %q", listing)
 	}

@@ -61,7 +61,7 @@ func (s *Server) handleUpdate(set *settings, w http.ResponseWriter, r *http.Requ
 	cred := s.identify(set, w, r)
 	switch {
 	case cred.rejected:
-		s.refuseBearer(set, w, r)
+		s.refuseBearer(set, w)
 		return
 	case cred.locked:
 		s.refuseLocked(set, w, r)

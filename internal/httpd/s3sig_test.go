@@ -3,6 +3,7 @@ package httpd
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -174,7 +175,7 @@ func exampleChunks(corrupt bool) []byte {
 		{1024, "0055627c9e194cb4542bae2aa5492e3c1575bbb81b612b7d234b86a503ef5497"},
 		{0, "b6c6ea8a5354eaf15b3cb7646744f4275b71ea724fed81ceb9323e279d449df9"},
 	} {
-		body.WriteString(strconv.FormatInt(int64(chunk.size), 16) + ";chunk-signature=" + chunk.signature + "\r\n")
+		fmt.Fprintf(&body, "%x;chunk-signature=%s\r\n", chunk.size, chunk.signature)
 		data := bytes.Repeat([]byte("a"), chunk.size)
 		if corrupt && chunk.size == 1024 {
 			data[10] = 'b'

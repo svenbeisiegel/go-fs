@@ -381,7 +381,10 @@ func canonicalHeaders(r *http.Request, names []string) string {
 		for _, value := range values {
 			trimmed = append(trimmed, strings.Join(strings.Fields(value), " "))
 		}
-		b.WriteString(name + ":" + strings.Join(trimmed, ",") + "\n")
+		b.WriteString(name)
+		b.WriteString(":")
+		b.WriteString(strings.Join(trimmed, ","))
+		b.WriteString("\n")
 	}
 	return b.String()
 }

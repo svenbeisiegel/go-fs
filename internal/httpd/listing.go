@@ -450,15 +450,24 @@ func parentOf(virtual string) string {
 // browser parses, so it is left exactly as the Node implementation wrote it.
 func readerPage(folder string, entries []entry) []byte {
 	var page strings.Builder
-	page.WriteString("listing directory: " + html.EscapeString(folder) + "\n")
+	page.WriteString("listing directory: ")
+	page.WriteString(html.EscapeString(folder))
+	page.WriteString("\n")
 	for _, item := range entries {
 		kind := "dir"
 		if item.IsFile {
 			kind = "file"
 		}
 		link := (&url.URL{Path: item.Name}).String()
-		page.WriteString(`<a href="` + link + `">` + html.EscapeString(item.Name) + `</a>` +
-			" - filetype: " + kind + " filesize: " + itoa(item.Size) + "<br/>\n")
+		page.WriteString(`<a href="`)
+		page.WriteString(link)
+		page.WriteString(`">`)
+		page.WriteString(html.EscapeString(item.Name))
+		page.WriteString(`</a> - filetype: `)
+		page.WriteString(kind)
+		page.WriteString(" filesize: ")
+		page.WriteString(itoa(item.Size))
+		page.WriteString("<br/>\n")
 	}
 	return []byte(page.String())
 }

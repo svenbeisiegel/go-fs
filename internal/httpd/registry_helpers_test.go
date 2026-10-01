@@ -147,7 +147,7 @@ func (s *testServer) buildImage(t *testing.T, repo, platform, salt string, docke
 	}
 	configBytes, _ := json.Marshal(config)
 	configDigest := s.pushBlob(t, repo, configBytes)
-	layer := []byte(fmt.Sprintf("layer of %s %s", platform, salt))
+	layer := fmt.Appendf(nil, "layer of %s %s", platform, salt)
 	layerDigest := s.pushBlob(t, repo, layer)
 
 	mediaType, configType, layerType := v1.MediaTypeImageManifest, v1.MediaTypeImageConfig, v1.MediaTypeImageLayerGzip

@@ -416,7 +416,7 @@ func (s *Server) s3CopyObject(q *s3Request, obj s3Object, header string) {
 		return
 	}
 
-	staged, etag, failure := s.stageCopy(q, source, stagingFolder(q.set), 0, info.Size())
+	staged, etag, failure := s.stageCopy(source, stagingFolder(q.set), 0, info.Size())
 	if failure != nil {
 		q.fail(failure)
 		return
@@ -457,7 +457,7 @@ func checkCopyConditions(r *http.Request, info os.FileInfo) *s3Error {
 
 // stageCopy copies length bytes of a source object from offset into a new
 // file in folder, and reports the file and the ETag of what it holds.
-func (s *Server) stageCopy(q *s3Request, source s3Object, folder string, offset, length int64) (string, string, *s3Error) {
+func (s *Server) stageCopy(source s3Object, folder string, offset, length int64) (string, string, *s3Error) {
 	in, err := os.Open(source.target.Path)
 	if err != nil {
 		s.log.Warn("s3 cannot open the copy source", "path", source.target.Virtual, "error", err)

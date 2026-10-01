@@ -19,7 +19,7 @@ func TestRetr(t *testing.T) {
 	c := connect(t, server)
 	c.login()
 
-	content, reply := c.download(server, "RETR hello.txt")
+	content, reply := c.download("RETR hello.txt")
 	if content != "hello world" {
 		t.Errorf("content = %q", content)
 	}
@@ -33,7 +33,7 @@ func TestRetrOfAMissingFile(t *testing.T) {
 	c := connect(t, server)
 	c.login()
 
-	data := c.passive(server)
+	data := c.passive()
 	defer func() { _ = data.Close() }()
 	c.send("RETR nosuchfile")
 	c.expect("550 File not found")
@@ -60,7 +60,7 @@ func TestRetrOutsideTheBasefolderIsAnswered(t *testing.T) {
 	c.login()
 
 	// the reply matters as much as the refusal: the original hung here
-	data := c.passive(server)
+	data := c.passive()
 	defer func() { _ = data.Close() }()
 	c.send("RETR ../../../../../../etc/hosts")
 	c.expect(`550 Transfer failed "../../../../../../etc/hosts"`)
@@ -74,7 +74,7 @@ func TestRetrWithRestartOffset(t *testing.T) {
 
 	c.send("REST 4")
 	c.expect("350 Restarting at 4")
-	content, reply := c.download(server, "RETR hello.txt")
+	content, reply := c.download("RETR hello.txt")
 	if content != "456789" {
 		t.Errorf("content = %q, want the tail from offset 4", content)
 	}
@@ -83,7 +83,7 @@ func TestRetrWithRestartOffset(t *testing.T) {
 	}
 
 	// the offset is consumed by one transfer
-	content, _ = c.download(server, "RETR hello.txt")
+	content, _ = c.download("RETR hello.txt")
 	if content != "0123456789" {
 		t.Errorf("the restart offset leaked into the next transfer: %q", content)
 	}
@@ -105,7 +105,7 @@ func TestStor(t *testing.T) {
 	c := connect(t, server)
 	c.login()
 
-	reply := c.upload(server, "STOR mytestfile", "SOMETESTCONTENT")
+	reply := c.upload("STOR mytestfile", "SOMETESTCONTENT")
 	if reply != `226 Successfully transferred "mytestfile"` {
 		t.Errorf("reply = %q", reply)
 	}
@@ -155,7 +155,7 @@ func TestStorWithRestartOffset(t *testing.T) {
 
 	c.send("REST 4")
 	c.expect("350 Restarting at 4")
-	reply := c.upload(server, "STOR resume", "CCCC")
+	reply := c.upload("STOR resume", "CCCC")
 	if !strings.HasPrefix(reply, "226") {
 		t.Errorf("reply = %q", reply)
 	}
@@ -171,7 +171,7 @@ func TestAppe(t *testing.T) {
 	c := connect(t, server)
 	c.login()
 
-	reply := c.upload(server, "APPE appefile", "SECOND")
+	reply := c.upload("APPE appefile", "SECOND")
 	if !strings.HasPrefix(reply, "226") {
 		t.Errorf("reply = %q", reply)
 	}
@@ -185,7 +185,7 @@ func TestStou(t *testing.T) {
 	c := connect(t, server)
 	c.login()
 
-	data := c.passive(server)
+	data := c.passive()
 	c.send("STOU upload")
 	opening := c.expectCode("150")
 	// RFC 1123 requires the generated name in the opening reply
@@ -230,7 +230,7 @@ func TestTransfersAreLogged(t *testing.T) {
 	c := connect(t, server)
 	c.login()
 
-	if _, reply := c.download(server, "RETR hello.txt"); !strings.HasPrefix(reply, "226") {
+	if _, reply := c.download("RETR hello.txt"); !strings.HasPrefix(reply, "226") {
 		t.Fatalf("reply = %q", reply)
 	}
 	time.Sleep(100 * time.Millisecond)
@@ -242,7 +242,7 @@ func TestTransfersAreLogged(t *testing.T) {
 		t.Errorf("record = %v", records[0].attrs)
 	}
 
-	c.upload(server, "STOR up.txt", "written")
+	c.upload("STOR up.txt", "written")
 	time.Sleep(100 * time.Millisecond)
 	uploads := server.logs.all("ftp upload")
 	if len(uploads) != 1 || uploads[0].attrs["bytes"] != int64(7) {
@@ -266,7 +266,7 @@ func TestAbortDuringATransfer(t *testing.T) {
 
 	c := connect(t, server)
 	c.login()
-	data := c.passive(server)
+	data := c.passive()
 	c.send("RETR big.bin")
 	c.expectCode("150")
 
@@ -440,7 +440,7 @@ func TestShutdownAbortsARunningTransfer(t *testing.T) {
 
 	c := connect(t, server)
 	c.login()
-	data := c.passive(server)
+	data := c.passive()
 	defer func() { _ = data.Close() }()
 
 	c.send("RETR big.bin")
@@ -480,7 +480,7 @@ func TestATransferDoesNotTripTheIdleTimeout(t *testing.T) {
 
 	c := connect(t, server)
 	c.login()
-	data := c.passive(server)
+	data := c.passive()
 
 	c.send("RETR slow.bin")
 	c.expectCode("150")

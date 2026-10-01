@@ -322,7 +322,7 @@ func (c *client) login() {
 }
 
 // passive asks for a passive data channel and connects to it.
-func (c *client) passive(server *testServer) net.Conn {
+func (c *client) passive() net.Conn {
 	c.t.Helper()
 	c.send("EPSV")
 	reply := c.expectCode("229")
@@ -343,9 +343,9 @@ func (c *client) passive(server *testServer) net.Conn {
 }
 
 // download runs a command that sends data and returns what arrived.
-func (c *client) download(server *testServer, command string) (string, string) {
+func (c *client) download(command string) (string, string) {
 	c.t.Helper()
-	data := c.passive(server)
+	data := c.passive()
 	defer func() { _ = data.Close() }()
 
 	c.send("%s", command)
@@ -358,9 +358,9 @@ func (c *client) download(server *testServer, command string) (string, string) {
 }
 
 // upload runs a command that receives data.
-func (c *client) upload(server *testServer, command, content string) string {
+func (c *client) upload(command, content string) string {
 	c.t.Helper()
-	data := c.passive(server)
+	data := c.passive()
 
 	c.send("%s", command)
 	opening := c.expectCode("150")

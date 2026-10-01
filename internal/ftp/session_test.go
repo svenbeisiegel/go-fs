@@ -99,7 +99,7 @@ func TestAnonymousLogin(t *testing.T) {
 	c.send("USER anonymous")
 	c.expect("232 User logged in")
 
-	content, reply := c.download(allowed, "RETR public.txt")
+	content, reply := c.download("RETR public.txt")
 	if content != "public" {
 		t.Errorf("content = %q", content)
 	}
@@ -307,7 +307,7 @@ func TestPerUserBasefolder(t *testing.T) {
 	c := connect(t, server)
 	c.login()
 
-	listing, _ := c.download(server, "NLST")
+	listing, _ := c.download("NLST")
 	if !strings.Contains(listing, "mine.txt") || strings.Contains(listing, "theirs.txt") {
 		t.Errorf("the user should see their own folder, got %q", listing)
 	}
