@@ -246,7 +246,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
 dialog form { display: flex; flex-direction: column; gap: 0.75rem; padding: 1.1rem 1.25rem; min-width: 20rem; }
 dialog h2 { margin: 0; font-size: 1rem; }
 dialog p { margin: 0; color: var(--faint); font-size: 0.85rem; overflow-wrap: anywhere; }
-dialog input[type="text"], dialog input[type="password"] {
+dialog input[type="text"], dialog input[type="password"], dialog input[type="url"], dialog textarea {
   padding: 0.4rem 0.5rem;
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -271,14 +271,20 @@ dialog button.go {
   cursor: pointer;
 }
 dialog button.go.danger { border-color: var(--bad); background: var(--bad); }
-/* The dialogs that pull an image from another registry and push a tag to
-   one: a few labelled fields, and the progress of the transfer once it runs. */
+/* The dialogs that pull an image from another registry, push a tag to one
+   and fetch a file from a URL: a few labelled fields, and the progress of the
+   transfer once it runs. */
 dialog.transfer form { width: min(30rem, calc(100vw - 2rem)); }
 dialog .fields { display: flex; flex-direction: column; gap: 0.25rem; }
 dialog .fields label { margin-top: 0.35rem; color: var(--faint); font-size: 0.8rem; }
 dialog .fields label:first-child { margin-top: 0; }
 dialog .fields .hint { font-style: italic; }
-dialog input:disabled { opacity: 0.6; }
+dialog input:disabled, dialog textarea:disabled { opacity: 0.6; }
+/* The headers a fetch adds, folded away until they are wanted. */
+dialog details.headers summary { color: var(--faint); font-size: 0.8rem; cursor: pointer; }
+dialog details.headers summary .hint { font-style: italic; }
+dialog details.headers textarea { display: block; box-sizing: border-box; width: 100%; margin: 0.35rem 0; resize: vertical; }
+dialog details.headers p.hint { font-size: 0.8rem; }
 dialog .where { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
 dialog .progress { display: flex; flex-direction: column; gap: 0.35rem; }
 dialog progress { width: 100%; height: 0.5rem; accent-color: var(--accent); }

@@ -1054,6 +1054,42 @@ loads, and says on startup that it is ignored.
 everything but the newest `keep` files in it is removed. It is the one thing in
 go-fs that deletes without a client asking, so every removal is logged.
 
+### Fetching a file from a URL
+
+An account that has logged in through the form, and may create files in a
+folder, has a **Fetch** button at the top right of that folder's listing. The
+dialog takes an `http://` or `https://` URL, an optional username and password
+(or token), sent as Basic, and, folded away under **HTTP headers**, any headers
+to send along, one `Name: value` per line, such as `Accept:
+application/octet-stream` or `PRIVATE-TOKEN: …`. Headers the connection
+decides itself (`Host`, `Content-Length`, `Connection`, `Proxy-*` and the
+like) are refused, and so is an `Authorization` header next to a username.
+
+The server downloads the file itself, in the background, as the registry page
+pulls an image: the dialog shows how many bytes have arrived, can stop the
+download, and may be closed while it runs; the banner then says how it ended.
+Redirects are followed, ten at most, and the login and an `Authorization`
+header go only to the scheme, host and port they were given for, while the
+other headers follow the redirect. The file is stored as sent: a body with a
+`Content-Encoding` is not decoded.
+
+The file is named by the `filename` of the answer's `Content-Disposition`
+where there is one, and by the last segment of the URL the redirects ended at
+otherwise; only the last segment of either is used, so the file always lands
+in the folder shown. A name that is taken is replaced only for an account that
+sets `allowUserFileOverwrite`, as for an upload. `maxUploadSize` applies, and
+the bytes are staged in `http.uploadStagingFolder` until the download is
+complete. At most four fetches, pulls and pushes run at once, all accounts
+together.
+
+Fetch is offered to a session only: not to Basic, Digest or bearer
+credentials, which have `PUT` for the same job, and not to anyone where `PUT`
+is public. The endpoints are `?go-fs=fetch` (`POST`) and
+`?go-fs=fetch-job&id=…` (`GET` for the progress, `DELETE` to stop) on the
+folder. Note that the server connects to whatever host is typed in, from its
+own network, internal addresses included: give the right to create files only
+to accounts that may do that.
+
 ## Logging and diagnostics
 
 Everything the program has to say goes to **standard output**, one record per

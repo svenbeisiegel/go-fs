@@ -77,6 +77,28 @@
     banner.hidden = true;
   }
 
+  // A message that has to survive the reload after a fetch is kept for the
+  // next page of this tab. Storage may be off; the reload then says nothing.
+  var carried = "go-fs-listing-banner";
+  try {
+    var kept = window.sessionStorage.getItem(carried);
+    if (kept) {
+      window.sessionStorage.removeItem(carried);
+      say(kept, true);
+    }
+  } catch (ignored) {
+    // nothing carried
+  }
+
+  function sayAfterReload(message) {
+    try {
+      window.sessionStorage.setItem(carried, message);
+    } catch (ignored) {
+      // the reload shows the new file, which says it as well
+    }
+    window.location.reload();
+  }
+
   // A refused write is answered with a bare status, so what it meant depends on
   // what was asked for: the same 404 is a folder with something still in it,
   // a name already taken, or a file somebody else removed first.
@@ -95,6 +117,9 @@
       403: "You may not upload here, or there is already a file with that name and you may not replace it.",
       404: "There is already a file with that name.",
       416: "This upload lost sync with the server — try uploading it again."
+    },
+    fetch: {
+      403: "Only an account that is logged in and may create files here can fetch into this folder."
     }
   };
 
@@ -418,6 +443,197 @@
     };
     checking.showModal();
   });
+
+  // --- fetching from a URL ---------------------------------------------
+  //
+  // The server does the download, as a job of its own, the way the registry
+  // page pulls an image: the dialog starts it, then asks every second how far
+  // it has got. Closing the dialog leaves the job running, and the banner
+  // says how it ended.
+
+  (function () {
+    var dialog = document.getElementById("fetch-dialog");
+    var button = document.getElementById("fetch");
+    if (!dialog || !button) {
+      return;
+    }
+    var form = dialog.querySelector("form");
+    var headers = dialog.querySelector("details.headers");
+    var progress = dialog.querySelector(".progress");
+    var bar = progress.querySelector("progress");
+    var status = progress.querySelector(".status");
+    var go = form.querySelector("button[value='start']");
+    var stop = form.querySelector("button[value='stop']");
+    var close = form.querySelector("button[value='cancel']");
+    // job is the id of the fetch that runs, null while none does
+    var job = null;
+
+    function field(name) {
+      return form.elements[name];
+    }
+
+    function jobURL(id) {
+      return folder + "?go-fs=fetch-job&id=" + encodeURIComponent(id);
+    }
+
+    function request(method, url, body) {
+      var options = {
+        method: method,
+        headers: { Accept: "application/json" },
+        credentials: "same-origin"
+      };
+      if (body !== undefined) {
+        options.headers["Content-Type"] = "application/json";
+        options.body = JSON.stringify(body);
+      }
+      return fetch(url, options).then(function (res) {
+        if (res.ok) {
+          return res;
+        }
+        return res.text().then(function (text) {
+          throw new Error(reason("fetch", res.status, text.trim()));
+        });
+      });
+    }
+
+    // the same units the server writes into the Size column
+    function readableSize(size) {
+      function tenth(value) {
+        return Math.round(value * 10) / 10;
+      }
+      if (size > 1000000000) {
+        return tenth(size / 1024 / 1024 / 1024) + " GB";
+      }
+      if (size > 1000000) {
+        return tenth(size / 1024 / 1024) + " MB";
+      }
+      return tenth(size / 1024) + " KB";
+    }
+
+    function busy(on) {
+      Array.prototype.forEach.call(form.querySelectorAll("input, textarea"), function (input) {
+        input.disabled = on;
+      });
+      go.hidden = on;
+      stop.hidden = !on;
+      close.textContent = on ? "Close" : "Cancel";
+    }
+
+    function tell(message, bad) {
+      progress.hidden = false;
+      status.textContent = message;
+      status.classList.toggle("bad", bad === true);
+    }
+
+    function quiet() {
+      progress.hidden = true;
+      status.textContent = "";
+      status.classList.remove("bad");
+    }
+
+    function show(view) {
+      if (view.bytesTotal > 0) {
+        bar.max = view.bytesTotal;
+        bar.value = Math.min(view.bytesDone, view.bytesTotal);
+        tell(readableSize(view.bytesDone) + " of " + readableSize(view.bytesTotal));
+        return;
+      }
+      // the size is not known, or not yet: the bar runs without a value
+      bar.removeAttribute("value");
+      tell(view.bytesDone > 0 ? readableSize(view.bytesDone) + " so far" : "Connecting…");
+    }
+
+    function end(view) {
+      job = null;
+      busy(false);
+      if (view.state === "done") {
+        if (dialog.open) {
+          dialog.close();
+        }
+        sayAfterReload(view.message);
+        return;
+      }
+      var message = view.state === "cancelled" ? "Stopped." : (view.message || "The fetch failed.");
+      bar.value = 0;
+      tell(message, view.state !== "cancelled");
+      if (!dialog.open) {
+        say(message);
+      }
+    }
+
+    function poll() {
+      if (!job) {
+        return;
+      }
+      request("GET", jobURL(job)).then(function (res) {
+        return res.json();
+      }).then(function (view) {
+        if (view.state === "running") {
+          show(view);
+          window.setTimeout(poll, 1000);
+          return;
+        }
+        end(view);
+      }).catch(function (err) {
+        end({ state: "failed", message: err.message });
+      });
+    }
+
+    // The submit event rather than close, for the reason the other dialogs
+    // give: which button was pressed is only known there.
+    form.addEventListener("submit", function (event) {
+      var pressed = event.submitter ? event.submitter.value : "start";
+      if (pressed === "cancel") {
+        return;
+      }
+      event.preventDefault();
+      if (pressed === "stop") {
+        if (job) {
+          request("DELETE", jobURL(job)).catch(failed);
+        }
+        return;
+      }
+      if (job) {
+        return;
+      }
+      var body = {
+        url: field("url").value.trim(),
+        username: field("username").value.trim(),
+        password: field("password").value,
+        headers: field("headers").value
+      };
+      busy(true);
+      bar.removeAttribute("value");
+      tell("Starting…");
+      request("POST", folder + "?go-fs=fetch", body).then(function (res) {
+        return res.json();
+      }).then(function (view) {
+        job = view.id;
+        show(view);
+        window.setTimeout(poll, 1000);
+      }).catch(function (err) {
+        busy(false);
+        bar.value = 0;
+        tell(err.message, true);
+      });
+    });
+
+    // The dialog shows the fetch that runs as it was left, and a fresh form
+    // when none does.
+    button.addEventListener("click", function () {
+      clear();
+      var fresh = !job;
+      if (fresh) {
+        form.reset();
+        headers.open = false;
+        quiet();
+      }
+      dialog.showModal();
+      if (fresh) {
+        field("url").focus();
+      }
+    });
+  })();
 
   // --- uploading -------------------------------------------------------
   //

@@ -56,8 +56,10 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
 		}
+		allowed := s.rightsFor(set, user, target.Virtual)
+		allowed.Fetch = mayFetch(cred, target.Virtual)
 		page, err := listingPage(vfs.AsFolder(target.Virtual), entries,
-			parseSort(r.URL.Query()), s.rightsFor(set, user, target.Virtual),
+			parseSort(r.URL.Query()), allowed,
 			s.sessionViewFor(set, r, cred), nonce, set.cfg.MaxChunkSize)
 		if err != nil {
 			s.log.Error("http cannot render the listing", "path", target.Virtual, "error", err)

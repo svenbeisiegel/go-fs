@@ -235,6 +235,9 @@ type rights struct {
 	DeleteFolder bool
 	Mkdir        bool
 	Rename       bool
+	// Fetch is the Fetch button, which downloads a URL into the folder. It
+	// is offered to a session only; see mayFetch.
+	Fetch bool
 }
 
 // Any reports whether any per-row action is offered, which is what decides

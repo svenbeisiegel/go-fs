@@ -12,15 +12,17 @@ import (
 )
 
 // A pull from another registry or a push to one takes as long as its layers
-// take to cross the network, which for a large image is minutes. So the page
-// does not wait for it: the server runs it as a job, and the page asks how
-// far it has got until it is over. A job lives in memory only, belongs to the
+// take to cross the network, which for a large image is minutes, and so does
+// a file the listing fetches from a URL. So the page does not wait for it: the
+// server runs it as a job, and the page asks how far it has got until it is
+// over. A job lives in memory only, belongs to the
 // account that started it, and is forgotten an hour after it ended. The
 // credentials it was given are in the closure it runs and nowhere else.
 
 const (
-	jobPull = "pull"
-	jobPush = "push"
+	jobPull  = "pull"
+	jobPush  = "push"
+	jobFetch = "fetch"
 
 	jobRunning   = "running"
 	jobDone      = "done"

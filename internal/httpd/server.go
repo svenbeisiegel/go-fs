@@ -542,6 +542,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// fetching a URL into a folder decides who may for itself, once it
+	// knows who is asking: a session, which no public method stands in for
+	if action := fetchAction(r); action != "" {
+		s.handleFetch(set, w, r, target, cred, action)
+		return
+	}
 	user := cred.user
 	act := actionOf(r.Method, target)
 	if !s.permits(set, user, method, target.Virtual, act) {

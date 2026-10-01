@@ -26,6 +26,9 @@
     <button id="upload" class="plain needs-js" type="button"><svg class="ic"><use href="#i-upload"/></svg>Upload or Drop file</button>
     <input id="picker" type="file" multiple hidden>
     {{end}}
+    {{if .Rights.Fetch}}
+    <button id="fetch" class="plain needs-js" type="button"><svg class="ic"><use href="#i-download"/></svg>Fetch</button>
+    {{end}}
     {{template "session" .Session}}
   </div>
 </header>
@@ -93,6 +96,37 @@
     </div>
   </form>
 </dialog>
+
+{{if .Rights.Fetch}}
+<dialog id="fetch-dialog" class="transfer" aria-labelledby="fetch-title">
+  <form method="dialog">
+    <h2 id="fetch-title">Fetch file</h2>
+    <p>Downloads a file from a URL into {{.Path}}, under the name the remote gives it.</p>
+    <div class="fields">
+      <label for="fetch-url">URL</label>
+      <input id="fetch-url" name="url" type="url" required placeholder="https://example.com/file.tar.gz" autocomplete="off" spellcheck="false">
+      <label for="fetch-username">Username <span class="hint">optional</span></label>
+      <input id="fetch-username" name="username" type="text" autocomplete="off" spellcheck="false">
+      <label for="fetch-password">Password or token <span class="hint">optional</span></label>
+      <input id="fetch-password" name="password" type="password" autocomplete="new-password">
+    </div>
+    <details class="headers">
+      <summary>HTTP headers <span class="hint">optional</span></summary>
+      <textarea name="headers" rows="4" spellcheck="false" aria-label="HTTP headers" placeholder="Accept: application/octet-stream&#10;X-Api-Key: &#8230;"></textarea>
+      <p class="hint">One <code>Name: value</code> per line.</p>
+    </details>
+    <div class="progress" hidden>
+      <progress max="1"></progress>
+      <p class="status" role="status" aria-live="polite"></p>
+    </div>
+    <div class="row">
+      <button class="go" type="submit" value="start">Fetch</button>
+      <button class="plain" type="submit" value="stop" formnovalidate hidden>Stop</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
 
 <dialog id="confirm">
   <form method="dialog">
