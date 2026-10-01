@@ -25,6 +25,22 @@ func (s *Server) sweepRegistry() {
 	s.collectRegistryGarbage(store, cutoff)
 }
 
+// registryCleanupGrace is how young a blob or a link may be and still be kept
+// when the cleanup is run from the registry page. Someone who just deleted a
+// tag wants its blobs gone now, not a day later, so it is far shorter than
+// stagingMaxAge; it still covers a push under way, whose layers arrive
+// minutes before the manifest that refers to them.
+const registryCleanupGrace = 10 * time.Minute
+
+// cleanRegistryNow is the cleanup the registry page asks for, and reports how
+// many blobs it removed and how many bytes that freed. Uploads are swept as
+// the hourly cleanup sweeps them: a slow one is still arriving.
+func (s *Server) cleanRegistryNow(store *registryStore) (int, int64) {
+	now := time.Now()
+	s.sweepRegistryUploads(store, now.Add(-stagingMaxAge))
+	return s.collectRegistryGarbage(store, now.Add(-registryCleanupGrace))
+}
+
 // sweepRegistryUploads removes the uploads nothing has been added to since
 // cutoff. Every chunk touches the data file and rewrites the record, so an
 // upload that is still arriving is never taken for an abandoned one.
@@ -79,15 +95,16 @@ func newestChange(path string) time.Time {
 //
 // It holds the registry's lock exclusively for the whole run, so no push adds
 // a reference to what it is about to remove. Uploads keep arriving meanwhile;
-// only finishing one waits.
-func (s *Server) collectRegistryGarbage(store *registryStore, cutoff time.Time) {
+// only finishing one waits. It returns how many blobs it removed and how many
+// bytes that freed.
+func (s *Server) collectRegistryGarbage(store *registryStore, cutoff time.Time) (int, int64) {
 	s.registryMu.Lock()
 	defer s.registryMu.Unlock()
 
 	repositories, err := store.repositoryFolders()
 	if err != nil {
 		s.log.Error("registry cleanup cannot list the repositories", "error", err)
-		return
+		return 0, 0
 	}
 	marked := map[digest.Digest]bool{}
 	for _, name := range repositories {
@@ -97,7 +114,7 @@ func (s *Server) collectRegistryGarbage(store *registryStore, cutoff time.Time) 
 			// what cannot be read cannot be known to be unreferenced
 			s.log.Error("registry cleanup cannot read a repository, nothing is collected",
 				"repository", name, "error", err)
-			return
+			return 0, 0
 		}
 		for _, d := range revisions {
 			markManifest(store, d, referenced, 0)
@@ -157,6 +174,7 @@ func (s *Server) collectRegistryGarbage(store *registryStore, cutoff time.Time) 
 	if removed > 0 {
 		s.log.Info("registry cleanup done", "blobs", removed, "bytes", freed)
 	}
+	return removed, freed
 }
 
 // markManifest marks a manifest and everything it refers to. depth keeps an

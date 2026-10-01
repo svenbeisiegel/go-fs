@@ -24,6 +24,7 @@
       <a class="plain" href="{{.Folders}}"{{if .Tree}} aria-current="page"{{end}}><svg class="ic"><use href="#i-folder"/></svg>Folders</a>
     </nav>
     {{if .Write}}<button id="pull-image" class="plain needs-js" type="button"><svg class="ic"><use href="#i-download"/></svg>Pull image</button>{{end}}
+    {{if .Write}}<button id="clean-up" class="plain needs-js" type="button" title="Remove the blobs no image refers to"><svg class="ic"><use href="#i-trash"/></svg>Clean up</button>{{end}}
     {{template "session" .Session}}
   </div>
 </header>

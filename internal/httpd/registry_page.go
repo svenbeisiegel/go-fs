@@ -34,7 +34,9 @@ import (
 // interface: a header is what docker sends, and docker has the API. Pulling
 // an image from another registry and pushing a tag to one take that session
 // too: the one writes to the registry, and the other hands its images to
-// wherever the account says.
+// wherever the account says. So does running the cleanup of unreferenced
+// blobs now rather than with the hourly sweep, since it removes what a push
+// may still be about to refer to.
 
 const (
 	actionRegistry      = "registry"
@@ -42,6 +44,8 @@ const (
 	actionRegistryPull  = "registry-pull"
 	actionRegistryPush  = "registry-push"
 	actionRegistryJob   = "registry-job"
+	// the cleanup of unreferenced blobs, run now
+	actionRegistryCleanup = "registry-cleanup"
 	// the checks the dialogs make before a pull or a push may start
 	actionRegistryPullCheck = "registry-pull-check"
 	actionRegistryPushCheck = "registry-push-check"
@@ -54,6 +58,7 @@ var registryPageMethods = map[string]string{
 	actionRegistryPull:      "POST",
 	actionRegistryPush:      "POST",
 	actionRegistryJob:       "GET, HEAD, DELETE",
+	actionRegistryCleanup:   "POST",
 	actionRegistryPullCheck: "POST",
 	actionRegistryPushCheck: "POST",
 }
@@ -63,7 +68,7 @@ var registryPageMethods = map[string]string{
 func registryPageAction(r *http.Request) string {
 	switch action := r.URL.Query().Get(sessionParam); action {
 	case actionRegistry, actionRegistryImage, actionRegistryPull, actionRegistryPush, actionRegistryJob,
-		actionRegistryPullCheck, actionRegistryPushCheck:
+		actionRegistryPullCheck, actionRegistryPushCheck, actionRegistryCleanup:
 		return action
 	default:
 		return ""
@@ -179,6 +184,11 @@ func (s *Server) handleRegistryPage(set *settings, w http.ResponseWriter, r *htt
 			return
 		}
 		s.registryJobCancel(w, r, user)
+	case action == actionRegistryCleanup && r.Method == http.MethodPost:
+		if !s.sameSite(set, w, r) {
+			return
+		}
+		s.registryCleanup(set, w, r, user)
 	default:
 		w.Header().Set("Allow", registryPageMethods[action])
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -999,6 +1009,29 @@ func (s *Server) registryUntag(set *settings, w http.ResponseWriter, r *http.Req
 	default:
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// registryCleanupJSON is what the cleanup run from the page removed.
+type registryCleanupJSON struct {
+	Blobs int   `json:"blobs"`
+	Bytes int64 `json:"bytes"`
+}
+
+// registryCleanup removes the blobs nothing refers to now, keeping only those
+// of the last registryCleanupGrace. It is a walk of the registry folder, over
+// before a job would be worth it.
+func (s *Server) registryCleanup(set *settings, w http.ResponseWriter, r *http.Request, user *account) {
+	w.Header().Set("Cache-Control", "no-store")
+	if user == nil {
+		s.log.Info("http registry cleanup refused, no session of a registry account",
+			"address", clientAddress(set, r))
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	s.log.Info("registry cleanup started from the page", "user", user.name,
+		"address", clientAddress(set, r))
+	blobs, freed := s.cleanRegistryNow(set.registry)
+	writeJSON(w, http.StatusOK, registryCleanupJSON{Blobs: blobs, Bytes: freed})
 }
 
 // --- pulling from and pushing to other registries ---------------------------

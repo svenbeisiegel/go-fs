@@ -876,6 +876,12 @@ Cleanup runs with the hourly sweep: an upload nothing has been added to for
 to and that has not been pushed or mounted in the last 24 hours. A manifest
 stays until it is deleted, tagged or not: an image a newer push has taken the
 tag from can still be pulled by its digest, and its blobs are kept for it.
+An account that sets `registry` can also run it at once with **Clean up** on
+the registry page (`POST ?go-fs=registry-cleanup`), which answers with how many
+blobs it removed and how many bytes that freed. It removes the unreferenced
+blobs older than 10 minutes rather than 24 hours, so what a deleted tag left
+behind goes right away while a push under way keeps its layers; uploads are
+swept as the hourly cleanup sweeps them.
 
 - **Plain HTTP.** Docker only talks to a registry over plain HTTP when it is
   `localhost` or listed in `insecure-registries` of the daemon's

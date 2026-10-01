@@ -857,16 +857,50 @@
     }
   });
 
+  function ask(title, text, agree, then) {
+    checking.querySelector("h2").textContent = title;
+    checking.querySelector("p").textContent = text;
+    checking.querySelector("button[value='agree']").textContent = agree;
+    onAgree = then;
+    checking.showModal();
+  }
+
   function deleteTag(row) {
     var name = row.dataset.repository + ":" + row.dataset.tag;
-    checking.querySelector("h2").textContent = "Delete tag";
-    checking.querySelector("p").textContent = "Delete " + name +
-      "? Pulling it will stop working. The image itself stays while another tag points to it.";
-    onAgree = function () {
-      request("DELETE", tagURL("registry", row)).then(function () {
-        window.location.reload();
-      }).catch(failed);
-    };
-    checking.showModal();
+    ask("Delete tag", "Delete " + name +
+      "? Pulling it will stop working. The image itself stays while another tag points to it.",
+      "Delete", function () {
+        request("DELETE", tagURL("registry", row)).then(function () {
+          window.location.reload();
+        }).catch(failed);
+      });
+  }
+
+  // --- cleaning up -----------------------------------------------------
+
+  // The hourly cleanup keeps a blob for a day after it was pushed; this one
+  // keeps it for minutes, enough for a push under way. Nothing on the page
+  // changes with it, so the banner says what it freed.
+  var cleanUp = document.getElementById("clean-up");
+  if (cleanUp) {
+    cleanUp.addEventListener("click", function () {
+      ask("Clean up", "Remove the blobs no image refers to any more? " +
+        "Blobs pushed in the last 10 minutes are kept.", "Clean up", function () {
+          cleanUp.disabled = true;
+          clear();
+          request("POST", base + "?go-fs=registry-cleanup").then(function (res) {
+            return res.json();
+          }).then(function (done) {
+            if (done.blobs === 0) {
+              say("Nothing to clean up.", true);
+            } else {
+              say("Removed " + done.blobs + (done.blobs === 1 ? " blob" : " blobs") +
+                ", freed " + readableSize(done.bytes) + ".", true);
+            }
+          }).catch(failed).then(function () {
+            cleanUp.disabled = false;
+          });
+        });
+    });
   }
 })();

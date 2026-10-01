@@ -5,8 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
@@ -397,6 +399,75 @@ func TestRegistryPageDeletesATag(t *testing.T) {
 	}
 	if res, _ := pageRequest(t, server, http.MethodDelete, path, ci); res.StatusCode != http.StatusNotFound {
 		t.Errorf("deleting the tag again answered %d", res.StatusCode)
+	}
+}
+
+func TestRegistryPageCleansUpNow(t *testing.T) {
+	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
+	img := server.pushImage(t, "app", "latest", "linux/amd64", "1")
+	content := []byte("pushed an hour ago, never referenced")
+	orphan := server.pushBlob(t, "app", content)
+	store := server.settings().registry
+	old := time.Now().Add(-time.Hour)
+	for _, path := range []string{store.blobPath(orphan), store.layerPath("app", orphan)} {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fresh := server.pushBlob(t, "app", []byte("pushed a moment ago"))
+	path := "/?go-fs=registry-cleanup"
+
+	if _, body := pageRequest(t, server, http.MethodGet, "/?go-fs=registry", nil); strings.Contains(body, `id="clean-up"`) {
+		t.Error("an anonymous visitor is offered the cleanup")
+	}
+	if res, _ := pageRequest(t, server, http.MethodPost, path, nil); res.StatusCode != http.StatusForbidden {
+		t.Errorf("an anonymous cleanup answered %d", res.StatusCode)
+	}
+	john := login(t, server, "/", "john", "doe")
+	if res, _ := pageRequest(t, server, http.MethodPost, path, john); res.StatusCode != http.StatusForbidden {
+		t.Errorf("a cleanup by an account without registry answered %d", res.StatusCode)
+	}
+	ci := login(t, server, "/", pusher, pusherPassword)
+	if _, body := pageRequest(t, server, http.MethodGet, "/?go-fs=registry", ci); !strings.Contains(body, `id="clean-up"`) {
+		t.Error("the registry account is not offered the cleanup")
+	}
+	res, _ := pageRequest(t, server, http.MethodPost, path, ci, "Origin", "https://evil.example")
+	if res.StatusCode != http.StatusForbidden {
+		t.Errorf("a cross-site cleanup answered %d", res.StatusCode)
+	}
+	if !server.blobStored(orphan) {
+		t.Fatal("the orphan went before the cleanup was run")
+	}
+
+	res, body := pageRequest(t, server, http.MethodPost, path, ci, "Origin", server.url(""))
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("the cleanup answered %d: %s", res.StatusCode, body)
+	}
+	var done registryCleanupJSON
+	if err := json.Unmarshal([]byte(body), &done); err != nil {
+		t.Fatal(err)
+	}
+	if done.Blobs != 1 || done.Bytes != int64(len(content)) {
+		t.Errorf("the cleanup reported %+v", done)
+	}
+	if server.blobStored(orphan) {
+		t.Error("the unreferenced blob was kept")
+	}
+	for name, d := range map[string]digest.Digest{"manifest": img.digest, "config": img.config,
+		"layer": img.layer, "fresh blob": fresh} {
+		if !server.blobStored(d) {
+			t.Errorf("the %s was collected", name)
+		}
+	}
+	server.pullManifest(t, "app", "latest")
+	if server.logs.find("registry cleanup started from the page") == nil {
+		t.Error("the cleanup was not recorded")
+	}
+
+	// run again, there is nothing left
+	_, body = pageRequest(t, server, http.MethodPost, path, ci, "Origin", server.url(""))
+	if err := json.Unmarshal([]byte(body), &done); err != nil || done.Blobs != 0 {
+		t.Errorf("a second cleanup reported %s", body)
 	}
 }
 
