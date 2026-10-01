@@ -567,8 +567,7 @@ Clients send the token as a header, on the plain port and the TLS port alike:
 
 ```sh
 curl -H "Authorization: Bearer gofs_…" https://host:9443/reports/today.csv
-curl -H "Authorization: Bearer gofs_…" -H "Content-Type: application/octet-stream" \
-     -T build.zip https://host:9443/uploads/build.zip
+curl -H "Authorization: Bearer gofs_…" -T build.zip https://host:9443/uploads/build.zip
 ```
 
 What a token may do is set on its own entry:
@@ -1225,7 +1224,7 @@ Creating symbolic links is refused, because a link is the one thing that could
 point out of the base folder.
 
 **HTTP** — `GET` for downloads and a browsable listing, `PUT` for
-`application/octet-stream` and multipart uploads, `DELETE` for a file or an
+`application/octet-stream` (or no `Content-Type`, as `curl -T` sends) and multipart uploads, `DELETE` for a file or an
 empty folder, Basic (RFC 7617) and Digest (RFC 7616, with the RFC 2069 form)
 authentication, bearer tokens (RFC 6750) for scripts, browser login with a signed session token (JWT, RFC 7519), and
 the `dls_directory_reader` listing endpoint. Downloads answer range requests, so a large one can be resumed.

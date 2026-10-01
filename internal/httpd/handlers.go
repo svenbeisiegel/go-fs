@@ -126,8 +126,9 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		"bytes", info.Size(), "address", clientAddress(set, r))
 }
 
-// handlePut stores an uploaded file. A body of octet-stream is the file; a
-// multipart body carries it in a part. Folders above it are created.
+// handlePut stores an uploaded file. A body of octet-stream, or one without a
+// Content-Type, is the file; a multipart body carries it in a part. Folders
+// above it are created.
 //
 // replace says the dispatch found the name taken and the account allowed to
 // replace what is there; without it a name that is taken is refused, as in the
@@ -147,7 +148,7 @@ func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request
 	}
 
 	contentType := r.Header.Get("Content-Type")
-	binary := strings.Contains(contentType, "application/octet-stream")
+	binary := rawUpload(contentType)
 	multipart := strings.Contains(contentType, "multipart")
 	if !binary && !multipart {
 		s.log.Debug("http upload refused, the body is neither octet-stream nor multipart",
@@ -303,6 +304,14 @@ func parseContentRange(header string) (contentRange, bool) {
 	return contentRange{start: start, end: end, total: total}, true
 }
 
+// rawUpload says whether a body is the file itself: octet-stream, or no
+// Content-Type at all, which is what curl -T and most scripts send. A body
+// that names some other type is still refused, as in the Node implementation.
+func rawUpload(contentType string) bool {
+	return strings.TrimSpace(contentType) == "" ||
+		strings.Contains(contentType, "application/octet-stream")
+}
+
 // handleChunkedPut stores one piece of an upload sent as a PUT carrying
 // Content-Range: the same URL, once per chunk, each naming the slice of the
 // file it carries.
@@ -332,7 +341,7 @@ func (s *Server) handleChunkedPut(set *settings, w http.ResponseWriter, r *http.
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
-	if !strings.Contains(r.Header.Get("Content-Type"), "application/octet-stream") {
+	if !rawUpload(r.Header.Get("Content-Type")) {
 		s.log.Debug("http chunked upload refused, the body is not octet-stream",
 			"file", target.Virtual, "contentType", r.Header.Get("Content-Type"))
 		http.NotFound(w, r)

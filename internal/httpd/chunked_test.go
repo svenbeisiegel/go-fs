@@ -83,6 +83,28 @@ func TestChunkedUploadHappyPath(t *testing.T) {
 	}
 }
 
+// Chunks sent without a Content-Type, as curl -T does, are octet-stream too.
+func TestChunkedUploadWithoutContentType(t *testing.T) {
+	server := chunkedServer(t, nil)
+
+	for _, chunk := range []struct {
+		start, end int64
+		body       string
+		want       int
+	}{{0, 3, "abcd", http.StatusOK}, {4, 5, "ef", http.StatusCreated}} {
+		req, _ := http.NewRequest(http.MethodPut, server.url("/private/plain.iso"),
+			strings.NewReader(chunk.body))
+		req.SetBasicAuth("john", "doe")
+		req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/6", chunk.start, chunk.end))
+		if res := do(t, req); res.StatusCode != chunk.want {
+			t.Fatalf("chunk at %d status = %d, want %d", chunk.start, res.StatusCode, chunk.want)
+		}
+	}
+	if got := server.read(t, "private/plain.iso"); got != "abcdef" {
+		t.Errorf("stored %q", got)
+	}
+}
+
 // A chunk whose start does not match what the server has staged is refused
 // with 416 naming the offset that would have fit, and the upload can still be
 // finished by sending the right one afterwards.

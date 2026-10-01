@@ -77,6 +77,30 @@ func TestUploadBinary(t *testing.T) {
 	}
 }
 
+// curl -T sends the file as the body without any Content-Type, which is taken
+// as octet-stream; a body that names another type is still refused.
+func TestUploadWithoutContentType(t *testing.T) {
+	server := newServer(t, nil)
+
+	req, _ := http.NewRequest(http.MethodPut, server.url("/private/plain.zip"),
+		strings.NewReader("uploaded"))
+	req.SetBasicAuth("john", "doe")
+	if res := do(t, req); res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if got := server.read(t, "private/plain.zip"); got != "uploaded" {
+		t.Errorf("stored %q", got)
+	}
+
+	req, _ = http.NewRequest(http.MethodPut, server.url("/private/typed.txt"),
+		strings.NewReader("uploaded"))
+	req.SetBasicAuth("john", "doe")
+	req.Header.Set("Content-Type", "text/plain")
+	if res := do(t, req); res.StatusCode != http.StatusNotFound {
+		t.Errorf("text/plain status = %d, want 404", res.StatusCode)
+	}
+}
+
 // A slow upload whose total duration is longer than readTimeout must still
 // succeed as long as no single gap between chunks is: readTimeout bounds how
 // long an upload may stall, not how long it may take overall. This is what
