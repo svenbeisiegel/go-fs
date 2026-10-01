@@ -112,7 +112,7 @@ func hubName(host, repository string) string {
 func parseRemoteReference(value string) (remoteRef, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return remoteRef{}, errors.New("name the image to pull")
+		return remoteRef{}, errors.New("name the image")
 	}
 	if strings.ContainsAny(value, " \t\r\n") {
 		return remoteRef{}, fmt.Errorf("%q is not an image reference", value)
@@ -145,51 +145,6 @@ func parseRemoteReference(value string) (remoteRef, error) {
 		ref.tag = "latest"
 	}
 	return ref, nil
-}
-
-// remoteTarget is where a push goes: a registry and, optionally, the
-// namespace in it the repository is put under.
-type remoteTarget struct {
-	scheme, host, api string
-	namespace         string
-}
-
-// parseRemoteTarget reads the address a push goes to, such as ghcr.io/org,
-// registry.example.com:5000 or http://localhost:5000.
-func parseRemoteTarget(value string) (remoteTarget, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return remoteTarget{}, errors.New("name the registry to push to")
-	}
-	if strings.ContainsAny(value, " \t\r\n@") {
-		return remoteTarget{}, fmt.Errorf("%q is not a registry address", value)
-	}
-	scheme, rest := cutScheme(value)
-	rest = strings.Trim(rest, "/")
-	target := remoteTarget{scheme: scheme}
-	if !strings.Contains(rest, "/") && isRegistryHost(rest) {
-		// a registry alone: the repository goes to its top
-		rest += "/"
-	}
-	target.host, target.api, target.namespace = splitHost(rest)
-	if target.namespace != "" && !validRepository(target.namespace) {
-		return remoteTarget{}, fmt.Errorf("%q is not a namespace: lowercase letters, digits and separators only",
-			target.namespace)
-	}
-	return target, nil
-}
-
-// reference is where a tag of this registry goes on the target.
-func (t remoteTarget) reference(repository, tag string) (remoteRef, error) {
-	name := repository
-	if t.namespace != "" {
-		name = t.namespace + "/" + repository
-	}
-	name = hubName(t.host, name)
-	if !validRepository(name) {
-		return remoteRef{}, fmt.Errorf("%q is not a repository name", name)
-	}
-	return remoteRef{scheme: t.scheme, host: t.host, api: t.api, repository: name, tag: tag}, nil
 }
 
 // remoteTransport is what every client shares. Nothing bounds how long a
@@ -492,6 +447,46 @@ func (c *remoteClient) blobExists(ctx context.Context, d digest.Digest) (bool, e
 	default:
 		return false, c.failure(res, d.String())
 	}
+}
+
+// manifestExists reports whether the repository has a manifest under a tag
+// or a digest.
+func (c *remoteClient) manifestExists(ctx context.Context, ref string) (bool, error) {
+	res, err := c.send(ctx, http.MethodHead, c.repoURL("manifests/"+ref),
+		http.Header{"Accept": {manifestAccept}}, nil, true)
+	if err != nil {
+		return false, err
+	}
+	drain(res)
+	switch res.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		return false, c.failure(res, c.repository+":"+ref)
+	}
+}
+
+// canPush proves that the login may push to the repository by opening an
+// upload, which it then drops. Nothing less proves it: a token service hands
+// out a token for less than was asked rather than refuse.
+func (c *remoteClient) canPush(ctx context.Context) error {
+	res, err := c.send(ctx, http.MethodPost, c.repoURL("blobs/uploads/"), nil, nil, true)
+	if err != nil {
+		return err
+	}
+	drain(res)
+	if res.StatusCode != http.StatusAccepted {
+		return c.failure(res, c.repository)
+	}
+	if location, err := uploadLocation(res); err == nil {
+		// an upload left open runs out on its own, so a failure here is no loss
+		if res, err := c.send(ctx, http.MethodDelete, location.String(), nil, nil, false); err == nil {
+			drain(res)
+		}
+	}
+	return nil
 }
 
 // pushBlob uploads a blob the way docker does: an upload is opened, the whole

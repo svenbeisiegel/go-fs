@@ -810,24 +810,32 @@ of a tag offers:
 
 **Copying images between registries.** With a session of an account that
 sets `registry`, the page can also copy images to and from other registries.
-The server does the copying itself, in the background: the dialog shows how
-many blobs and bytes have been moved, can stop the transfer, and may be
-closed while it runs; the banner then says how it ended.
+Each dialog takes the image (name and tag) and an optional login, and has to
+be **validated** before anything is copied: Validate reaches the other
+registry with that login and lists the architectures there are to copy, all
+ticked. Untick the ones to leave out, then press Pull or Push. Changing the
+image or the login takes the validation back. With every architecture ticked
+the image is copied as it is and keeps its digest; with some left out, only
+those that are ticked (and their attestations) are copied, into an index of
+their own with a digest of its own. The server does the copying itself, in
+the background: the dialog shows how many blobs and bytes have been moved, can
+stop the transfer, and may be closed while it runs; the banner then says how
+it ended.
 
 - **Pull image** (top right) fetches an image such as
   `docker.io/library/nginx:1.27`, `ghcr.io/org/app:v1` or
-  `registry.example.com:5000/team/tool@sha256:…` into this registry. References
-  are read as docker reads them: `nginx` is `docker.io/library/nginx:latest`.
-  The image is stored under the path of its reference without the registry,
-  `library/nginx:1.27` and `org/app:v1` here, and replaces what that tag held.
-  **Platforms** takes a list such as `linux/amd64, linux/arm64`; left empty,
-  every platform of a multi-platform image is copied and the image keeps its
-  digest, otherwise only those platforms (and their attestations) are copied
-  into an index the registry builds, which has a digest of its own.
-- **Push to registry…** copies a tag, every platform of it, to the address
-  given, which may name a namespace: `ghcr.io/my-org` pushes `team/app:1.0` as
-  `ghcr.io/my-org/team/app:1.0`. Blobs the other registry already has are not
-  sent again, and the manifests are sent as they are, so the digest stays.
+  `registry.example.com:5000/team/tool:v2@sha256:…` into this registry.
+  References are read as docker reads them: `nginx` is
+  `docker.io/library/nginx:latest`. The image is stored under the path of its
+  reference without the registry, `library/nginx:1.27` and `org/app:v1` here,
+  and replaces what that tag held. Validate lists the architectures the image
+  offers, and the pull fetches the very image that was validated, even if the
+  tag moves in between.
+- **Push to registry…** copies a tag to the image named, prefilled with the
+  tag's own name: put the registry in front, `ghcr.io/my-org/team/app:1.0`,
+  or change the name and tag as well. Validate proves that the login may push
+  there, says whether the tag is there already, and lists the architectures
+  of the tag here. Blobs the other registry already has are not sent again.
 
 Both take an optional username and password (or access token) for the other
 registry; they are used for that one transfer, never stored and never logged.

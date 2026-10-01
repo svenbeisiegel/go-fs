@@ -293,9 +293,11 @@
     return list;
   }
 
+  // Each platform is folded away, so the facts of the tag stay in view and
+  // the admin opens only the platform they want to look at.
   function platformSection(platform) {
-    var section = el("section", "platform");
-    var heading = el("h3");
+    var section = el("details", "platform");
+    var heading = el("summary");
     heading.appendChild(el("span", "badge", platform.label || "artifact"));
     if (platform.platform && platform.platform !== platform.label) {
       heading.appendChild(el("span", "meta", platform.platform));
@@ -329,7 +331,19 @@
     request("GET", tagURL("registry-image", row)).then(function (res) {
       return res.json();
     }).then(function (image) {
-      details.querySelector("h2").textContent = image.repository + ":" + image.tag;
+      var title = details.querySelector("h2");
+      title.textContent = image.repository + ":" + image.tag;
+      var badges = el("span", "badges");
+      image.platforms.forEach(function (platform) {
+        if (platform.platform) {
+          var badge = el("span", "badge", platform.label);
+          badge.title = platform.platform;
+          badges.appendChild(badge);
+        }
+      });
+      if (badges.childNodes.length > 0) {
+        title.appendChild(badges);
+      }
       var holder = details.querySelector(".facts");
       holder.textContent = "";
       holder.appendChild(facts([
@@ -377,33 +391,118 @@
 
   // --- pulling from and pushing to another registry --------------------
   //
-  // The server does the copying, as a job of its own: the dialog starts it,
-  // then asks every second how far it has got. Closing the dialog leaves the
-  // job running, and the banner says how it ended.
+  // A transfer is checked before it may start: Validate asks the server to
+  // reach the other registry with the login given, and answers the
+  // architectures there are to copy, which the admin then picks from. Editing
+  // the image or the login undoes the check. The server does the copying, as
+  // a job of its own: the dialog starts it, then asks every second how far it
+  // has got. Closing the dialog leaves the job running, and the banner says
+  // how it ended.
 
-  function transfer(dialog, start, finished) {
+  function transfer(dialog, calls) {
     var form = dialog.querySelector("form");
     var progress = dialog.querySelector(".progress");
     var bar = progress.querySelector("progress");
     var status = progress.querySelector(".status");
+    var platforms = dialog.querySelector(".platforms");
+    var choices = platforms.querySelector(".choices");
+    var check = form.querySelector("button[value='check']");
     var go = form.querySelector("button[value='start']");
     var stop = form.querySelector("button[value='stop']");
     var close = form.querySelector("button[value='cancel']");
     var job = null;
+    // checked is what the last Validate answered, null until it succeeded
+    var checked = null;
+
+    function boxes() {
+      return Array.prototype.slice.call(choices.querySelectorAll("input[type='checkbox']"));
+    }
+
+    function ready() {
+      go.disabled = !checked || (boxes().length > 0 && !boxes().some(function (box) {
+        return box.checked;
+      }));
+    }
 
     function busy(on) {
       Array.prototype.forEach.call(form.querySelectorAll("input"), function (input) {
         input.disabled = on;
       });
+      check.hidden = on;
       go.hidden = on;
       stop.hidden = !on;
       close.textContent = on ? "Close" : "Cancel";
+      check.disabled = on;
+      if (!on) {
+        ready();
+      }
     }
 
     function tell(message, bad) {
       progress.hidden = false;
       status.textContent = message;
       status.classList.toggle("bad", bad === true);
+    }
+
+    function quiet() {
+      progress.hidden = true;
+      status.textContent = "";
+      status.classList.remove("bad");
+    }
+
+    function invalidate() {
+      if (checked === null) {
+        return;
+      }
+      checked = null;
+      platforms.hidden = true;
+      choices.textContent = "";
+      quiet();
+      ready();
+      if (calls.changed) {
+        calls.changed(null);
+      }
+    }
+
+    function offer(answer) {
+      checked = answer;
+      choices.textContent = "";
+      answer.platforms.forEach(function (platform) {
+        var label = el("label");
+        label.title = platform.platform;
+        var box = el("input");
+        box.type = "checkbox";
+        box.value = platform.platform;
+        box.checked = true;
+        label.appendChild(box);
+        label.appendChild(el("span", "badge", platform.label));
+        if (platform.label !== platform.platform) {
+          label.appendChild(el("span", "meta", platform.platform));
+        }
+        choices.appendChild(label);
+      });
+      if (answer.platforms.length === 0) {
+        choices.appendChild(el("span", "meta", "It names no architecture, so it is copied as it is."));
+      }
+      platforms.hidden = false;
+      ready();
+      if (calls.changed) {
+        calls.changed(answer);
+      }
+    }
+
+    // chosen is what the transfer is limited to: nothing while every box is
+    // ticked, so that the image is copied as it is, under its own digest.
+    function chosen() {
+      var ticked = boxes().filter(function (box) {
+        return box.checked;
+      });
+      if (ticked.length === boxes().length) {
+        return "";
+      }
+      return ticked.map(function (box) {
+        return box.value;
+      }).join(", ");
     }
 
     function show(view) {
@@ -422,16 +521,21 @@
       }
     }
 
+    function reset() {
+      form.reset();
+      invalidate();
+      quiet();
+    }
+
     function end(view) {
       job = null;
       busy(false);
       if (view.state === "done") {
-        form.reset();
-        progress.hidden = true;
+        reset();
         if (dialog.open) {
           dialog.close();
         }
-        finished(view);
+        calls.finished(view);
         return;
       }
       var message = view.state === "cancelled" ? "Stopped." : (view.message || "The transfer failed.");
@@ -460,10 +564,39 @@
       });
     }
 
+    function validate() {
+      var call = calls.check();
+      invalidate();
+      Array.prototype.forEach.call(form.querySelectorAll("input"), function (input) {
+        input.disabled = true;
+      });
+      check.disabled = true;
+      bar.removeAttribute("value");
+      tell("Checking…");
+      request("POST", call.url, call.body).then(function (res) {
+        return res.json();
+      }).then(function (answer) {
+        busy(false);
+        quiet();
+        offer(answer);
+      }).catch(function (err) {
+        busy(false);
+        bar.value = 0;
+        tell(err.message, true);
+      });
+    }
+
+    form.addEventListener("input", function (event) {
+      if (event.target.closest(".fields")) {
+        invalidate();
+      }
+    });
+    choices.addEventListener("change", ready);
+
     // The submit event rather than close, for the reason the listing gives:
     // which button was pressed is only known there.
     form.addEventListener("submit", function (event) {
-      var pressed = event.submitter ? event.submitter.value : "start";
+      var pressed = event.submitter ? event.submitter.value : "check";
       if (pressed === "cancel") {
         return;
       }
@@ -474,7 +607,14 @@
         }
         return;
       }
-      var call = start();
+      if (pressed === "check" || !checked) {
+        validate();
+        return;
+      }
+      if (go.disabled) {
+        return;
+      }
+      var call = calls.start(checked, chosen());
       busy(true);
       bar.removeAttribute("value");
       tell("Starting…");
@@ -496,8 +636,7 @@
       open: function () {
         var fresh = !job;
         if (fresh) {
-          progress.hidden = true;
-          status.textContent = "";
+          reset();
         }
         dialog.showModal();
         return fresh;
@@ -548,37 +687,48 @@
     return rest + ":" + tag;
   }
 
-  // pushTarget is where a push puts a tag: the repository under the address,
-  // which may name a namespace after the registry.
-  function pushTarget(address, repository, tag) {
-    var rest = address.trim().replace(/^https?:\/\//, "").replace(/^\/+|\/+$/g, "");
-    if (rest === "") {
+  // remoteName is a reference written in full, the way the server reads it:
+  // Docker Hub where no registry is named, and its official images under
+  // library/. It is only shown; the server decides.
+  function remoteName(value) {
+    var rest = value.trim().replace(/^https?:\/\//, "");
+    if (rest === "" || rest.indexOf("@") >= 0) {
       return "";
     }
-    var slash = rest.indexOf("/");
-    var first = slash >= 0 ? rest.slice(0, slash) : rest;
+    var tag = "latest";
+    var colon = rest.lastIndexOf(":");
+    if (colon > rest.lastIndexOf("/")) {
+      tag = rest.slice(colon + 1);
+      rest = rest.slice(0, colon);
+    }
     var host = "docker.io";
-    var namespace = rest;
-    if (isHost(first)) {
-      host = first.toLowerCase();
-      namespace = slash >= 0 ? rest.slice(slash + 1) : "";
+    var slash = rest.indexOf("/");
+    if (slash >= 0 && isHost(rest.slice(0, slash))) {
+      host = rest.slice(0, slash).toLowerCase();
+      rest = rest.slice(slash + 1);
     }
     if (host === "index.docker.io") {
       host = "docker.io";
     }
-    var name = namespace ? namespace + "/" + repository : repository;
-    if (host === "docker.io" && name.indexOf("/") < 0) {
-      name = "library/" + name;
+    if (rest === "") {
+      return "";
     }
-    return host + "/" + name + ":" + tag;
+    if (host === "docker.io" && rest.indexOf("/") < 0) {
+      rest = "library/" + rest;
+    }
+    return host + "/" + rest + ":" + tag;
+  }
+
+  function fieldOf(dialog) {
+    return function (name) {
+      return dialog.querySelector("input[name='" + name + "']");
+    };
   }
 
   var pullDialog = document.getElementById("remote-pull");
   var pullButton = document.getElementById("pull-image");
   if (pullDialog && pullButton) {
-    var pullField = function (name) {
-      return pullDialog.querySelector("input[name='" + name + "']");
-    };
+    var pullField = fieldOf(pullDialog);
     var pullWhere = pullDialog.querySelector(".where");
     var showLocal = function () {
       var name = localName(pullField("reference").value);
@@ -589,18 +739,33 @@
       }
     };
     pullField("reference").addEventListener("input", showLocal);
-    var pulling = transfer(pullDialog, function () {
+    var pullLogin = function () {
       return {
-        url: base + "?go-fs=registry-pull",
-        body: {
-          reference: pullField("reference").value.trim(),
-          platforms: pullField("platforms").value.trim(),
-          username: pullField("username").value.trim(),
-          password: pullField("password").value
-        }
+        reference: pullField("reference").value.trim(),
+        username: pullField("username").value.trim(),
+        password: pullField("password").value
       };
-    }, function (view) {
-      sayAfterReload(view.message);
+    };
+    var pulling = transfer(pullDialog, {
+      check: function () {
+        return { url: base + "?go-fs=registry-pull-check", body: pullLogin() };
+      },
+      start: function (checked, platforms) {
+        var body = pullLogin();
+        body.digest = checked.digest;
+        body.platforms = platforms;
+        return { url: base + "?go-fs=registry-pull", body: body };
+      },
+      changed: function (checked) {
+        if (checked) {
+          pullWhere.textContent = "Pulls " + checked.reference + " · stored here as " + checked.local;
+        } else {
+          showLocal();
+        }
+      },
+      finished: function (view) {
+        sayAfterReload(view.message);
+      }
     });
     pullButton.addEventListener("click", function () {
       clear();
@@ -616,27 +781,40 @@
   var pushRow = null;
   var showTarget = null;
   if (pushDialog) {
-    var pushField = function (name) {
-      return pushDialog.querySelector("input[name='" + name + "']");
-    };
+    var pushField = fieldOf(pushDialog);
     var pushWhere = pushDialog.querySelector(".where");
     showTarget = function () {
-      var target = pushRow ? pushTarget(pushField("address").value,
-        pushRow.dataset.repository, pushRow.dataset.tag) : "";
+      var target = remoteName(pushField("reference").value);
       pushWhere.textContent = target ? "Pushes to " + target : "";
     };
-    pushField("address").addEventListener("input", showTarget);
-    pushing = transfer(pushDialog, function () {
+    pushField("reference").addEventListener("input", showTarget);
+    var pushLogin = function () {
       return {
-        url: tagURL("registry-push", pushRow),
-        body: {
-          address: pushField("address").value.trim(),
-          username: pushField("username").value.trim(),
-          password: pushField("password").value
-        }
+        reference: pushField("reference").value.trim(),
+        username: pushField("username").value.trim(),
+        password: pushField("password").value
       };
-    }, function (view) {
-      say(view.message, true);
+    };
+    pushing = transfer(pushDialog, {
+      check: function () {
+        return { url: tagURL("registry-push-check", pushRow), body: pushLogin() };
+      },
+      start: function (checked, platforms) {
+        var body = pushLogin();
+        body.platforms = platforms;
+        return { url: tagURL("registry-push", pushRow), body: body };
+      },
+      changed: function (checked) {
+        if (checked) {
+          pushWhere.textContent = "Pushes to " + checked.reference +
+            (checked.exists ? " · replaces the tag there" : "");
+        } else {
+          showTarget();
+        }
+      },
+      finished: function (view) {
+        say(view.message, true);
+      }
     });
   }
 
@@ -652,8 +830,12 @@
       return;
     }
     pushDialog.querySelector(".what").textContent = row.dataset.repository + ":" + row.dataset.tag;
+    var field = pushDialog.querySelector("input[name='reference']");
+    field.value = row.dataset.repository + ":" + row.dataset.tag;
     showTarget();
-    pushDialog.querySelector("input[name='address']").focus();
+    field.focus();
+    // the registry goes in front of what is there
+    field.setSelectionRange(0, 0);
   }
 
   // --- deleting a tag --------------------------------------------------

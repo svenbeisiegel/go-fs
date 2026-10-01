@@ -106,6 +106,42 @@ func TestRegistryListShowsEveryTagWithItsPlatforms(t *testing.T) {
 	}
 }
 
+func TestRegistryListShowsAFewPlatforms(t *testing.T) {
+	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
+	for i, platform := range []string{"linux/386", "linux/ppc64le", "linux/arm64", "linux/s390x", "linux/amd64"} {
+		server.pushImage(t, "app", "1.0", platform, string(rune('a'+i)))
+	}
+
+	res, body := pageRequest(t, server, http.MethodGet, "/?go-fs=registry", nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d: %s", res.StatusCode, body)
+	}
+	want := `<span class="badges">` +
+		`<span class="badge" title="linux/amd64">amd64</span>` +
+		`<span class="badge" title="linux/arm64">arm64</span>` +
+		`<span class="badge more" title="linux/386, linux/ppc64le, linux/s390x">…more</span></span>`
+	if !strings.Contains(body, want) {
+		t.Errorf("the page lacks %s", want)
+	}
+
+	res, page := pageRequest(t, server, http.MethodGet, "/?go-fs=registry-image&repository=app&tag=1.0", nil,
+		"Accept", "application/json")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d: %s", res.StatusCode, page)
+	}
+	var image registryImageJSON
+	if err := json.Unmarshal([]byte(page), &image); err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	for _, platform := range image.Platforms {
+		order = append(order, platform.Platform)
+	}
+	if got := strings.Join(order, " "); got != "linux/amd64 linux/arm64 linux/386 linux/ppc64le linux/s390x" {
+		t.Errorf("the details list the platforms as %s", got)
+	}
+}
+
 func TestRegistryLeavesOutTheAttestations(t *testing.T) {
 	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
 	img := server.buildImage(t, "app", "linux/amd64", "a", false)

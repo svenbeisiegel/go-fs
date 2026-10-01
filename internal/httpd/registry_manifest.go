@@ -579,16 +579,26 @@ type imageConfiguration struct {
 // imageConfig reads the configuration of an image. An artifact, whose
 // configuration is not an image's, has none.
 func (st *registryStore) imageConfig(mediaType string, doc manifestDoc) (imageConfiguration, bool) {
-	if !isImageType(mediaType) || doc.Config == nil {
-		return imageConfiguration{}, false
-	}
-	if doc.Config.MediaType != v1.MediaTypeImageConfig && doc.Config.MediaType != mediaTypeDockerConfig {
+	if !hasImageConfig(mediaType, doc) {
 		return imageConfiguration{}, false
 	}
 	data, err := st.readBlob(doc.Config.Digest, maxConfigSize)
 	if err != nil {
 		return imageConfiguration{}, false
 	}
+	return decodeImageConfig(data)
+}
+
+// hasImageConfig reports whether a manifest is an image's, with a
+// configuration that names its platform.
+func hasImageConfig(mediaType string, doc manifestDoc) bool {
+	return isImageType(mediaType) && doc.Config != nil &&
+		(doc.Config.MediaType == v1.MediaTypeImageConfig || doc.Config.MediaType == mediaTypeDockerConfig)
+}
+
+// decodeImageConfig reads the configuration of an image, wherever it was
+// read from.
+func decodeImageConfig(data []byte) (imageConfiguration, bool) {
 	var config struct {
 		OS           string   `json:"os"`
 		Architecture string   `json:"architecture"`

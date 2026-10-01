@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -46,43 +47,6 @@ func TestParseRemoteReference(t *testing.T) {
 	}
 	for _, bad := range []string{"", "Nginx", "nginx:bad tag", "a b", "app@sha256:short", "ghcr.io/", "app:-x"} {
 		if _, err := parseRemoteReference(bad); err == nil {
-			t.Errorf("%q was taken", bad)
-		}
-	}
-}
-
-func TestParseRemoteTarget(t *testing.T) {
-	cases := []struct {
-		in, repo, want, scheme string
-	}{
-		{"ghcr.io/org", "team/app", "ghcr.io/org/team/app:1.0", "https"},
-		{"ghcr.io", "team/app", "ghcr.io/team/app:1.0", "https"},
-		{"https://ghcr.io/org/", "app", "ghcr.io/org/app:1.0", "https"},
-		{"http://localhost:5000", "app", "localhost:5000/app:1.0", "http"},
-		{"registry.example.com:5000/a/b", "app", "registry.example.com:5000/a/b/app:1.0", "https"},
-		{"myuser", "app", "docker.io/myuser/app:1.0", "https"},
-		{"docker.io", "app", "docker.io/library/app:1.0", "https"},
-	}
-	for _, c := range cases {
-		target, err := parseRemoteTarget(c.in)
-		if err != nil {
-			t.Errorf("%q: %v", c.in, err)
-			continue
-		}
-		ref, err := target.reference(c.repo, "1.0")
-		if err != nil {
-			t.Errorf("%q: %v", c.in, err)
-			continue
-		}
-		if ref.String() != c.want || ref.scheme != c.scheme {
-			t.Errorf("%q = %s over %s, want %s over %s", c.in, ref, ref.scheme, c.want, c.scheme)
-		}
-	}
-	if target, _ := parseRemoteTarget("docker.io/me"); target.api != dockerHubAPI {
-		t.Errorf("Docker Hub is reached at %q", target.api)
-	}
-	for _, bad := range []string{"", "ghcr.io/Org", "user@ghcr.io", "a b"} {
-		if _, err := parseRemoteTarget(bad); err == nil {
 			t.Errorf("%q was taken", bad)
 		}
 	}
@@ -208,7 +172,7 @@ func TestRegistryPushesATagAndPullsItBack(t *testing.T) {
 
 	ci := login(t, source, "/", pusher, pusherPassword)
 	job := startTransfer(t, source, "/?go-fs=registry-push&repository=team/app&tag=1.0", ci,
-		map[string]string{"address": remote.url("/mirror"), "username": pusher, "password": pusherPassword})
+		map[string]string{"reference": remote.url("/mirror/team/app:1.0"), "username": pusher, "password": pusherPassword})
 	if job.State != jobDone {
 		t.Fatalf("the push ended %s: %s", job.State, job.Message)
 	}
@@ -231,7 +195,7 @@ func TestRegistryPushesATagAndPullsItBack(t *testing.T) {
 
 	// pushing again sends nothing the remote has
 	job = startTransfer(t, source, "/?go-fs=registry-push&repository=team/app&tag=1.0", ci,
-		map[string]string{"address": remote.url("/mirror"), "username": pusher, "password": pusherPassword})
+		map[string]string{"reference": remote.url("/mirror/team/app:1.0"), "username": pusher, "password": pusherPassword})
 	if job.State != jobDone {
 		t.Fatalf("the second push ended %s: %s", job.State, job.Message)
 	}
@@ -408,7 +372,7 @@ func TestRegistryTransfersNeedARegistrySession(t *testing.T) {
 		t.Errorf("a bad reference answered %d: %s", res.StatusCode, data)
 	}
 	res, _ = transferRequest(t, server, http.MethodPost, "/?go-fs=registry-push&repository=tool&tag=nope", ci,
-		map[string]string{"address": "localhost:1"})
+		map[string]string{"reference": "localhost:1/tool:latest"})
 	if res.StatusCode != http.StatusNotFound {
 		t.Errorf("pushing a missing tag answered %d", res.StatusCode)
 	}
@@ -419,7 +383,7 @@ func TestRegistryTransfersNeedARegistrySession(t *testing.T) {
 
 	// a job is its owner's alone
 	job := startTransfer(t, server, "/?go-fs=registry-push&repository=tool&tag=latest", ci,
-		map[string]string{"address": "http://127.0.0.1:1"})
+		map[string]string{"reference": "http://127.0.0.1:1/tool:latest"})
 	if job.State != jobFailed {
 		t.Errorf("a push to nowhere ended %s", job.State)
 	}
@@ -471,5 +435,176 @@ func TestRegistryJobCanBeStopped(t *testing.T) {
 	}
 	if ended := waitForJob(t, server, job.ID, ci); ended.State != jobCancelled {
 		t.Errorf("the stopped job ended %s: %s", ended.State, ended.Message)
+	}
+}
+
+// checkTransfer makes the check of a pull or a push.
+func checkTransfer(t *testing.T, server *testServer, path string, session *http.Cookie, body any, into any) int {
+	t.Helper()
+	res, data := transferRequest(t, server, http.MethodPost, path, session, body)
+	if res.StatusCode == http.StatusOK {
+		if err := json.Unmarshal(data, into); err != nil {
+			t.Fatalf("%s answered %s: %v", path, data, err)
+		}
+	} else if into, ok := into.(*string); ok {
+		*into = string(data)
+	}
+	return res.StatusCode
+}
+
+func choiceKeys(choices []registryPlatformChoice) string {
+	var keys []string
+	for _, choice := range choices {
+		keys = append(keys, choice.Platform)
+	}
+	return strings.Join(keys, " ")
+}
+
+func TestRegistryChecksAPull(t *testing.T) {
+	remote := newRegistryServer(t, func(cfg *httpConfig) { cfg.RegistryAnonymousRead = false })
+	remote.pushImage(t, "team/app", "1.0", "linux/arm64", "b")
+	remote.pushImage(t, "team/app", "1.0", "linux/amd64", "a")
+	remote.pushImage(t, "tool", "latest", "linux/arm/v7", "c")
+	index := tagDigest(t, remote, "team/app", "1.0")
+	local := newRegistryServer(t, nil)
+	ci := login(t, local, "/", pusher, pusherPassword)
+	reference := remote.url("/team/app:1.0")
+
+	var found registryPullCheckJSON
+	status := checkTransfer(t, local, "/?go-fs=registry-pull-check", ci,
+		map[string]string{"reference": reference, "username": pusher, "password": pusherPassword}, &found)
+	if status != http.StatusOK {
+		t.Fatalf("the check answered %d", status)
+	}
+	if got := choiceKeys(found.Platforms); got != "linux/amd64 linux/arm64" {
+		t.Errorf("the check found %s", got)
+	}
+	if found.Digest != index.String() || found.Local != "team/app:1.0" {
+		t.Errorf("the check found %+v, want the digest %s", found, index)
+	}
+
+	// a single image says its platform through its configuration
+	var single registryPullCheckJSON
+	status = checkTransfer(t, local, "/?go-fs=registry-pull-check", ci, map[string]string{
+		"reference": remote.url("/tool"), "username": pusher, "password": pusherPassword}, &single)
+	if status != http.StatusOK || choiceKeys(single.Platforms) != "linux/arm/v7" {
+		t.Errorf("the check of a single image answered %d: %+v", status, single)
+	}
+
+	var message string
+	status = checkTransfer(t, local, "/?go-fs=registry-pull-check", ci,
+		map[string]string{"reference": reference, "username": pusher, "password": "wrong"}, &message)
+	if status != http.StatusBadGateway || !strings.Contains(message, "refused") {
+		t.Errorf("a wrong password answered %d: %s", status, message)
+	}
+	status = checkTransfer(t, local, "/?go-fs=registry-pull-check", ci,
+		map[string]string{"reference": remote.url("/team/app@" + index.String())}, &message)
+	if status != http.StatusBadRequest {
+		t.Errorf("a reference without a tag answered %d: %s", status, message)
+	}
+	status = checkTransfer(t, local, "/?go-fs=registry-pull-check", nil,
+		map[string]string{"reference": reference}, &message)
+	if status != http.StatusForbidden {
+		t.Errorf("a check without a session answered %d", status)
+	}
+
+	// the pull fetches what was checked
+	job := startTransfer(t, local, "/?go-fs=registry-pull", ci, map[string]string{"reference": reference,
+		"digest": found.Digest, "username": pusher, "password": pusherPassword})
+	if job.State != jobDone {
+		t.Fatalf("the pull ended %s: %s", job.State, job.Message)
+	}
+	if got := tagDigest(t, local, "team/app", "1.0"); got != index {
+		t.Errorf("the pull is tagged %s, want %s", got, index)
+	}
+}
+
+func TestRegistryChecksAPush(t *testing.T) {
+	source := newRegistryServer(t, nil)
+	source.pushImage(t, "team/app", "1.0", "linux/arm64", "b")
+	source.pushImage(t, "team/app", "1.0", "linux/amd64", "a")
+	remote := newRegistryServer(t, func(cfg *httpConfig) { cfg.RegistryAnonymousRead = false })
+	ci := login(t, source, "/", pusher, pusherPassword)
+	path := "/?go-fs=registry-push-check&repository=team/app&tag=1.0"
+	body := map[string]string{"reference": remote.url("/mirror/app:2.0"), "username": pusher, "password": pusherPassword}
+
+	var found registryPushCheckJSON
+	if status := checkTransfer(t, source, path, ci, body, &found); status != http.StatusOK {
+		t.Fatalf("the check answered %d", status)
+	}
+	if found.Exists || choiceKeys(found.Platforms) != "linux/amd64 linux/arm64" ||
+		!strings.HasSuffix(found.Reference, "/mirror/app:2.0") {
+		t.Errorf("the check found %+v", found)
+	}
+	// the check left no upload behind it
+	if entries, _ := os.ReadDir(remote.settings().registry.uploadsPath()); len(entries) > 0 {
+		t.Errorf("the check left %d uploads open", len(entries))
+	}
+
+	// pushed under another name and tag, which the check then finds there
+	job := startTransfer(t, source, "/?go-fs=registry-push&repository=team/app&tag=1.0", ci, body)
+	if job.State != jobDone {
+		t.Fatalf("the push ended %s: %s", job.State, job.Message)
+	}
+	if got := tagDigest(t, remote, "mirror/app", "2.0"); got != tagDigest(t, source, "team/app", "1.0") {
+		t.Errorf("the remote tag names %s", got)
+	}
+	found = registryPushCheckJSON{}
+	if status := checkTransfer(t, source, path, ci, body, &found); status != http.StatusOK || !found.Exists {
+		t.Errorf("the check after the push answered %d: %+v", status, found)
+	}
+
+	var message string
+	for _, login := range []map[string]string{{"username": pusher, "password": "wrong"}, {}} {
+		login["reference"] = body["reference"]
+		if status := checkTransfer(t, source, path, ci, login, &message); status != http.StatusBadGateway {
+			t.Errorf("the check with %v answered %d: %s", login, status, message)
+		}
+	}
+	digested := map[string]string{"reference": remote.url("/mirror/app@sha256:" + strings.Repeat("a", 64))}
+	if status := checkTransfer(t, source, path, ci, digested, &message); status != http.StatusBadRequest {
+		t.Errorf("a reference with a digest answered %d: %s", status, message)
+	}
+}
+
+func TestRegistryPushesSomePlatforms(t *testing.T) {
+	source := newRegistryServer(t, nil)
+	amd := source.pushImage(t, "team/app", "1.0", "linux/amd64", "a")
+	arm := source.pushImage(t, "team/app", "1.0", "linux/arm64", "b")
+	index := tagDigest(t, source, "team/app", "1.0")
+	remote := newRegistryServer(t, nil)
+	ci := login(t, source, "/", pusher, pusherPassword)
+	push := "/?go-fs=registry-push&repository=team/app&tag=1.0"
+
+	job := startTransfer(t, source, push, ci, map[string]string{"reference": remote.url("/app:arm"),
+		"platforms": "linux/arm64", "username": pusher, "password": pusherPassword})
+	if job.State != jobDone || !strings.HasSuffix(job.Message, "for linux/arm64.") {
+		t.Fatalf("the push ended %s: %s", job.State, job.Message)
+	}
+	if got := tagDigest(t, remote, "app", "arm"); got == "" || got == index {
+		t.Errorf("the filtered push is tagged %q", got)
+	}
+	_, doc := remote.pullManifest(t, "app", "arm")
+	if len(doc.Manifests) != 1 || doc.Manifests[0].Digest != arm.digest {
+		t.Errorf("the pushed index: %+v", doc.Manifests)
+	}
+	store := remote.settings().registry
+	if _, err := store.blobInfo(amd.layer); err == nil {
+		t.Error("the amd64 layer was pushed as well")
+	}
+
+	job = startTransfer(t, source, push, ci, map[string]string{"reference": remote.url("/app:all"),
+		"username": pusher, "password": pusherPassword})
+	if job.State != jobDone {
+		t.Fatalf("the push ended %s: %s", job.State, job.Message)
+	}
+	if got := tagDigest(t, remote, "app", "all"); got != index {
+		t.Errorf("the whole push is tagged %s, want %s", got, index)
+	}
+
+	job = startTransfer(t, source, push, ci, map[string]string{"reference": remote.url("/app:none"),
+		"platforms": "linux/s390x", "username": pusher, "password": pusherPassword})
+	if job.State != jobFailed || !strings.Contains(job.Message, "linux/amd64, linux/arm64") {
+		t.Errorf("a push for a missing platform ended %s: %s", job.State, job.Message)
 	}
 }

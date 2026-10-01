@@ -62,7 +62,7 @@
     {{else}}
     <tr data-name="{{.Name}}" data-repository="{{.Repository}}" data-tag="{{.Tag}}" data-pull="{{.Pull}}">
       <td><span class="name"><svg class="ic"><use href="#i-tag"/></svg><span class="label" title="{{.Repository}}:{{.Tag}}">{{range $i, $part := .Parts}}{{if $i}}<wbr>{{end}}{{$part}}{{end}}</span></span></td>
-      <td class="c-plat"><span class="badges">{{range .Platforms}}<span class="badge" title="{{.Title}}">{{.Label}}</span>{{else}}<span class="meta">&#8212;</span>{{end}}</span></td>
+      <td class="c-plat"><span class="badges">{{range .Platforms}}<span class="badge{{if .More}} more{{end}}" title="{{.Title}}">{{.Label}}</span>{{else}}<span class="meta">&#8212;</span>{{end}}</span></td>
       <td class="meta c-mod">{{.Pushed}}</td>
       <td class="meta num c-size">{{.Size}}</td>
       <td class="c-acts needs-js"><button type="button" data-do="menu" title="Options" aria-haspopup="menu" aria-expanded="false" aria-label="Options for {{.Repository}}:{{.Tag}}"><svg class="ic"><use href="#i-more"/></svg></button></td>
@@ -110,20 +110,23 @@
     <div class="fields">
       <label for="pull-reference">Image</label>
       <input id="pull-reference" name="reference" type="text" required placeholder="docker.io/library/nginx:latest" autocomplete="off" spellcheck="false">
-      <label for="pull-platforms">Platforms <span class="hint">optional</span></label>
-      <input id="pull-platforms" name="platforms" type="text" placeholder="all, or linux/amd64, linux/arm64" autocomplete="off" spellcheck="false">
       <label for="pull-username">Username <span class="hint">optional</span></label>
       <input id="pull-username" name="username" type="text" autocomplete="off" spellcheck="false">
       <label for="pull-password">Password or token <span class="hint">optional</span></label>
       <input id="pull-password" name="password" type="password" autocomplete="new-password">
     </div>
     <p class="where"></p>
+    <fieldset class="platforms" hidden>
+      <legend>Architectures to pull</legend>
+      <div class="choices"></div>
+    </fieldset>
     <div class="progress" hidden>
       <progress max="1"></progress>
       <p class="status" role="status" aria-live="polite"></p>
     </div>
     <div class="row">
-      <button class="go" type="submit" value="start">Pull</button>
+      <button class="plain" type="submit" value="check">Validate</button>
+      <button class="go" type="submit" value="start" disabled>Pull</button>
       <button class="plain" type="submit" value="stop" formnovalidate hidden>Stop</button>
       <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
     </div>
@@ -135,20 +138,25 @@
     <h2 id="remote-push-title">Push to registry</h2>
     <p class="what"></p>
     <div class="fields">
-      <label for="push-address">Registry address</label>
-      <input id="push-address" name="address" type="text" required placeholder="ghcr.io/my-org" autocomplete="off" spellcheck="false">
+      <label for="push-reference">Image</label>
+      <input id="push-reference" name="reference" type="text" required placeholder="ghcr.io/my-org/app:1.0" autocomplete="off" spellcheck="false">
       <label for="push-username">Username <span class="hint">optional</span></label>
       <input id="push-username" name="username" type="text" autocomplete="off" spellcheck="false">
       <label for="push-password">Password or token <span class="hint">optional</span></label>
       <input id="push-password" name="password" type="password" autocomplete="new-password">
     </div>
     <p class="where"></p>
+    <fieldset class="platforms" hidden>
+      <legend>Architectures to push</legend>
+      <div class="choices"></div>
+    </fieldset>
     <div class="progress" hidden>
       <progress max="1"></progress>
       <p class="status" role="status" aria-live="polite"></p>
     </div>
     <div class="row">
-      <button class="go" type="submit" value="start">Push</button>
+      <button class="plain" type="submit" value="check">Validate</button>
+      <button class="go" type="submit" value="start" disabled>Push</button>
       <button class="plain" type="submit" value="stop" formnovalidate hidden>Stop</button>
       <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
     </div>

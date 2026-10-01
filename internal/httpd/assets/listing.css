@@ -284,6 +284,16 @@ dialog .progress { display: flex; flex-direction: column; gap: 0.35rem; }
 dialog progress { width: 100%; height: 0.5rem; accent-color: var(--accent); }
 dialog .status { color: var(--ink); }
 dialog .status.bad { color: var(--bad); }
+dialog button.go:disabled { opacity: 0.45; cursor: not-allowed; }
+/* Validate comes first in the form, so Enter validates, but it is shown
+   between Cancel and the transfer it unlocks. */
+dialog .row button[value="check"], dialog .row button[value="stop"] { order: 1; }
+dialog .row button[value="cancel"] { order: 2; }
+dialog fieldset.platforms { margin: 0; padding: 0.5rem 0.75rem 0.65rem; border: 1px solid var(--line); border-radius: 6px; }
+dialog fieldset.platforms legend { padding: 0 0.25rem; color: var(--faint); font-size: 0.8rem; }
+dialog .choices { display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; }
+dialog .choices label { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }
+dialog .choices .meta { color: var(--faint); font-size: 0.8rem; }
 /* after every rule above that sets a display, so hidden wins over them */
 dialog [hidden] { display: none; }
 
@@ -318,6 +328,7 @@ td.c-plat { white-space: normal; }
   line-height: 1.35rem;
   white-space: nowrap;
 }
+.badge.more { border-style: dashed; cursor: help; }
 td.c-acts button[aria-expanded="true"] { opacity: 1; background: var(--ground); color: var(--ink); }
 
 .menu {
@@ -380,8 +391,15 @@ dl.facts {
 }
 dl.facts dt { color: var(--faint); }
 dl.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+#details h2 { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+#details h2 .badge { font-size: 0.8rem; font-weight: normal; color: var(--ink); }
 .platform { margin-top: 0.9rem; padding-top: 0.75rem; border-top: 1px solid var(--line); }
-.platform h3 { display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0.5rem; font-size: 0.9rem; }
+.platform > summary { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; font-weight: 600; cursor: pointer; list-style: none; }
+/* a flex summary loses the native marker, so it draws its own */
+.platform > summary::before { content: "\25B8"; color: var(--faint); }
+.platform[open] > summary::before { content: "\25BE"; }
+.platform > summary::-webkit-details-marker { display: none; }
+.platform[open] > summary { margin-bottom: 0.5rem; }
 .platform .badge { font-size: 0.8rem; color: var(--ink); }
 .layers { margin-top: 0.5rem; font-size: 0.85rem; }
 .layers summary { color: var(--faint); cursor: pointer; }

@@ -175,15 +175,12 @@ func (s *Server) pullImage(ctx context.Context, set *settings, job *registryJob,
 				platforms = append(platforms, platformKey(entry.Platform))
 			}
 		}
-		if len(filter) > 0 && len(kept) < len(top.doc.Manifests) {
-			// what is left of the index is a new one, with a digest of its own
-			rebuilt := manifestDoc{SchemaVersion: 2, MediaType: top.mediaType, ArtifactType: top.doc.ArtifactType,
-				Manifests: kept, Annotations: top.doc.Annotations}
-			body, err := json.Marshal(rebuilt)
+		if len(kept) < len(top.doc.Manifests) {
+			body, d, rebuilt, err := subsetIndex(top.mediaType, top.doc, kept)
 			if err != nil {
 				return "", err
 			}
-			top = pulledManifest{body: body, mediaType: top.mediaType, digest: digest.SHA256.FromBytes(body), doc: rebuilt}
+			top = pulledManifest{body: body, mediaType: top.mediaType, digest: d, doc: rebuilt}
 		}
 	} else {
 		blobs = imageBlobs(top.doc)
@@ -259,6 +256,85 @@ func keptEntries(index manifestDoc, filter platformFilter) ([]v1.Descriptor, err
 		}
 	}
 	return kept, nil
+}
+
+// subsetIndex is what is left of an index once only some of its entries are
+// kept: a new index, with a digest of its own.
+func subsetIndex(mediaType string, index manifestDoc, kept []v1.Descriptor) ([]byte, digest.Digest, manifestDoc, error) {
+	rebuilt := manifestDoc{SchemaVersion: 2, MediaType: mediaType, ArtifactType: index.ArtifactType,
+		Manifests: kept, Annotations: index.Annotations}
+	body, err := json.Marshal(rebuilt)
+	if err != nil {
+		return nil, "", manifestDoc{}, err
+	}
+	return body, digest.SHA256.FromBytes(body), rebuilt, nil
+}
+
+// indexPlatforms are the platforms of the images an index names, each once,
+// without the attestations beside them.
+func indexPlatforms(index manifestDoc) []string {
+	var keys []string
+	for _, entry := range index.Manifests {
+		if entry.Platform == nil || isAttestation(entry) || entry.Platform.OS == "unknown" {
+			continue
+		}
+		if key := platformKey(entry.Platform); !slices.Contains(keys, key) {
+			keys = append(keys, key)
+		}
+	}
+	return orderKeys(keys)
+}
+
+// remoteImage is what checking an image of another registry finds.
+type remoteImage struct {
+	digest    digest.Digest
+	platforms []string
+}
+
+// inspectRemote checks that an image of another registry can be pulled with
+// the login given, and finds the platforms it is for. Of a single image only
+// its configuration is fetched, which says its platform.
+func (s *Server) inspectRemote(ctx context.Context, ref remoteRef, username, password string) (remoteImage, error) {
+	client := newRemoteClient(ref, username, password, "pull")
+	if err := client.authenticate(ctx); err != nil {
+		return remoteImage{}, err
+	}
+	found, err := client.getManifest(ctx, ref.ref())
+	if err != nil {
+		return remoteImage{}, err
+	}
+	top, err := decodeManifest(found)
+	if err != nil {
+		return remoteImage{}, err
+	}
+	image := remoteImage{digest: top.digest}
+	if isIndexType(top.mediaType) {
+		image.platforms = indexPlatforms(top.doc)
+		return image, nil
+	}
+	if !hasImageConfig(top.mediaType, top.doc) {
+		return image, nil
+	}
+	config := top.doc.Config
+	if config.Size > maxConfigSize {
+		return remoteImage{}, fmt.Errorf("the configuration of %s is too large", ref)
+	}
+	body, err := client.getBlob(ctx, config.Digest)
+	if err != nil {
+		return remoteImage{}, err
+	}
+	defer func() { _ = body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(body, maxConfigSize+1))
+	if err != nil {
+		return remoteImage{}, fmt.Errorf("the configuration of %s from %s: %w", ref, client.host, err)
+	}
+	if config.Digest.Algorithm().FromBytes(data) != config.Digest {
+		return remoteImage{}, fmt.Errorf("the configuration of %s from %s is not what its digest says", ref, client.host)
+	}
+	if parsed, ok := decodeImageConfig(data); ok {
+		image.platforms = []string{platformKey(&parsed.platform)}
+	}
+	return image, nil
 }
 
 // fetchBlob brings a blob into the store and links it to the repository. A
@@ -409,7 +485,9 @@ func readLocal(store *registryStore, name string, d digest.Digest) (localManifes
 }
 
 // pushImage copies a tag of the store to another registry.
-func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob, name, tag string, d digest.Digest, target remoteRef, username, password string, user *account) (string, error) {
+// A filter leaves out the platforms it does not name, which an index loses
+// as a pull's does: what is pushed is an index of its own.
+func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob, name, tag string, d digest.Digest, target remoteRef, filter platformFilter, username, password string, user *account) (string, error) {
 	store := set.registry
 	top, doc, err := readLocal(store, name, d)
 	if err != nil {
@@ -417,16 +495,42 @@ func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob,
 	}
 	var children []localManifest
 	var blobs []v1.Descriptor
+	var platforms []string
 	if isIndexType(top.mediaType) {
-		for _, entry := range doc.Manifests {
+		kept, err := keptEntries(doc, filter)
+		if err != nil {
+			return "", err
+		}
+		for _, entry := range kept {
 			child, childDoc, err := readLocal(store, name, entry.Digest)
 			if err != nil {
 				return "", err
 			}
 			children = append(children, child)
 			blobs = addBlobs(blobs, imageBlobs(childDoc)...)
+			if entry.Platform != nil && !isAttestation(entry) {
+				platforms = append(platforms, platformKey(entry.Platform))
+			}
+		}
+		if len(kept) < len(doc.Manifests) {
+			body, rebuilt, _, err := subsetIndex(top.mediaType, doc, kept)
+			if err != nil {
+				return "", err
+			}
+			top = localManifest{body: body, mediaType: top.mediaType, digest: rebuilt}
 		}
 	} else {
+		key := ""
+		if config, ok := store.imageConfig(top.mediaType, doc); ok {
+			key = platformKey(&config.platform)
+		}
+		if len(filter) > 0 && !filter.matches(key) {
+			if key == "" {
+				return "", fmt.Errorf("%s:%s is not an image for a platform, so it cannot be pushed for %s",
+					name, tag, strings.Join(filter, ", "))
+			}
+			return "", fmt.Errorf("%s:%s is only for %s, not for %s", name, tag, key, strings.Join(filter, ", "))
+		}
 		blobs = imageBlobs(doc)
 	}
 	// the sizes are the store's, which is what is sent
@@ -463,13 +567,18 @@ func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob,
 			return "", err
 		}
 	}
-	if err := client.putManifest(ctx, tag, top.mediaType, top.body); err != nil {
+	if err := client.putManifest(ctx, target.tag, top.mediaType, top.body); err != nil {
 		return "", err
 	}
 	s.log.Info("registry image pushed", "repository", name, "tag", tag, "target", target.String(),
-		"digest", d.String(), "blobs", len(blobs), "sent", sent, "bytes", job.bytesTotal.Load(),
-		"user", nameOf(user), "took", time.Since(job.started).Round(time.Millisecond))
-	return "Pushed " + name + ":" + tag + " to " + target.String() + ".", nil
+		"digest", top.digest.String(), "platforms", strings.Join(platforms, ","), "blobs", len(blobs),
+		"sent", sent, "bytes", job.bytesTotal.Load(), "user", nameOf(user),
+		"took", time.Since(job.started).Round(time.Millisecond))
+	message := "Pushed " + name + ":" + tag + " to " + target.String()
+	if len(filter) > 0 && len(platforms) > 0 {
+		message += " for " + strings.Join(platforms, ", ")
+	}
+	return message + ".", nil
 }
 
 // sendBlob uploads a blob of the store.

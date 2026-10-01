@@ -42,22 +42,28 @@ const (
 	actionRegistryPull  = "registry-pull"
 	actionRegistryPush  = "registry-push"
 	actionRegistryJob   = "registry-job"
+	// the checks the dialogs make before a pull or a push may start
+	actionRegistryPullCheck = "registry-pull-check"
+	actionRegistryPushCheck = "registry-push-check"
 )
 
 // registryPageMethods are the methods each endpoint of the page answers.
 var registryPageMethods = map[string]string{
-	actionRegistry:      "GET, HEAD, DELETE",
-	actionRegistryImage: "GET, HEAD",
-	actionRegistryPull:  "POST",
-	actionRegistryPush:  "POST",
-	actionRegistryJob:   "GET, HEAD, DELETE",
+	actionRegistry:          "GET, HEAD, DELETE",
+	actionRegistryImage:     "GET, HEAD",
+	actionRegistryPull:      "POST",
+	actionRegistryPush:      "POST",
+	actionRegistryJob:       "GET, HEAD, DELETE",
+	actionRegistryPullCheck: "POST",
+	actionRegistryPushCheck: "POST",
 }
 
 // registryPageAction reports which registry endpoint a request is for, or ""
 // for any other request.
 func registryPageAction(r *http.Request) string {
 	switch action := r.URL.Query().Get(sessionParam); action {
-	case actionRegistry, actionRegistryImage, actionRegistryPull, actionRegistryPush, actionRegistryJob:
+	case actionRegistry, actionRegistryImage, actionRegistryPull, actionRegistryPush, actionRegistryJob,
+		actionRegistryPullCheck, actionRegistryPushCheck:
 		return action
 	default:
 		return ""
@@ -156,6 +162,16 @@ func (s *Server) handleRegistryPage(set *settings, w http.ResponseWriter, r *htt
 			return
 		}
 		s.registryPush(set, w, r, user)
+	case action == actionRegistryPullCheck && r.Method == http.MethodPost:
+		if !s.sameSite(set, w, r) {
+			return
+		}
+		s.registryPullCheck(set, w, r, user)
+	case action == actionRegistryPushCheck && r.Method == http.MethodPost:
+		if !s.sameSite(set, w, r) {
+			return
+		}
+		s.registryPushCheck(set, w, r, user)
 	case action == actionRegistryJob && read:
 		s.registryJobStatus(w, r, user)
 	case action == actionRegistryJob && r.Method == http.MethodDelete:
@@ -307,6 +323,7 @@ func (s *Server) summarize(store *registryStore, name string, d digest.Digest) (
 	case isImageType(rev.MediaType):
 		summary.platforms = []registryPlatform{describeImage(store, rev.MediaType, d, doc, nil)}
 	}
+	orderPlatforms(summary.platforms)
 	seen := map[digest.Digest]bool{}
 	for _, platform := range summary.platforms {
 		for _, blob := range platform.blobs() {
@@ -351,6 +368,32 @@ func (p registryPlatform) blobs() []v1.Descriptor {
 		blobs = append(blobs, v1.Descriptor{Digest: p.config, Size: p.configSize})
 	}
 	return append(blobs, p.layers...)
+}
+
+// leadingPlatforms are the platforms most images are run on. They come first
+// wherever the platforms of a tag are shown, in this order; the rest keep the
+// order of the index.
+var leadingPlatforms = []string{"linux/amd64", "linux/arm64", "linux/arm/v7"}
+
+func platformRank(key string) int {
+	if i := slices.Index(leadingPlatforms, key); i >= 0 {
+		return i
+	}
+	return len(leadingPlatforms)
+}
+
+func orderPlatforms(platforms []registryPlatform) {
+	slices.SortStableFunc(platforms, func(a, b registryPlatform) int {
+		return platformRank(a.key) - platformRank(b.key)
+	})
+}
+
+// orderKeys orders platforms written as platformKey writes them the same way.
+func orderKeys(keys []string) []string {
+	slices.SortStableFunc(keys, func(a, b string) int {
+		return platformRank(a) - platformRank(b)
+	})
+	return keys
 }
 
 // platformLabel is what the badge of a platform says. Nearly every image is
@@ -434,7 +477,13 @@ func (v registryView) link(base string) string {
 type registryBadge struct {
 	Label string
 	Title string
+	// More stands in for the platforms a row has no room for.
+	More bool
 }
+
+// maxBadges is how many badges a row shows. A tag with more platforms shows
+// one fewer and a badge that names the rest in its title.
+const maxBadges = 3
 
 type registryRow struct {
 	// Name is what the filter looks at.
@@ -666,6 +715,14 @@ func tagRow(entry registryTag, tree bool, host string) registryRow {
 			continue
 		}
 		row.Platforms = append(row.Platforms, registryBadge{Label: platformLabel(platform.key), Title: platform.key})
+	}
+	if len(row.Platforms) > maxBadges {
+		var rest []string
+		for _, badge := range row.Platforms[maxBadges-1:] {
+			rest = append(rest, badge.Title)
+		}
+		row.Platforms = append(row.Platforms[:maxBadges-1:maxBadges-1],
+			registryBadge{Label: "…more", Title: strings.Join(rest, ", "), More: true})
 	}
 	return row
 }
@@ -981,20 +1038,177 @@ func (s *Server) answerStarted(w http.ResponseWriter, job *registryJob, err erro
 	}
 }
 
-// registryPull starts copying an image from another registry into this one.
-func (s *Server) registryPull(set *settings, w http.ResponseWriter, r *http.Request, user *account) {
-	var body struct {
-		Reference string `json:"reference"`
-		Platforms string `json:"platforms"`
-		Username  string `json:"username"`
-		Password  string `json:"password"`
+// transferBody is the body of a pull or a push, and of their checks.
+type transferBody struct {
+	// Reference is the image of the other registry, with its tag.
+	Reference string `json:"reference"`
+	// Digest is what the check of a pull found the reference to name, which
+	// the pull then fetches, so that it is what was checked.
+	Digest    string `json:"digest"`
+	Platforms string `json:"platforms"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+}
+
+// login is the username and password of the request, as the client takes it.
+func (t transferBody) login() (string, string) {
+	return strings.TrimSpace(t.Username), t.Password
+}
+
+// pullReference reads what a pull fetches: an image under a tag, since that
+// is where it is stored.
+func pullReference(value string) (remoteRef, error) {
+	ref, err := parseRemoteReference(value)
+	if err == nil && ref.tag == "" {
+		err = errors.New("the image is stored under its tag, so name one along with the digest")
 	}
+	return ref, err
+}
+
+// pushReference reads where a push goes: an image under a tag of another
+// registry.
+func pushReference(value string) (remoteRef, error) {
+	ref, err := parseRemoteReference(value)
+	if err == nil && ref.digest != "" {
+		err = errors.New("a push goes to a tag; leave the digest out")
+	}
+	return ref, err
+}
+
+// checkTimeout bounds a check, which takes a few small requests.
+const checkTimeout = time.Minute
+
+// registryPlatformChoice is a platform a dialog offers to copy.
+type registryPlatformChoice struct {
+	Platform string `json:"platform"`
+	Label    string `json:"label"`
+}
+
+func platformChoices(keys []string) []registryPlatformChoice {
+	choices := []registryPlatformChoice{}
+	for _, key := range keys {
+		choices = append(choices, registryPlatformChoice{Platform: key, Label: platformLabel(key)})
+	}
+	return choices
+}
+
+// registryPullCheckJSON is what the check of a pull found.
+type registryPullCheckJSON struct {
+	Reference string                   `json:"reference"`
+	Local     string                   `json:"local"`
+	Digest    string                   `json:"digest"`
+	Platforms []registryPlatformChoice `json:"platforms"`
+}
+
+// registryPullCheck checks that an image of another registry can be pulled
+// with the login given, and says what platforms it is for.
+func (s *Server) registryPullCheck(set *settings, w http.ResponseWriter, r *http.Request, user *account) {
+	var body transferBody
 	if !s.readTransferRequest(set, w, r, user, &body) {
 		return
 	}
-	ref, err := parseRemoteReference(body.Reference)
-	if err == nil && ref.tag == "" {
-		err = errors.New("the image is stored under its tag, so name one along with the digest")
+	ref, err := pullReference(body.Reference)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
+	defer cancel()
+	username, password := body.login()
+	image, err := s.inspectRemote(ctx, ref, username, password)
+	if err != nil {
+		// the other registry's refusal is not this one's: a 401 would read
+		// as the session having ended
+		s.log.Info("registry pull check failed", "source", ref.String(), "user", user.name,
+			"address", clientAddress(set, r), "error", err)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, http.StatusOK, registryPullCheckJSON{Reference: ref.String(),
+		Local: ref.repository + ":" + ref.tag, Digest: image.digest.String(),
+		Platforms: platformChoices(image.platforms)})
+}
+
+// registryPushCheckJSON is what the check of a push found.
+type registryPushCheckJSON struct {
+	Reference string `json:"reference"`
+	// Exists says the other registry has the tag already, which the push
+	// replaces.
+	Exists    bool                     `json:"exists"`
+	Platforms []registryPlatformChoice `json:"platforms"`
+}
+
+// registryPushCheck checks that a tag of this registry can be pushed to
+// another with the login given, and says what platforms the tag has.
+func (s *Server) registryPushCheck(set *settings, w http.ResponseWriter, r *http.Request, user *account) {
+	var body transferBody
+	if !s.readTransferRequest(set, w, r, user, &body) {
+		return
+	}
+	store := set.registry
+	name, tag, tags, ok, err := registryTagQuery(store, r)
+	if err != nil {
+		s.log.Error("registry page cannot read the tags", "repository", name, "error", err)
+		http.Error(w, "Server Error", http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.Error(w, "That tag is not in the registry.", http.StatusNotFound)
+		return
+	}
+	ref, err := pushReference(body.Reference)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	summary, err := s.summarize(store, name, tags[tag])
+	if err != nil {
+		s.log.Error("registry page cannot read a manifest", "repository", name, "tag", tag, "error", err)
+		http.Error(w, "The manifest of that tag cannot be read.", http.StatusInternalServerError)
+		return
+	}
+	var keys []string
+	for _, platform := range summary.platforms {
+		if platform.key != "" && !slices.Contains(keys, platform.key) {
+			keys = append(keys, platform.key)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
+	defer cancel()
+	username, password := body.login()
+	client := newRemoteClient(ref, username, password, "pull,push")
+	err = client.authenticate(ctx)
+	if err == nil {
+		err = client.canPush(ctx)
+	}
+	exists := false
+	if err == nil {
+		exists, err = client.manifestExists(ctx, ref.tag)
+	}
+	if err != nil {
+		s.log.Info("registry push check failed", "repository", name, "tag", tag, "target", ref.String(),
+			"user", user.name, "address", clientAddress(set, r), "error", err)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, http.StatusOK, registryPushCheckJSON{Reference: ref.String(), Exists: exists,
+		Platforms: platformChoices(keys)})
+}
+
+// registryPull starts copying an image from another registry into this one.
+func (s *Server) registryPull(set *settings, w http.ResponseWriter, r *http.Request, user *account) {
+	var body transferBody
+	if !s.readTransferRequest(set, w, r, user, &body) {
+		return
+	}
+	ref, err := pullReference(body.Reference)
+	if err == nil && body.Digest != "" && ref.digest == "" {
+		d, ok := parseBlobDigest(body.Digest)
+		if !ok {
+			err = fmt.Errorf("%q is not a digest", body.Digest)
+		}
+		ref.digest = d
 	}
 	var filter platformFilter
 	if err == nil {
@@ -1007,7 +1221,8 @@ func (s *Server) registryPull(set *settings, w http.ResponseWriter, r *http.Requ
 	what := ref.String() + " → " + ref.repository + ":" + ref.tag
 	address := clientAddress(set, r)
 	job, err := s.startJob(jobPull, user.name, what, func(ctx context.Context, job *registryJob) (string, error) {
-		message, err := s.pullImage(ctx, set, job, ref, filter, strings.TrimSpace(body.Username), body.Password, user)
+		username, password := body.login()
+		message, err := s.pullImage(ctx, set, job, ref, filter, username, password, user)
 		if err != nil && ctx.Err() == nil {
 			s.log.Warn("registry pull failed", "source", ref.String(), "user", user.name,
 				"address", address, "error", err)
@@ -1023,11 +1238,7 @@ func (s *Server) registryPull(set *settings, w http.ResponseWriter, r *http.Requ
 
 // registryPush starts copying a tag of this registry to another one.
 func (s *Server) registryPush(set *settings, w http.ResponseWriter, r *http.Request, user *account) {
-	var body struct {
-		Address  string `json:"address"`
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
+	var body transferBody
 	if !s.readTransferRequest(set, w, r, user, &body) {
 		return
 	}
@@ -1042,10 +1253,10 @@ func (s *Server) registryPush(set *settings, w http.ResponseWriter, r *http.Requ
 		http.Error(w, "That tag is not in the registry.", http.StatusNotFound)
 		return
 	}
-	target, err := parseRemoteTarget(body.Address)
-	var ref remoteRef
+	ref, err := pushReference(body.Reference)
+	var filter platformFilter
 	if err == nil {
-		ref, err = target.reference(name, tag)
+		filter, err = parsePlatforms(body.Platforms)
 	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1055,7 +1266,8 @@ func (s *Server) registryPush(set *settings, w http.ResponseWriter, r *http.Requ
 	what := name + ":" + tag + " → " + ref.String()
 	address := clientAddress(set, r)
 	job, err := s.startJob(jobPush, user.name, what, func(ctx context.Context, job *registryJob) (string, error) {
-		message, err := s.pushImage(ctx, set, job, name, tag, d, ref, strings.TrimSpace(body.Username), body.Password, user)
+		username, password := body.login()
+		message, err := s.pushImage(ctx, set, job, name, tag, d, ref, filter, username, password, user)
 		if err != nil && ctx.Err() == nil {
 			s.log.Warn("registry push failed", "repository", name, "tag", tag, "target", ref.String(),
 				"user", user.name, "address", address, "error", err)
@@ -1064,7 +1276,7 @@ func (s *Server) registryPush(set *settings, w http.ResponseWriter, r *http.Requ
 	})
 	if err == nil {
 		s.log.Info("registry push started", "repository", name, "tag", tag, "target", ref.String(),
-			"login", body.Username != "", "user", user.name, "address", address, "job", job.id)
+			"platforms", strings.Join(filter, ","), "login", body.Username != "", "user", user.name, "address", address, "job", job.id)
 	}
 	s.answerStarted(w, job, err)
 }
