@@ -842,7 +842,12 @@ it ended.
 Both take an optional username and password (or access token) for the other
 registry; they are used for that one transfer, never stored and never logged.
 The other registry is reached over HTTPS unless the address starts with
-`http://`, as it may for a test registry on `localhost`. Blobs are checked
+`http://`, as it may for a test registry on `localhost`. **Validate
+Connection**, ticked by default, checks the other registry's TLS certificate
+as any client would; untick it to accept whatever certificate it shows, a
+self-signed one or one of an internal CA (`"skipVerify": true` in the body of
+the endpoints, which validate when it is left out). Changing it takes the
+validation back like the login does. Blobs are checked
 against their digests, and `maxUploadSize` applies to each as it does to a
 push. Note that the server connects to whatever host is typed in, from its own
 network: give `registry` only to accounts that may do that.
@@ -1088,6 +1093,9 @@ to send along, one `Name: value` per line, such as `Accept:
 application/octet-stream` or `PRIVATE-TOKEN: …`. Headers the connection
 decides itself (`Host`, `Content-Length`, `Connection`, `Proxy-*` and the
 like) are refused, and so is an `Authorization` header next to a username.
+**Validate Connection**, ticked by default, checks the TLS certificate of an
+`https://` URL; untick it to accept whatever certificate the remote shows,
+such as a self-signed one. It holds for the redirects as well.
 
 The server downloads the file itself, in the background, as the registry page
 pulls an image: the dialog shows how many bytes have arrived, can stop the
@@ -1108,7 +1116,8 @@ together.
 
 Fetch is offered to a session only: not to Basic, Digest or bearer
 credentials, which have `PUT` for the same job, and not to anyone where `PUT`
-is public. The endpoints are `?go-fs=fetch` (`POST`) and
+is public. The endpoints are `?go-fs=fetch` (`POST` of `url`, `username`,
+`password`, `headers` and `skipVerify`) and
 `?go-fs=fetch-job&id=…` (`GET` for the progress, `DELETE` to stop) on the
 folder. Note that the server connects to whatever host is typed in, from its
 own network, internal addresses included: give the right to create files only

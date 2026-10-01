@@ -347,6 +347,58 @@ func TestRegistryPullsWithBasicAndFollowsBlobsElsewhere(t *testing.T) {
 	}
 }
 
+// A registry with a certificate nobody vouches for is refused, by the check
+// and by the pull, while the connection is validated, and pulled from once it
+// is not.
+func TestRegistryValidatesTheConnectionUnlessToldNotTo(t *testing.T) {
+	config := []byte(`{"os":"linux","architecture":"amd64","rootfs":{"type":"layers"}}`)
+	layer := []byte("the layer")
+	configDigest, layerDigest := digest.FromBytes(config), digest.FromBytes(layer)
+	manifest, _ := json.Marshal(manifestDoc{SchemaVersion: 2, MediaType: v1.MediaTypeImageManifest,
+		Config: &v1.Descriptor{MediaType: v1.MediaTypeImageConfig, Digest: configDigest, Size: int64(len(config))},
+		Layers: []v1.Descriptor{{MediaType: v1.MediaTypeImageLayerGzip, Digest: layerDigest, Size: int64(len(layer))}}})
+	registry := untrusted(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/":
+		case "/v2/some/app/manifests/v1":
+			w.Header().Set("Content-Type", v1.MediaTypeImageManifest)
+			_, _ = w.Write(manifest)
+		case "/v2/some/app/blobs/" + configDigest.String():
+			_, _ = w.Write(config)
+		case "/v2/some/app/blobs/" + layerDigest.String():
+			_, _ = w.Write(layer)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	local := newRegistryServer(t, nil)
+	ci := login(t, local, "/", pusher, pusherPassword)
+	reference := registry.URL + "/some/app:v1"
+	res, data := transferRequest(t, local, http.MethodPost, "/?go-fs=registry-pull-check", ci,
+		map[string]any{"reference": reference})
+	if res.StatusCode != http.StatusBadGateway || !strings.Contains(string(data), "untick Validate Connection") {
+		t.Errorf("the check of an untrusted registry answered %d: %s", res.StatusCode, data)
+	}
+	job := startTransfer(t, local, "/?go-fs=registry-pull", ci, map[string]any{"reference": reference})
+	if job.State != jobFailed || !strings.Contains(job.Message, "untick Validate Connection") {
+		t.Errorf("the pull from an untrusted registry ended %s: %s", job.State, job.Message)
+	}
+
+	res, data = transferRequest(t, local, http.MethodPost, "/?go-fs=registry-pull-check", ci,
+		map[string]any{"reference": reference, "skipVerify": true})
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("the check without validation answered %d: %s", res.StatusCode, data)
+	}
+	job = startTransfer(t, local, "/?go-fs=registry-pull", ci, map[string]any{"reference": reference, "skipVerify": true})
+	if job.State != jobDone {
+		t.Fatalf("the pull without validation ended %s: %s", job.State, job.Message)
+	}
+	if got := tagDigest(t, local, "some/app", "v1"); got != digest.FromBytes(manifest) {
+		t.Errorf("the tag names %s", got)
+	}
+}
+
 func TestRegistryTransfersNeedARegistrySession(t *testing.T) {
 	server := newRegistryServer(t, func(cfg *httpConfig) {
 		cfg.PathsRequireAuth = nil

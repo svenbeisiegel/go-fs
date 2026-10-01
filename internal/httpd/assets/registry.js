@@ -743,7 +743,8 @@
       return {
         reference: pullField("reference").value.trim(),
         username: pullField("username").value.trim(),
-        password: pullField("password").value
+        password: pullField("password").value,
+        skipVerify: !pullField("verify").checked
       };
     };
     var pulling = transfer(pullDialog, {
@@ -792,7 +793,8 @@
       return {
         reference: pushField("reference").value.trim(),
         username: pushField("username").value.trim(),
-        password: pushField("password").value
+        password: pushField("password").value,
+        skipVerify: !pushField("verify").checked
       };
     };
     pushing = transfer(pushDialog, {

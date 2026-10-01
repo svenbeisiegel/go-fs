@@ -125,6 +125,9 @@ type fetchBody struct {
 	Password string `json:"password"`
 	// Headers are what the dialog's text area holds: one Name: value a line.
 	Headers string `json:"headers"`
+	// SkipVerify takes whatever certificate the remote shows: the dialog's
+	// Validate Connection, unticked.
+	SkipVerify bool `json:"skipVerify"`
 }
 
 // fetchRequest is a fetch that was read and found sound.
@@ -132,6 +135,7 @@ type fetchRequest struct {
 	url                *url.URL
 	header             http.Header
 	username, password string
+	skipVerify         bool
 }
 
 // request reads what a fetch asks for.
@@ -163,7 +167,8 @@ func (b fetchBody) request() (fetchRequest, error) {
 	if (username != "" || b.Password != "") && header.Get("Authorization") != "" {
 		return fetchRequest{}, errors.New("give either a username and password or an Authorization header, not both")
 	}
-	return fetchRequest{url: u, header: header, username: username, password: b.Password}, nil
+	return fetchRequest{url: u, header: header, username: username, password: b.Password,
+		skipVerify: b.SkipVerify}, nil
 }
 
 // maxFetchHeaders bounds the headers a fetch may add.
@@ -224,16 +229,29 @@ func shownURL(u *url.URL) string {
 	return shown.String()
 }
 
-// fetchClient is what every fetch goes through. It follows redirects as the
-// registry client does, keeping the credentials to the origin they were
+// fetchClient is what every fetch goes through, and insecureFetchClient
+// every fetch that does not validate the connection. They follow redirects as
+// the registry client does, keeping the credentials to the origin they were
 // given for. The body is not decompressed: a .tar.gz served with a gzip
 // Content-Encoding is stored as the .tar.gz it is.
-var fetchClient = &http.Client{Transport: newFetchTransport(), CheckRedirect: keepCredentialsHome}
+var (
+	fetchClient         = &http.Client{Transport: newFetchTransport(remoteTransport), CheckRedirect: keepCredentialsHome}
+	insecureFetchClient = &http.Client{Transport: newFetchTransport(insecureRemoteTransport), CheckRedirect: keepCredentialsHome}
+)
 
-func newFetchTransport() http.RoundTripper {
-	transport := remoteTransport.(*http.Transport).Clone()
+func newFetchTransport(base http.RoundTripper) http.RoundTripper {
+	transport := base.(*http.Transport).Clone()
 	transport.DisableCompression = true
 	return transport
+}
+
+// fetchClientFor is the client of a fetch, by whether it validates the
+// connection.
+func fetchClientFor(skipVerify bool) *http.Client {
+	if skipVerify {
+		return insecureFetchClient
+	}
+	return fetchClient
 }
 
 // fetchStart starts a fetch into a folder.
@@ -268,7 +286,7 @@ func (s *Server) fetchStart(set *settings, w http.ResponseWriter, r *http.Reques
 	})
 	if err == nil {
 		s.log.Info("http fetch started", "url", shown, "folder", folder, "headers", len(fetch.header),
-			"login", fetch.username != "", "user", user.name, "address", address, "job", job.id)
+			"login", fetch.username != "", "verify", !fetch.skipVerify, "user", user.name, "address", address, "job", job.id)
 	}
 	s.answerStarted(w, job, err)
 }
@@ -289,14 +307,14 @@ func (s *Server) fetchFile(ctx context.Context, set *settings, job *registryJob,
 	if fetch.username != "" || fetch.password != "" {
 		req.SetBasicAuth(fetch.username, fetch.password)
 	}
-	res, err := fetchClient.Do(req)
+	res, err := fetchClientFor(fetch.skipVerify).Do(req)
 	if err != nil {
 		var urlErr *url.Error
 		if errors.As(err, &urlErr) {
 			// its message repeats the URL, query and all
 			err = urlErr.Err
 		}
-		return "", fmt.Errorf("%s: %w", fetch.url.Host, err)
+		return "", fmt.Errorf("%s: %w", fetch.url.Host, withCertificateHint(err))
 	}
 	defer func() { _ = res.Body.Close() }()
 	host := res.Request.URL.Host

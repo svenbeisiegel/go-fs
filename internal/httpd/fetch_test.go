@@ -5,6 +5,8 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -83,6 +85,17 @@ func origin(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	return remote
 }
 
+// untrusted is an HTTPS server with a certificate nobody vouches for. The
+// handshakes it fails are not logged.
+func untrusted(t *testing.T, handler http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	remote := httptest.NewUnstartedServer(handler)
+	remote.Config.ErrorLog = log.New(io.Discard, "", 0)
+	remote.StartTLS()
+	t.Cleanup(remote.Close)
+	return remote
+}
+
 func TestFetchFollowsARedirectAndKeepsTheLoginHome(t *testing.T) {
 	var mu sync.Mutex
 	var seenAuth, seenCustom, seenAccept string
@@ -134,6 +147,30 @@ func TestFetchFollowsARedirectAndKeepsTheLoginHome(t *testing.T) {
 	}
 	if record := server.logs.find("http fetch"); record == nil || strings.Contains(fmt.Sprint(record["url"]), "secret") {
 		t.Errorf("the fetch was recorded as %v", record)
+	}
+}
+
+// A remote with a certificate nobody vouches for is refused while the fetch
+// validates the connection, and fetched once it does not.
+func TestFetchValidatesTheConnectionUnlessToldNotTo(t *testing.T) {
+	remote := untrusted(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("self-signed"))
+	})
+
+	server := newServer(t, nil)
+	server.mkdir(t, "in")
+	session := login(t, server, "/", "john", "doe")
+	expectFailed(t, fetched(t, server, "/in/", session, fetchBody{URL: remote.URL + "/cert.txt"}),
+		"untick Validate Connection")
+	if _, err := os.Stat(filepath.Join(server.base, "in", "cert.txt")); err == nil {
+		t.Error("the file was stored from a connection that failed validation")
+	}
+	expectDone(t, fetched(t, server, "/in/", session, fetchBody{URL: remote.URL + "/cert.txt", SkipVerify: true}))
+	if got := server.read(t, "in/cert.txt"); got != "self-signed" {
+		t.Errorf("stored %q", got)
+	}
+	if record := server.logs.find("http fetch started"); record == nil || record["verify"] != true {
+		t.Errorf("the first fetch was recorded as %v", record)
 	}
 }
 

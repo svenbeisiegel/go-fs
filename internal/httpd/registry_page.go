@@ -1048,11 +1048,14 @@ type transferBody struct {
 	Platforms string `json:"platforms"`
 	Username  string `json:"username"`
 	Password  string `json:"password"`
+	// SkipVerify takes whatever certificate the other registry shows: the
+	// dialog's Validate Connection, unticked.
+	SkipVerify bool `json:"skipVerify"`
 }
 
-// login is the username and password of the request, as the client takes it.
-func (t transferBody) login() (string, string) {
-	return strings.TrimSpace(t.Username), t.Password
+// login is how the request reaches the other registry, as the client takes it.
+func (t transferBody) login() remoteLogin {
+	return remoteLogin{username: strings.TrimSpace(t.Username), password: t.Password, skipVerify: t.SkipVerify}
 }
 
 // pullReference reads what a pull fetches: an image under a tag, since that
@@ -1114,8 +1117,7 @@ func (s *Server) registryPullCheck(set *settings, w http.ResponseWriter, r *http
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
 	defer cancel()
-	username, password := body.login()
-	image, err := s.inspectRemote(ctx, ref, username, password)
+	image, err := s.inspectRemote(ctx, ref, body.login())
 	if err != nil {
 		// the other registry's refusal is not this one's: a 401 would read
 		// as the session having ended
@@ -1176,8 +1178,7 @@ func (s *Server) registryPushCheck(set *settings, w http.ResponseWriter, r *http
 
 	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
 	defer cancel()
-	username, password := body.login()
-	client := newRemoteClient(ref, username, password, "pull,push")
+	client := newRemoteClient(ref, body.login(), "pull,push")
 	err = client.authenticate(ctx)
 	if err == nil {
 		err = client.canPush(ctx)
@@ -1221,8 +1222,7 @@ func (s *Server) registryPull(set *settings, w http.ResponseWriter, r *http.Requ
 	what := ref.String() + " → " + ref.repository + ":" + ref.tag
 	address := clientAddress(set, r)
 	job, err := s.startJob(jobPull, user.name, what, func(ctx context.Context, job *registryJob) (string, error) {
-		username, password := body.login()
-		message, err := s.pullImage(ctx, set, job, ref, filter, username, password, user)
+		message, err := s.pullImage(ctx, set, job, ref, filter, body.login(), user)
 		if err != nil && ctx.Err() == nil {
 			s.log.Warn("registry pull failed", "source", ref.String(), "user", user.name,
 				"address", address, "error", err)
@@ -1231,7 +1231,7 @@ func (s *Server) registryPull(set *settings, w http.ResponseWriter, r *http.Requ
 	})
 	if err == nil {
 		s.log.Info("registry pull started", "source", ref.String(), "platforms", strings.Join(filter, ","),
-			"login", body.Username != "", "user", user.name, "address", address, "job", job.id)
+			"login", body.Username != "", "verify", !body.SkipVerify, "user", user.name, "address", address, "job", job.id)
 	}
 	s.answerStarted(w, job, err)
 }
@@ -1266,8 +1266,7 @@ func (s *Server) registryPush(set *settings, w http.ResponseWriter, r *http.Requ
 	what := name + ":" + tag + " → " + ref.String()
 	address := clientAddress(set, r)
 	job, err := s.startJob(jobPush, user.name, what, func(ctx context.Context, job *registryJob) (string, error) {
-		username, password := body.login()
-		message, err := s.pushImage(ctx, set, job, name, tag, d, ref, filter, username, password, user)
+		message, err := s.pushImage(ctx, set, job, name, tag, d, ref, filter, body.login(), user)
 		if err != nil && ctx.Err() == nil {
 			s.log.Warn("registry push failed", "repository", name, "tag", tag, "target", ref.String(),
 				"user", user.name, "address", address, "error", err)
@@ -1276,7 +1275,8 @@ func (s *Server) registryPush(set *settings, w http.ResponseWriter, r *http.Requ
 	})
 	if err == nil {
 		s.log.Info("registry push started", "repository", name, "tag", tag, "target", ref.String(),
-			"platforms", strings.Join(filter, ","), "login", body.Username != "", "user", user.name, "address", address, "job", job.id)
+			"platforms", strings.Join(filter, ","), "login", body.Username != "", "verify", !body.SkipVerify,
+			"user", user.name, "address", address, "job", job.id)
 	}
 	s.answerStarted(w, job, err)
 }

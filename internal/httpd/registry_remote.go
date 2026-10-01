@@ -3,6 +3,7 @@ package httpd
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -161,6 +162,37 @@ var remoteTransport http.RoundTripper = &http.Transport{
 	IdleConnTimeout:       90 * time.Second,
 }
 
+// insecureRemoteTransport is remoteTransport for a transfer that was told not
+// to validate the connection: it takes whatever certificate it is shown, as
+// a self-signed or an internal one. It is a transport of its own, so that a
+// connection it opened is never reused by a transfer that does validate.
+var insecureRemoteTransport = withoutVerification(remoteTransport)
+
+func withoutVerification(base http.RoundTripper) http.RoundTripper {
+	transport := base.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	return transport
+}
+
+// remoteTransportFor is the transport of a transfer, by whether it validates
+// the connection.
+func remoteTransportFor(skipVerify bool) http.RoundTripper {
+	if skipVerify {
+		return insecureRemoteTransport
+	}
+	return remoteTransport
+}
+
+// withCertificateHint says, of a certificate that was not trusted, how to
+// accept it all the same.
+func withCertificateHint(err error) error {
+	var untrusted *tls.CertificateVerificationError
+	if errors.As(err, &untrusted) {
+		return fmt.Errorf("%w; untick Validate Connection to accept this certificate", err)
+	}
+	return err
+}
+
 // remoteIdleTimeout is how long a blob may go without a byte arriving or
 // leaving before the transfer is given up.
 var remoteIdleTimeout = 2 * time.Minute
@@ -183,16 +215,29 @@ type remoteClient struct {
 	authorization string
 }
 
-func newRemoteClient(ref remoteRef, username, password, actions string) *remoteClient {
+// remoteLogin is how a transfer reaches the other registry: the username and
+// password it was given, and whether it validates the connection.
+type remoteLogin struct {
+	username, password string
+	skipVerify         bool
+}
+
+func newRemoteClient(ref remoteRef, login remoteLogin, actions string) *remoteClient {
 	return &remoteClient{
-		http:       &http.Client{Transport: remoteTransport, CheckRedirect: keepCredentialsHome},
+		http:       &http.Client{Transport: remoteTransportFor(login.skipVerify), CheckRedirect: keepCredentialsHome},
 		base:       ref.scheme + "://" + ref.api,
 		host:       ref.host,
 		repository: ref.repository,
 		actions:    actions,
-		username:   username,
-		password:   password,
+		username:   login.username,
+		password:   login.password,
 	}
+}
+
+// do sends a request to the other registry.
+func (c *remoteClient) do(req *http.Request) (*http.Response, error) {
+	res, err := c.http.Do(req)
+	return res, withCertificateHint(err)
 }
 
 // keepCredentialsHome drops the Authorization header on a redirect to any
@@ -268,7 +313,7 @@ func (c *remoteClient) fetchToken(ctx context.Context, params map[string]string)
 	if c.username != "" {
 		req.Header.Set("Authorization", c.basic())
 	}
-	res, err := c.http.Do(req)
+	res, err := c.do(req)
 	if err != nil {
 		return fmt.Errorf("the token service of %s: %w", c.host, err)
 	}
@@ -353,7 +398,7 @@ func (c *remoteClient) send(ctx context.Context, method, target string, header h
 		if c.authorization != "" {
 			req.Header.Set("Authorization", c.authorization)
 		}
-		res, err := c.http.Do(req)
+		res, err := c.do(req)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", c.host, err)
 		}
@@ -517,7 +562,7 @@ func (c *remoteClient) pushBlob(ctx context.Context, d digest.Digest, size int64
 	if c.authorization != "" {
 		req.Header.Set("Authorization", c.authorization)
 	}
-	res, err = c.http.Do(req)
+	res, err = c.do(req)
 	if err != nil {
 		return fmt.Errorf("%s: %w", c.host, err)
 	}

@@ -132,10 +132,10 @@ func decodeManifest(found remoteManifest) (pulledManifest, error) {
 
 // pullImage copies an image of another registry into the store, under the
 // repository and tag of its reference.
-func (s *Server) pullImage(ctx context.Context, set *settings, job *registryJob, ref remoteRef, filter platformFilter, username, password string, user *account) (string, error) {
+func (s *Server) pullImage(ctx context.Context, set *settings, job *registryJob, ref remoteRef, filter platformFilter, login remoteLogin, user *account) (string, error) {
 	store := set.registry
 	name, tag := ref.repository, ref.tag
-	client := newRemoteClient(ref, username, password, "pull")
+	client := newRemoteClient(ref, login, "pull")
 	if err := client.authenticate(ctx); err != nil {
 		return "", err
 	}
@@ -294,8 +294,8 @@ type remoteImage struct {
 // inspectRemote checks that an image of another registry can be pulled with
 // the login given, and finds the platforms it is for. Of a single image only
 // its configuration is fetched, which says its platform.
-func (s *Server) inspectRemote(ctx context.Context, ref remoteRef, username, password string) (remoteImage, error) {
-	client := newRemoteClient(ref, username, password, "pull")
+func (s *Server) inspectRemote(ctx context.Context, ref remoteRef, login remoteLogin) (remoteImage, error) {
+	client := newRemoteClient(ref, login, "pull")
 	if err := client.authenticate(ctx); err != nil {
 		return remoteImage{}, err
 	}
@@ -487,7 +487,7 @@ func readLocal(store *registryStore, name string, d digest.Digest) (localManifes
 // pushImage copies a tag of the store to another registry.
 // A filter leaves out the platforms it does not name, which an index loses
 // as a pull's does: what is pushed is an index of its own.
-func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob, name, tag string, d digest.Digest, target remoteRef, filter platformFilter, username, password string, user *account) (string, error) {
+func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob, name, tag string, d digest.Digest, target remoteRef, filter platformFilter, login remoteLogin, user *account) (string, error) {
 	store := set.registry
 	top, doc, err := readLocal(store, name, d)
 	if err != nil {
@@ -543,7 +543,7 @@ func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob,
 	}
 	job.plan(len(blobs), blobsSize(blobs))
 
-	client := newRemoteClient(target, username, password, "pull,push")
+	client := newRemoteClient(target, login, "pull,push")
 	if err := client.authenticate(ctx); err != nil {
 		return "", err
 	}

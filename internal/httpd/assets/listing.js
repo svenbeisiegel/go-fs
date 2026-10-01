@@ -720,7 +720,8 @@
         url: field("url").value.trim(),
         username: field("username").value.trim(),
         password: field("password").value,
-        headers: field("headers").value
+        headers: field("headers").value,
+        skipVerify: !field("verify").checked
       };
       busy(true);
       bar.removeAttribute("value");
