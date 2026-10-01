@@ -851,6 +851,39 @@ against their digests, and `maxUploadSize` applies to each as it does to a
 push. Note that the server connects to whatever host is typed in, from its own
 network: give `registry` only to accounts that may do that.
 
+**Importing image archives.** **Import** (top right) stores the images of an
+archive that a tool wrote to a file instead of pushing them, so no docker
+daemon is needed in between. Pick the file there and it is uploaded in chunks
+of `maxChunkSize` (one piece when that is `0`), or use **Import into
+registry…** in the options menu of an archive in the listing, which reads that
+file where it is; for this the account also needs the right to download that
+file. The archive may be a plain tar or compressed with gzip, zstd, xz or
+bzip2, and is in one of two formats:
+
+| Format | Written by | Stored as |
+|---|---|---|
+| OCI image layout (`oci-layout`, `index.json`, `blobs/`) | `docker save` 25 and later, `docker save` with the containerd image store, `ctr images export` (the tool to use on a Kubernetes node, as `crictl` has no export), `nerdctl save`, `podman save --format oci-archive`, `skopeo copy … oci-archive:`, `buildah push … oci-archive:`, a tar of a `crane pull --format oci` folder | as it is: manifests and indexes keep their digests, signatures stay valid |
+| `docker save` (`manifest.json`) | `docker save` before 25, `podman save` (`docker-archive`, also `-m`), `skopeo copy … docker-archive:`, `crane pull` (`tarball` and `legacy`), k3s and RKE2 airgap bundles | with a manifest the registry builds, since the archive has none: the image gets a digest of its own, and layers are kept as the archive has them, uncompressed for `docker save` |
+
+The server reads the archive once, checking every blob against its digest,
+and then lists the images it found: their names, the architectures of each,
+and the `repository:tag` each would be stored under, which is the name the
+archive gives without the registry, as a pull names it
+(`docker.io/library/alpine:3.20` becomes `library/alpine:3.20`). A tag alone,
+as `skopeo` writes it, goes with the archive's file name. Change the targets,
+add tags, untick images or architectures, then press Import. An index whose
+architectures the archive holds only some of, as `ctr images export` leaves
+it without `--all-platforms`, is stored with those, in an index of its own.
+Up to 30 minutes are given for that choice before what was read is let go.
+Nothing is stored until it is made, and the blobs and manifests then go in
+together, so a cleanup in between never takes half an image. What is not an
+image archive is named as such: the file system of a container
+(`docker export`, `crane export`), a zip, a Singularity image, a `dir:` copy of
+skopeo, a save of a Docker older than 1.10. `maxUploadSize` applies to the
+uploaded archive and to each file in it. The uploaded archive and what was
+read are kept under `registryBaseFolder/_uploads` while the import runs and
+removed when it ends.
+
 Who may see the page follows who may pull. With
 `http.registryAnonymousRead = false` a visitor is sent to the login page
 first. The form then also accepts accounts that set only `registry`; their

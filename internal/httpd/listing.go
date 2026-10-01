@@ -238,6 +238,9 @@ type rights struct {
 	// Fetch is the Fetch button, which downloads a URL into the folder. It
 	// is offered to a session only; see mayFetch.
 	Fetch bool
+	// Import is Import into registry on an image archive, offered to a
+	// session of an account of the registry, which is what importing takes.
+	Import bool
 }
 
 type crumb struct {

@@ -24,6 +24,7 @@
       <a class="plain" href="{{.Folders}}"{{if .Tree}} aria-current="page"{{end}}><svg class="ic"><use href="#i-folder"/></svg>Folders</a>
     </nav>
     {{if .Write}}<button id="pull-image" class="plain needs-js" type="button"><svg class="ic"><use href="#i-download"/></svg>Pull image</button>{{end}}
+    {{if .Write}}<button id="import-image" class="plain needs-js" type="button" title="Store the images of an archive docker save or a similar tool wrote"><svg class="ic"><use href="#i-upload"/></svg>Import</button>{{end}}
     {{if .Write}}<button id="clean-up" class="plain needs-js" type="button" title="Remove the blobs no image refers to"><svg class="ic"><use href="#i-trash"/></svg>Clean up</button>{{end}}
     {{template "session" .Session}}
   </div>
@@ -160,6 +161,29 @@
     <div class="row">
       <button class="plain" type="submit" value="check">Validate</button>
       <button class="go" type="submit" value="start" disabled>Push</button>
+      <button class="plain" type="submit" value="stop" formnovalidate hidden>Stop</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="import" class="transfer wide" aria-labelledby="import-title" data-file="{{.Import}}">
+  <form method="dialog">
+    <h2 id="import-title">Import image archive</h2>
+    <p>Stores the images of an archive written by docker save, podman save, skopeo copy, ctr images export, nerdctl save or crane pull: a tar, plain or compressed with gzip, zstd, xz or bzip2.</p>
+    <div class="fields">
+      <label for="import-archive">Archive</label>
+      <input id="import-archive" name="archive" type="file">
+      <p class="where" hidden></p>
+    </div>
+    <div class="images" hidden></div>
+    <div class="progress" hidden>
+      <progress max="1"></progress>
+      <p class="status" role="status" aria-live="polite"></p>
+    </div>
+    <div class="row">
+      <button class="go" type="submit" value="read" disabled>Read archive</button>
+      <button class="go" type="submit" value="start" hidden disabled>Import</button>
       <button class="plain" type="submit" value="stop" formnovalidate hidden>Stop</button>
       <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
     </div>

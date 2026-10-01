@@ -427,6 +427,18 @@ func (s *Server) storePulled(store *registryStore, name, tag string, top pulledM
 	lock := registryLock(&s.registryRepositoryLocks, name)
 	lock.Lock()
 	defer lock.Unlock()
+	if err := s.storePulledLocked(store, name, tag, top, children); err != nil {
+		return err
+	}
+	s.log.Debug("registry tag set by a pull", "repository", name, "tag", tag,
+		"digest", top.digest.String(), "user", nameOf(user))
+	return nil
+}
+
+// storePulledLocked is storePulled for a caller that holds the registry's
+// lock and the repository's already: an import, which commits the blobs under
+// the same hold, so the garbage collection never sees them unreferenced.
+func (s *Server) storePulledLocked(store *registryStore, name, tag string, top pulledManifest, children []pulledManifest) error {
 	for _, manifest := range append(children, top) {
 		if _, err := store.putBlob(manifest.body, manifest.digest.Algorithm()); err != nil {
 			return err
@@ -453,8 +465,6 @@ func (s *Server) storePulled(store *registryStore, name, tag string, top pulledM
 	if had && previous != top.digest {
 		s.dropMergedOrphan(store, name, previous, tags)
 	}
-	s.log.Debug("registry tag set by a pull", "repository", name, "tag", tag,
-		"digest", top.digest.String(), "user", nameOf(user))
 	return nil
 }
 

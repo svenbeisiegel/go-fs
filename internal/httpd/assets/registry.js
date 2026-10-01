@@ -1,8 +1,8 @@
 // The registry page is complete without this script: the rows are rendered by
 // the server and the views and the sort headers are ordinary links. What is
 // added here is what a link cannot do — filtering, the options of a tag, its
-// details, copying its pull command and deleting it, and pulling an image
-// from another registry or pushing a tag to one.
+// details, copying its pull command and deleting it, pulling an image from
+// another registry or pushing a tag to one, and importing an image archive.
 (function () {
   "use strict";
 
@@ -838,6 +838,524 @@
     field.focus();
     // the registry goes in front of what is there
     field.setSelectionRange(0, 0);
+  }
+
+  // --- importing an image archive --------------------------------------
+  //
+  // An import is the server's, in three steps. It reads the archive, which
+  // this dialog uploads in chunks or which is a file of the folder the page
+  // is on; it offers the images it found, which the admin names and picks
+  // the platforms of; and it stores those. The dialog asks how far it has got
+  // every second, as for a pull, and closing it leaves the import where it is.
+
+  // resumeOffset reads the size a 416 names in its own Content-Range, the
+  // "bytes */<size>" form the server answers an out-of-sync chunk with.
+  function resumeOffset(header) {
+    var match = /^bytes \*\/(\d+)$/.exec(header || "");
+    return match ? parseInt(match[1], 10) : null;
+  }
+
+  // a target as the server takes it: repository:tag, the repository in
+  // lowercase components, the tag after the last colon past the last slash
+  var repositoryPattern = /^[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*(\/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*$/;
+  var tagPattern = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
+
+  function validTarget(value) {
+    var colon = value.lastIndexOf(":");
+    if (colon < 0 || colon < value.lastIndexOf("/")) {
+      return false;
+    }
+    var repository = value.slice(0, colon);
+    return repository.length <= 255 && repositoryPattern.test(repository) &&
+      tagPattern.test(value.slice(colon + 1));
+  }
+
+  var chunkRetries = 3;
+
+  function importer(dialog, button) {
+    var form = dialog.querySelector("form");
+    var picker = form.querySelector("input[type='file']");
+    var pickerLabel = form.querySelector("label[for='" + picker.id + "']");
+    var source = form.querySelector(".where");
+    var images = dialog.querySelector(".images");
+    var progress = dialog.querySelector(".progress");
+    var bar = progress.querySelector("progress");
+    var status = progress.querySelector(".status");
+    var read = form.querySelector("button[value='read']");
+    var go = form.querySelector("button[value='start']");
+    var stop = form.querySelector("button[value='stop']");
+    var close = form.querySelector("button[value='cancel']");
+    // serverFile is the file of the folder the dialog imports, "" for an
+    // upload; the listing's Import into registry names it
+    var serverFile = "";
+    // job is the import once it was started, upload the archive on its way
+    // to the server before that
+    var job = null;
+    var upload = null;
+    var waiting = false;
+
+    function tell(message, bad) {
+      progress.hidden = false;
+      status.textContent = message;
+      status.classList.toggle("bad", bad === true);
+    }
+
+    function quiet() {
+      progress.hidden = true;
+      status.textContent = "";
+      status.classList.remove("bad");
+    }
+
+    function count(done, total) {
+      if (total > 0) {
+        bar.max = total;
+        bar.value = Math.min(done, total);
+        return readableSize(done) + " of " + readableSize(total);
+      }
+      bar.removeAttribute("value");
+      return "";
+    }
+
+    // stage shows the buttons of a step: idle before anything runs, busy
+    // while the server works, ready while it waits for the choice.
+    function stage(name) {
+      var idle = name === "idle";
+      picker.disabled = !idle;
+      read.hidden = !idle;
+      go.hidden = name !== "ready";
+      stop.hidden = idle;
+      stop.textContent = name === "ready" ? "Discard" : "Stop";
+      close.textContent = idle ? "Cancel" : "Close";
+      images.hidden = name !== "ready";
+      waiting = name === "ready";
+      readyToRead();
+      readyToImport();
+    }
+
+    function readyToRead() {
+      read.disabled = !serverFile && picker.files.length === 0;
+    }
+
+    function reset() {
+      form.reset();
+      images.textContent = "";
+      quiet();
+      picker.hidden = pickerLabel.hidden = serverFile !== "";
+      source.hidden = serverFile === "";
+      source.textContent = serverFile ? "From this folder: " + serverFile : "";
+      stage("idle");
+    }
+
+    function jobURL(action) {
+      return base + "?go-fs=" + action + "&id=" + encodeURIComponent(job);
+    }
+
+    function show(view) {
+      var amount = count(view.bytesDone, view.bytesTotal);
+      if (view.phase === "storing") {
+        tell(view.blobsDone + " of " + view.blobsTotal + " blobs stored" + (amount ? " · " + amount : ""));
+      } else if (view.phase === "verifying") {
+        tell("Checking the layers… " + amount);
+      } else {
+        tell("Reading the archive… " + amount);
+      }
+    }
+
+    function end(view) {
+      job = null;
+      if (view.state === "done") {
+        reset();
+        if (dialog.open) {
+          dialog.close();
+        }
+        sayAfterReload(view.message);
+        return;
+      }
+      var message = view.state === "cancelled" ? "Stopped." : (view.message || "The import failed.");
+      stage("idle");
+      bar.value = 0;
+      tell(message, view.state !== "cancelled");
+      if (!dialog.open) {
+        say(view.what ? view.what + ": " + message : message);
+      }
+    }
+
+    function poll() {
+      if (!job) {
+        return;
+      }
+      request("GET", jobURL("registry-job")).then(function (res) {
+        return res.json();
+      }).then(function (view) {
+        if (view.state === "running") {
+          show(view);
+          window.setTimeout(poll, 1000);
+        } else if (view.state === "ready") {
+          offer(view);
+        } else {
+          end(view);
+        }
+      }).catch(function (err) {
+        end({ state: "failed", message: err.message, what: "" });
+      });
+    }
+
+    // --- the upload
+
+    function sendChunks(file, started) {
+      var size = started.chunkSize > 0 ? started.chunkSize : file.size;
+      return new Promise(function (resolve, reject) {
+        var sent = 0;
+        var retries = 0;
+        var resynced = false;
+
+        function sendFrom(start) {
+          if (upload.stopped) {
+            reject(new Error("Stopped."));
+            return;
+          }
+          var end = Math.min(start + size, file.size);
+
+          function retry(problem) {
+            if (retries < chunkRetries && !upload.stopped) {
+              retries++;
+              sendFrom(start);
+              return;
+            }
+            reject(new Error(problem));
+          }
+
+          var xhr = new XMLHttpRequest();
+          upload.xhr = xhr;
+          xhr.open("PUT", base + "?go-fs=registry-import-upload&id=" + encodeURIComponent(started.id));
+          xhr.setRequestHeader("Content-Type", "application/octet-stream");
+          xhr.setRequestHeader("Content-Range", "bytes " + start + "-" + (end - 1) + "/" + file.size);
+          xhr.withCredentials = true;
+          xhr.upload.addEventListener("progress", function (event) {
+            if (event.lengthComputable) {
+              tell("Uploading the archive… " + count(sent + event.loaded, file.size));
+            }
+          });
+          xhr.addEventListener("load", function () {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              sent = end;
+              retries = 0;
+              if (sent >= file.size) {
+                resolve();
+              } else {
+                sendFrom(sent);
+              }
+              return;
+            }
+            if (xhr.status === 416 && !resynced) {
+              var have = resumeOffset(xhr.getResponseHeader("Content-Range"));
+              if (have !== null && have <= file.size) {
+                resynced = true;
+                sent = have;
+                sendFrom(have);
+                return;
+              }
+            }
+            retry(reason(xhr.status, xhr.responseText.trim()));
+          });
+          xhr.addEventListener("error", function () {
+            retry("The archive could not be sent.");
+          });
+          xhr.addEventListener("abort", function () {
+            reject(new Error("Stopped."));
+          });
+          xhr.send(file.slice(start, end));
+        }
+
+        sendFrom(0);
+      });
+    }
+
+    function uploadArchive(file) {
+      tell("Uploading the archive… " + count(0, file.size));
+      return request("POST", base + "?go-fs=registry-import-upload", { name: file.name, size: file.size }).then(function (res) {
+        return res.json();
+      }).then(function (started) {
+        upload = { id: started.id, xhr: null, stopped: false };
+        return sendChunks(file, started).then(function () {
+          return started.id;
+        }, function (err) {
+          // what arrived is of no use to anyone
+          request("DELETE", base + "?go-fs=registry-import-upload&id=" + encodeURIComponent(started.id))
+            .catch(function () {});
+          throw err;
+        });
+      });
+    }
+
+    function startReading() {
+      stage("busy");
+      bar.removeAttribute("value");
+      var body;
+      if (serverFile) {
+        tell("Starting…");
+        body = Promise.resolve({ file: serverFile });
+      } else {
+        body = uploadArchive(picker.files[0]).then(function (id) {
+          return { upload: id };
+        });
+      }
+      body.then(function (start) {
+        upload = null;
+        tell("Starting…");
+        return request("POST", base + "?go-fs=registry-import", start);
+      }).then(function (res) {
+        return res.json();
+      }).then(function (view) {
+        job = view.id;
+        show(view);
+        window.setTimeout(poll, 1000);
+      }).catch(function (err) {
+        upload = null;
+        stage("idle");
+        bar.value = 0;
+        tell(err.message, err.message !== "Stopped.");
+      });
+    }
+
+    // --- what the archive holds
+
+    function targetRow(list, value, exists) {
+      var label = el("label");
+      var box = el("input");
+      box.type = "checkbox";
+      box.checked = value !== "";
+      box.setAttribute("aria-label", "Import under this tag");
+      var field = el("input");
+      field.type = "text";
+      field.value = value;
+      field.placeholder = "repository:tag";
+      field.spellcheck = false;
+      field.autocomplete = "off";
+      field.setAttribute("aria-label", "Repository and tag");
+      field.addEventListener("input", function () {
+        box.checked = field.value.trim() !== "";
+      });
+      label.appendChild(box);
+      label.appendChild(field);
+      if (exists) {
+        label.appendChild(el("span", "meta", "replaces the tag there"));
+      }
+      list.insertBefore(label, list.querySelector("button"));
+      return field;
+    }
+
+    function offer(view) {
+      images.textContent = "";
+      view.images.forEach(function (image) {
+        var block = el("fieldset", "image");
+        block.dataset.index = image.index;
+        var legend = image.names.length > 0 ? image.names[0] : "An image the archive gives no name";
+        block.appendChild(el("legend", "", legend));
+        var about = (image.isIndex ? "Index " : "Image ") + image.digest;
+        if (image.names.length > 1) {
+          about += " · also named " + image.names.slice(1).join(", ");
+        }
+        block.appendChild(el("p", "mono", about));
+        if (image.note) {
+          block.appendChild(el("p", "", image.note));
+        }
+        if (image.platforms.length > 1) {
+          var choices = el("div", "choices");
+          image.platforms.forEach(function (platform) {
+            var label = el("label");
+            label.title = platform.platform;
+            var box = el("input");
+            box.type = "checkbox";
+            box.value = platform.platform;
+            box.checked = true;
+            label.appendChild(box);
+            label.appendChild(el("span", "badge", platform.label));
+            if (platform.label !== platform.platform) {
+              label.appendChild(el("span", "meta", platform.platform));
+            }
+            choices.appendChild(label);
+          });
+          block.appendChild(choices);
+        } else if (image.platforms.length === 1) {
+          var only = el("div", "choices");
+          only.appendChild(el("span", "badge", image.platforms[0].label));
+          block.appendChild(only);
+        }
+        var list = el("div", "targets");
+        var more = el("button", "plain", "Add a tag");
+        more.type = "button";
+        more.addEventListener("click", function () {
+          targetRow(list, "", false).focus();
+          readyToImport();
+        });
+        list.appendChild(more);
+        image.targets.forEach(function (target) {
+          targetRow(list, target.target, target.exists);
+        });
+        if (image.targets.length === 0) {
+          targetRow(list, "", false);
+        }
+        block.appendChild(list);
+        images.appendChild(block);
+      });
+      quiet();
+      stage("ready");
+      var first = images.querySelector("input[type='text']");
+      if (first && dialog.open) {
+        first.focus();
+      }
+    }
+
+    // chosen is what the page sends: each image with a tag ticked, its
+    // targets, and its platforms, none while every one is ticked so that an
+    // index is stored as it is, under its own digest. It is null while a
+    // ticked target is not one, or two images would share a tag.
+    function chosen() {
+      var list = [];
+      var seen = {};
+      var bad = false;
+      Array.prototype.forEach.call(images.querySelectorAll("fieldset.image"), function (block) {
+        var targets = [];
+        Array.prototype.forEach.call(block.querySelectorAll(".targets label"), function (row) {
+          var box = row.querySelector("input[type='checkbox']");
+          var field = row.querySelector("input[type='text']");
+          var value = field.value.trim();
+          var wrong = box.checked && (!validTarget(value) || seen[value] === true);
+          field.classList.toggle("invalid", wrong);
+          if (wrong) {
+            bad = true;
+          } else if (box.checked) {
+            seen[value] = true;
+            targets.push(value);
+          }
+        });
+        var boxes = Array.prototype.slice.call(block.querySelectorAll(".choices input[type='checkbox']"));
+        var ticked = boxes.filter(function (box) {
+          return box.checked;
+        });
+        if (targets.length === 0) {
+          return;
+        }
+        if (boxes.length > 0 && ticked.length === 0) {
+          bad = true;
+          return;
+        }
+        list.push({
+          index: parseInt(block.dataset.index, 10),
+          targets: targets,
+          platforms: ticked.length === boxes.length ? "" : ticked.map(function (box) {
+            return box.value;
+          }).join(", ")
+        });
+      });
+      return bad || list.length === 0 ? null : list;
+    }
+
+    function readyToImport() {
+      go.disabled = !waiting || chosen() === null;
+    }
+
+    images.addEventListener("input", readyToImport);
+    images.addEventListener("change", readyToImport);
+    picker.addEventListener("change", function () {
+      quiet();
+      readyToRead();
+    });
+
+    function confirm() {
+      var list = chosen();
+      if (!list) {
+        return;
+      }
+      go.disabled = true;
+      request("POST", jobURL("registry-import-confirm"), { images: list }).then(function (res) {
+        return res.json();
+      }).then(function (view) {
+        stage("busy");
+        show(view);
+        window.setTimeout(poll, 1000);
+      }).catch(function (err) {
+        tell(err.message, true);
+        readyToImport();
+      });
+    }
+
+    function halt() {
+      if (upload) {
+        upload.stopped = true;
+        if (upload.xhr) {
+          upload.xhr.abort();
+        }
+        return;
+      }
+      if (!job) {
+        return;
+      }
+      var wasWaiting = waiting;
+      request("DELETE", jobURL("registry-job")).then(function () {
+        // a waiting import is not being asked about; it is now, to see it end
+        if (wasWaiting) {
+          stage("busy");
+          poll();
+        }
+      }).catch(failed);
+    }
+
+    // The submit event rather than close, for the reason the listing gives:
+    // which button was pressed is only known there.
+    form.addEventListener("submit", function (event) {
+      var pressed = event.submitter ? event.submitter.value : "read";
+      if (pressed === "cancel") {
+        return;
+      }
+      event.preventDefault();
+      if (pressed === "stop") {
+        halt();
+      } else if (pressed === "start" || waiting) {
+        if (!go.disabled) {
+          confirm();
+        }
+      } else if (!read.disabled && !job && !upload) {
+        startReading();
+      }
+    });
+
+    function open(file) {
+      if (!job && !upload) {
+        serverFile = file || "";
+        reset();
+      }
+      dialog.showModal();
+      if (!job && !upload && !serverFile) {
+        picker.focus();
+      }
+    }
+
+    button.addEventListener("click", function () {
+      clear();
+      open("");
+    });
+
+    // the listing's Import into registry opens the page with the file; the
+    // address forgets it, so a reload after the import does not ask again
+    var named = dialog.dataset.file;
+    if (named) {
+      try {
+        var address = new URL(window.location.href);
+        address.searchParams.delete("import");
+        window.history.replaceState(null, "", address.href);
+      } catch (err) {
+        // the address keeps it; nothing worse than the dialog again
+      }
+      open(named);
+    }
+  }
+
+  var importDialog = document.getElementById("import");
+  var importButton = document.getElementById("import-image");
+  if (importDialog && importButton) {
+    importer(importDialog, importButton);
   }
 
   // --- deleting a tag --------------------------------------------------

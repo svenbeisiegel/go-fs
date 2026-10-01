@@ -430,6 +430,10 @@
   var menu = document.getElementById("menu");
   var download = menu.querySelector("[data-do='download']");
   var removal = menu.querySelector("[data-do='delete']");
+  // Import into registry is there for a file whose name an image archive has;
+  // it opens the registry page's Import dialog with that file
+  var importing = menu.querySelector("[data-do='import']");
+  var archiveName = /\.(tar|tgz|tzst|txz|tbz2?|tar\.(gz|zst|xz|bz2))$/i;
   var opener = null;
 
   function items() {
@@ -445,6 +449,10 @@
     download.querySelector("span").textContent = isFolder ? "Download as .tar.xz" : "Download";
     if (removal) {
       removal.hidden = row.dataset.delete !== "1";
+    }
+    if (importing) {
+      importing.hidden = isFolder || !archiveName.test(row.dataset.name);
+      importing.href = importing.dataset.registry + "&import=" + encodeURIComponent(row.dataset.name);
     }
     opener = button;
     button.setAttribute("aria-expanded", "true");
@@ -536,7 +544,7 @@
       return;
     }
     var row = opener.closest("tr");
-    closeMenu(item.dataset.do === "download");
+    closeMenu(item.dataset.do === "download" || item.dataset.do === "import");
     if (item.dataset.do === "rename") {
       renameEntry(row);
     } else if (item.dataset.do === "delete") {

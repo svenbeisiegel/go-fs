@@ -64,6 +64,7 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		}
 		allowed := s.rightsFor(set, user, target.Virtual)
 		allowed.Fetch = mayFetch(cred, target.Virtual)
+		allowed.Import = s.registrySession(set, r) != nil
 		page, err := listingPage(vfs.AsFolder(target.Virtual), entries,
 			parseSort(r.URL.Query()), allowed,
 			s.sessionViewFor(set, r, cred), nonce, set.cfg.MaxChunkSize)
@@ -353,7 +354,7 @@ func (s *Server) handleChunkedPut(set *settings, w http.ResponseWriter, r *http.
 	}
 	chunkSize := rng.end - rng.start + 1
 	if chunkSize > set.cfg.MaxChunkSize {
-		s.chunkTooLarge(set, w, target)
+		s.chunkTooLarge(set, w, target.Virtual)
 		return
 	}
 
@@ -382,88 +383,9 @@ func (s *Server) handleChunkedPut(set *settings, w http.ResponseWriter, r *http.
 		}
 	}
 
-	var alreadyApplied bool
-	if rng.start != 0 {
-		info, err := os.Stat(staging)
-		switch {
-		case err == nil && info.Size() == rng.start:
-			// continues the upload already in progress
-		case err == nil && info.Size() == rng.end+1:
-			// this exact chunk already landed — most likely a retry after the
-			// response was lost once the bytes were safely written, such as a
-			// finalize that failed on what turned out to be the last chunk.
-			// Do not write it again: only pick up wherever finishing was
-			// interrupted, the same way a client is expected to retry.
-			alreadyApplied = true
-		case err == nil:
-			s.chunkOutOfSync(w, target, info.Size())
-			return
-		case errors.Is(err, os.ErrNotExist):
-			s.chunkOutOfSync(w, target, 0)
-			return
-		default:
-			s.log.Error("http cannot read the upload in progress", "file", target.Virtual, "error", err)
-			http.Error(w, "Server Error", http.StatusInternalServerError)
-			return
-		}
-	}
-
 	started := time.Now()
-	if !alreadyApplied {
-		// the first chunk (re)creates the staging file from empty — a client
-		// that restarts an upload from byte zero is allowed to, rather than
-		// being stuck behind whatever a previous, abandoned attempt left staged
-		flags := os.O_WRONLY | os.O_CREATE | os.O_APPEND
-		if rng.start == 0 {
-			flags |= os.O_TRUNC
-		}
-		file, err := os.OpenFile(staging, flags, 0o600)
-		if err != nil {
-			s.log.Error("http cannot write the upload in progress", "file", target.Virtual, "error", err)
-			http.Error(w, "Server Error", http.StatusInternalServerError)
-			return
-		}
-
-		if set.cfg.ReadTimeout > 0 {
-			r.Body = &idleUploadBody{
-				ReadCloser: r.Body,
-				controller: http.NewResponseController(w),
-				idle:       seconds(set.cfg.ReadTimeout),
-			}
-		}
-		limited := &limitedBody{ReadCloser: http.MaxBytesReader(w, r.Body, chunkSize)}
-		r.Body = limited
-
-		written, err := io.Copy(file, r.Body)
-		if closeErr := file.Close(); err == nil {
-			err = closeErr
-		}
-		if err == nil && written != chunkSize {
-			// the client stopped short of what it said this chunk carried
-			err = io.ErrUnexpectedEOF
-		}
-		if err != nil {
-			// only the bytes this chunk was supposed to add are undone: a chunk
-			// that already landed stays landed, so the client can always retry
-			// with the exact same Content-Range
-			_ = os.Truncate(staging, rng.start)
-			if tooLarge(err) || limited.hit() {
-				s.chunkTooLarge(set, w, target)
-				return
-			}
-			if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || isClientGone(err) {
-				s.log.Info("http chunked upload failed", "user", nameOf(user), "file", target.Virtual,
-					"start", rng.start, "end", rng.end, "total", rng.total, "bytes", written,
-					"address", clientAddress(set, r), "took", time.Since(started).Round(time.Millisecond), "error", err)
-				http.Error(w, "Server Error", http.StatusInternalServerError)
-				return
-			}
-			s.log.Error("http chunked upload failed", "user", nameOf(user), "file", target.Virtual,
-				"start", rng.start, "end", rng.end, "total", rng.total, "bytes", written,
-				"address", clientAddress(set, r), "error", err)
-			http.Error(w, "Server Error", http.StatusInternalServerError)
-			return
-		}
+	if !s.writeRangeChunk(set, w, r, staging, rng, user, target.Virtual) {
+		return
 	}
 
 	if rng.end+1 < rng.total {
@@ -503,13 +425,109 @@ func (s *Server) handleChunkedPut(set *settings, w http.ResponseWriter, r *http.
 	w.WriteHeader(http.StatusCreated)
 }
 
+// writeRangeChunk adds one chunk to the staging file of an upload sent in
+// Content-Range pieces, or finds it already there, and answers the request
+// when it cannot: a start that does not continue what is staged gets 416, a
+// body larger than it said gets 413. A chunk that fails is undone, so the
+// client can send it again as it was. label names the upload in the log. The
+// caller holds the upload's lock and has checked the range against its limits.
+func (s *Server) writeRangeChunk(set *settings, w http.ResponseWriter, r *http.Request,
+	staging string, rng contentRange, user *account, label string) bool {
+	chunkSize := rng.end - rng.start + 1
+	started := time.Now()
+	var alreadyApplied bool
+	if rng.start != 0 {
+		info, err := os.Stat(staging)
+		switch {
+		case err == nil && info.Size() == rng.start:
+			// continues the upload already in progress
+		case err == nil && info.Size() == rng.end+1:
+			// this exact chunk already landed — most likely a retry after the
+			// response was lost once the bytes were safely written, such as a
+			// finalize that failed on what turned out to be the last chunk.
+			// Do not write it again: only pick up wherever finishing was
+			// interrupted, the same way a client is expected to retry.
+			alreadyApplied = true
+		case err == nil:
+			s.chunkOutOfSync(w, label, info.Size())
+			return false
+		case errors.Is(err, os.ErrNotExist):
+			s.chunkOutOfSync(w, label, 0)
+			return false
+		default:
+			s.log.Error("http cannot read the upload in progress", "file", label, "error", err)
+			http.Error(w, "Server Error", http.StatusInternalServerError)
+			return false
+		}
+	}
+
+	if !alreadyApplied {
+		// the first chunk (re)creates the staging file from empty — a client
+		// that restarts an upload from byte zero is allowed to, rather than
+		// being stuck behind whatever a previous, abandoned attempt left staged
+		flags := os.O_WRONLY | os.O_CREATE | os.O_APPEND
+		if rng.start == 0 {
+			flags |= os.O_TRUNC
+		}
+		file, err := os.OpenFile(staging, flags, 0o600)
+		if err != nil {
+			s.log.Error("http cannot write the upload in progress", "file", label, "error", err)
+			http.Error(w, "Server Error", http.StatusInternalServerError)
+			return false
+		}
+
+		if set.cfg.ReadTimeout > 0 {
+			r.Body = &idleUploadBody{
+				ReadCloser: r.Body,
+				controller: http.NewResponseController(w),
+				idle:       seconds(set.cfg.ReadTimeout),
+			}
+		}
+		limited := &limitedBody{ReadCloser: http.MaxBytesReader(w, r.Body, chunkSize)}
+		r.Body = limited
+
+		written, err := io.Copy(file, r.Body)
+		if closeErr := file.Close(); err == nil {
+			err = closeErr
+		}
+		if err == nil && written != chunkSize {
+			// the client stopped short of what it said this chunk carried
+			err = io.ErrUnexpectedEOF
+		}
+		if err != nil {
+			// only the bytes this chunk was supposed to add are undone: a chunk
+			// that already landed stays landed, so the client can always retry
+			// with the exact same Content-Range
+			_ = os.Truncate(staging, rng.start)
+			if tooLarge(err) || limited.hit() {
+				s.chunkTooLarge(set, w, label)
+				return false
+			}
+			if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || isClientGone(err) {
+				s.log.Info("http chunked upload failed", "user", nameOf(user), "file", label,
+					"start", rng.start, "end", rng.end, "total", rng.total, "bytes", written,
+					"address", clientAddress(set, r), "took", time.Since(started).Round(time.Millisecond), "error", err)
+				http.Error(w, "Server Error", http.StatusInternalServerError)
+				return false
+			}
+			s.log.Error("http chunked upload failed", "user", nameOf(user), "file", label,
+				"start", rng.start, "end", rng.end, "total", rng.total, "bytes", written,
+				"address", clientAddress(set, r), "error", err)
+			http.Error(w, "Server Error", http.StatusInternalServerError)
+			return false
+		}
+	}
+
+	return true
+}
+
 // chunkOutOfSync answers a chunk whose start does not match what the staging
 // file already holds, naming the offset that would have been accepted —
 // mirroring how a range GET answers an unsatisfiable range — so a client can
 // resynchronize instead of treating the whole upload as failed.
-func (s *Server) chunkOutOfSync(w http.ResponseWriter, target vfs.Target, have int64) {
+func (s *Server) chunkOutOfSync(w http.ResponseWriter, label string, have int64) {
 	s.log.Debug("http chunk does not continue the upload in progress",
-		"file", target.Virtual, "have", have)
+		"file", label, "have", have)
 	w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", have))
 	http.Error(w, fmt.Sprintf("expected the chunk to start at %d", have),
 		http.StatusRequestedRangeNotSatisfiable)
@@ -518,9 +536,9 @@ func (s *Server) chunkOutOfSync(w http.ResponseWriter, target vfs.Target, have i
 // chunkTooLarge answers a chunk whose declared or actual size is above
 // maxChunkSize — the per-chunk equivalent of tooLarge, which speaks to
 // maxUploadSize instead.
-func (s *Server) chunkTooLarge(set *settings, w http.ResponseWriter, target vfs.Target) {
+func (s *Server) chunkTooLarge(set *settings, w http.ResponseWriter, label string) {
 	s.log.Debug("http chunk exceeds the maximum chunk size",
-		"file", target.Virtual, "maxChunkSize", set.cfg.MaxChunkSize)
+		"file", label, "maxChunkSize", set.cfg.MaxChunkSize)
 	http.Error(w, fmt.Sprintf("a chunk cannot be larger than %d bytes", set.cfg.MaxChunkSize),
 		http.StatusRequestEntityTooLarge)
 }

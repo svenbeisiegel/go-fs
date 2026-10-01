@@ -300,6 +300,19 @@ dialog fieldset.platforms legend { padding: 0 0.25rem; color: var(--faint); font
 dialog .choices { display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; }
 dialog .choices label { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }
 dialog .choices .meta { color: var(--faint); font-size: 0.8rem; }
+/* The images an import found in its archive, each with the tags it is
+   stored under and the platforms it has. */
+dialog input[type="file"] { font: inherit; font-size: 0.85rem; }
+dialog .images { display: flex; flex-direction: column; gap: 0.6rem; max-height: 50vh; overflow-y: auto; }
+dialog fieldset.image { display: flex; flex-direction: column; gap: 0.45rem; margin: 0; padding: 0.5rem 0.75rem 0.65rem; border: 1px solid var(--line); border-radius: 6px; }
+dialog fieldset.image legend { padding: 0 0.25rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; overflow-wrap: anywhere; }
+dialog fieldset.image p { font-size: 0.8rem; }
+dialog .targets { display: flex; flex-direction: column; gap: 0.3rem; }
+dialog .targets label { display: flex; align-items: center; gap: 0.4rem; }
+dialog .targets input[type="text"] { flex: 1; min-width: 0; }
+dialog .targets input.invalid { border-color: var(--bad); }
+dialog .targets .meta { color: var(--faint); font-size: 0.8rem; white-space: nowrap; }
+dialog .targets button.plain { align-self: flex-start; height: 1.6rem; font-size: 0.8rem; }
 /* after every rule above that sets a display, so hidden wins over them */
 dialog [hidden] { display: none; }
 
@@ -363,6 +376,8 @@ td.c-acts button[aria-expanded="true"] { opacity: 1; background: var(--ground); 
   text-decoration: none;
   cursor: pointer;
 }
+/* an item a row does not offer, which the display above would show anyway */
+.menu button[hidden], .menu a[hidden] { display: none; }
 .menu button .ic, .menu a .ic { font-size: 1rem; color: var(--faint); }
 .menu button:hover, .menu button:focus-visible,
 .menu a:hover, .menu a:focus-visible { background: var(--ground); outline: none; }

@@ -34,9 +34,10 @@ import (
 // interface: a header is what docker sends, and docker has the API. Pulling
 // an image from another registry and pushing a tag to one take that session
 // too: the one writes to the registry, and the other hands its images to
-// wherever the account says. So does running the cleanup of unreferenced
-// blobs now rather than with the hourly sweep, since it removes what a push
-// may still be about to refer to.
+// wherever the account says. So does importing an image archive, which
+// writes to the registry as a push does, and running the cleanup of
+// unreferenced blobs now rather than with the hourly sweep, since it removes
+// what a push may still be about to refer to.
 
 const (
 	actionRegistry      = "registry"
@@ -49,6 +50,7 @@ const (
 	// the checks the dialogs make before a pull or a push may start
 	actionRegistryPullCheck = "registry-pull-check"
 	actionRegistryPushCheck = "registry-push-check"
+	// importing an image archive is in registry_import.go
 )
 
 // registryPageMethods are the methods each endpoint of the page answers.
@@ -61,6 +63,10 @@ var registryPageMethods = map[string]string{
 	actionRegistryCleanup:   "POST",
 	actionRegistryPullCheck: "POST",
 	actionRegistryPushCheck: "POST",
+
+	actionRegistryImportUpload:  "POST, PUT, DELETE",
+	actionRegistryImport:        "POST",
+	actionRegistryImportConfirm: "POST",
 }
 
 // registryPageAction reports which registry endpoint a request is for, or ""
@@ -68,7 +74,8 @@ var registryPageMethods = map[string]string{
 func registryPageAction(r *http.Request) string {
 	switch action := r.URL.Query().Get(sessionParam); action {
 	case actionRegistry, actionRegistryImage, actionRegistryPull, actionRegistryPush, actionRegistryJob,
-		actionRegistryPullCheck, actionRegistryPushCheck, actionRegistryCleanup:
+		actionRegistryPullCheck, actionRegistryPushCheck, actionRegistryCleanup,
+		actionRegistryImportUpload, actionRegistryImport, actionRegistryImportConfirm:
 		return action
 	default:
 		return ""
@@ -189,6 +196,22 @@ func (s *Server) handleRegistryPage(set *settings, w http.ResponseWriter, r *htt
 			return
 		}
 		s.registryCleanup(set, w, r, user)
+	case action == actionRegistryImportUpload &&
+		(r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete):
+		if !s.sameSite(set, w, r) {
+			return
+		}
+		s.registryImportUpload(set, w, r, user)
+	case action == actionRegistryImport && r.Method == http.MethodPost:
+		if !s.sameSite(set, w, r) {
+			return
+		}
+		s.registryImport(set, w, r, target, user)
+	case action == actionRegistryImportConfirm && r.Method == http.MethodPost:
+		if !s.sameSite(set, w, r) {
+			return
+		}
+		s.registryImportConfirm(set, w, r, user)
 	default:
 		w.Header().Set("Allow", registryPageMethods[action])
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -532,7 +555,10 @@ type registryData struct {
 	Empty   string
 	// Write says the account may delete tags, pull images from another
 	// registry and push tags to one.
-	Write   bool
+	Write bool
+	// Import is the archive of the folder the Import dialog opens with,
+	// which the listing's Import into registry asks for.
+	Import  string
 	Session sessionView
 	Nonce   string
 	Style   template.CSS
@@ -610,6 +636,7 @@ func (s *Server) registryPage(set *settings, w http.ResponseWriter, r *http.Requ
 		Columns: registryColumns(view, base),
 		Entries: rows,
 		Write:   user != nil,
+		Import:  importParam(r, user),
 		Session: who,
 		Nonce:   nonce,
 		Style:   listingStyle,
@@ -640,6 +667,16 @@ func (s *Server) registryPage(set *settings, w http.ResponseWriter, r *http.Requ
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(page.Bytes())
 	}
+}
+
+// importParam is the archive the page is asked to open the Import dialog
+// with: a name in the folder, never a path, and only for whoever may import.
+func importParam(r *http.Request, user *account) string {
+	name := r.URL.Query().Get("import")
+	if user == nil || name == "" || strings.ContainsAny(name, "/\\") || !isArchiveName(name) {
+		return ""
+	}
+	return name
 }
 
 // treeAt reads the folder view at a path out of the repository names: the
