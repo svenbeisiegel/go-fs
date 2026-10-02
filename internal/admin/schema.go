@@ -97,6 +97,12 @@ var fixedFields = map[string][]struct {
 	},
 }
 
+// serverMade are the keys of a section the server writes into the file itself
+// and nobody types in: the share link secret is generated at the first start,
+// and changing it would revoke every link handed out, so the page only shows
+// it and sends it back as it came.
+var serverMade = map[string]bool{"http.shareLinkSecret": true}
+
 // withFixed places the constants of a section among its fields.
 func withFixed(section string, fields []Field) []Field {
 	for _, entry := range fixedFields[section] {
@@ -162,8 +168,9 @@ func build() (Schema, []string) {
 			}
 			switch kind, ok := kindOf(inner.Type); {
 			case ok:
-				section.Fields = append(section.Fields,
-					newField(name, kind, k, key+"."+name, field.Type.Name()+"."+inner.Name))
+				made := newField(name, kind, k, key+"."+name, field.Type.Name()+"."+inner.Name)
+				made.ReadOnly = serverMade[key+"."+name]
+				section.Fields = append(section.Fields, made)
 
 			case inner.Type.Kind() == reflect.Slice && inner.Type.Elem().Kind() == reflect.Struct:
 				table, missed := buildTable(inner, key+"."+name, k)
@@ -267,7 +274,7 @@ func kindOf(fieldType reflect.Type) (string, bool) {
 // keys now that the file holds the key itself. A certificate is public and is
 // not one of them.
 func secret(name string) bool {
-	if strings.Contains(strings.ToLower(name), "password") {
+	if strings.Contains(strings.ToLower(name), "password") || strings.EqualFold(name, "shareLinkSecret") {
 		return true
 	}
 	kind := material(name)

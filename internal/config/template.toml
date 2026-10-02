@@ -355,6 +355,13 @@ httpSessionTokenLifetime = 3600
 httpSessionTokenSecret = ""
 # for instance: head -c 32 /dev/urandom | base64
 
+# The key the share links of files are signed with. Share in the row menu of a
+# file hands out a link with ?key= that lets anyone download that one file
+# without an account, until the file is changed, renamed or replaced. Left
+# empty it is generated at the first start and written in here; changing it
+# revokes every share link handed out so far.
+shareLinkSecret = ""
+
 # seconds to wait before answering a request that could not be authenticated
 loginFailureDelay = 1
 # Wrong passwords a client address may send in loginLockout seconds before it

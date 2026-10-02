@@ -241,6 +241,9 @@ type rights struct {
 	// Import is Import into registry on an image archive, offered to a
 	// session of an account of the registry, which is what importing takes.
 	Import bool
+	// Share is Share on a file, which hands out a link that downloads it
+	// without an account; it is offered to anyone signed in.
+	Share bool
 }
 
 type crumb struct {

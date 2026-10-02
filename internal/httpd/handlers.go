@@ -65,6 +65,7 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		allowed := s.rightsFor(set, user, target.Virtual)
 		allowed.Fetch = mayFetch(cred, target.Virtual)
 		allowed.Import = s.registrySession(set, r) != nil
+		allowed.Share = cred.user != nil
 		page, err := listingPage(vfs.AsFolder(target.Virtual), entries,
 			parseSort(r.URL.Query()), allowed,
 			s.sessionViewFor(set, r, cred), nonce, set.cfg.MaxChunkSize)
@@ -88,6 +89,10 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		s.log.Debug("http path is not a regular file", "path", target.Virtual,
 			"mode", info.Mode().String())
 		http.NotFound(w, r)
+		return
+	}
+	if r.URL.Query().Get(sessionParam) == actionShare {
+		s.handleShare(set, w, r, target, cred)
 		return
 	}
 

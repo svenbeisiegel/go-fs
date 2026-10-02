@@ -120,6 +120,10 @@
     },
     fetch: {
       403: "Only an account that is logged in and may create files here can fetch into this folder."
+    },
+    share: {
+      403: "Only a signed-in account that may read this file can share it.",
+      404: "That file is gone."
     }
   };
 
@@ -430,6 +434,8 @@
   var menu = document.getElementById("menu");
   var download = menu.querySelector("[data-do='download']");
   var removal = menu.querySelector("[data-do='delete']");
+  // Share is there for a file only: a link names one file as it is now
+  var sharing = menu.querySelector("[data-do='share']");
   // Import into registry is there for a file whose name an image archive has;
   // it opens the registry page's Import dialog with that file
   var importing = menu.querySelector("[data-do='import']");
@@ -449,6 +455,9 @@
     download.querySelector("span").textContent = isFolder ? "Download as .tar.xz" : "Download";
     if (removal) {
       removal.hidden = row.dataset.delete !== "1";
+    }
+    if (sharing) {
+      sharing.hidden = isFolder;
     }
     if (importing) {
       importing.hidden = isFolder || !archiveName.test(row.dataset.name);
@@ -549,6 +558,8 @@
       renameEntry(row);
     } else if (item.dataset.do === "delete") {
       deleteEntry(row);
+    } else if (item.dataset.do === "share") {
+      shareEntry(row);
     }
   });
 
@@ -570,6 +581,80 @@
       send(isFolder ? "folder" : "file", "DELETE", segment(name)).then(done).catch(failed);
     };
     checking.showModal();
+  }
+
+  // --- sharing a file --------------------------------------------------
+  //
+  // The server computes the link, since only it holds the secret the key is
+  // signed with; it answers the path and the query, and the origin is the
+  // one this page was loaded from, which is right behind a proxy as well.
+
+  var shareDialog = document.getElementById("share-dialog");
+  var shareField = shareDialog ? shareDialog.querySelector("input.link") : null;
+  var copyLabel = shareDialog ? shareDialog.querySelector("button[value='copy'] span") : null;
+  var copiedTimer = null;
+
+  function shareEntry(row) {
+    var name = row.dataset.name;
+    fetch(segment(name) + "?go-fs=share", {
+      headers: { Accept: "application/json" },
+      credentials: "same-origin"
+    }).then(function (res) {
+      if (res.ok) {
+        return res.json();
+      }
+      return res.text().then(function (text) {
+        throw new Error(reason("share", res.status, text.trim()));
+      });
+    }).then(function (view) {
+      shareDialog.querySelector("p").textContent = "Anyone with this link can download " +
+        decodeURI(folder) + name + " without logging in. It stops working as soon as " +
+        "the file is changed, renamed or replaced.";
+      shareField.value = window.location.origin + view.path;
+      copyLabel.textContent = "Copy";
+      shareDialog.showModal();
+      shareField.focus();
+      shareField.select();
+    }).catch(failed);
+  }
+
+  // The clipboard API is only there in a secure context, which a plain http
+  // page on another host is not; the selection is copied the old way there.
+  function copyLink() {
+    shareField.focus();
+    shareField.select();
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(shareField.value);
+    }
+    return new Promise(function (resolve, reject) {
+      if (document.execCommand("copy")) {
+        resolve();
+        return;
+      }
+      reject(new Error("copy refused"));
+    });
+  }
+
+  if (shareDialog) {
+    shareField.addEventListener("focus", function () {
+      shareField.select();
+    });
+    shareDialog.querySelector("form").addEventListener("submit", function (event) {
+      if (!event.submitter || event.submitter.value !== "copy") {
+        return;
+      }
+      // the dialog stays open, so the link can still be read after copying
+      event.preventDefault();
+      copyLink().then(function () {
+        copyLabel.textContent = "Copied";
+      }, function () {
+        copyLabel.textContent = "Press Ctrl+C";
+      });
+      window.clearTimeout(copiedTimer);
+      copiedTimer = window.setTimeout(function () {
+        copyLabel.textContent = "Copy";
+      }, 2000);
+    });
   }
 
   // --- fetching from a URL ---------------------------------------------

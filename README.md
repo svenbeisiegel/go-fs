@@ -498,6 +498,7 @@ methodsRequireAuth = ["PUT", "DELETE", "POST", "MKCOL", "MOVE"]
 pathsRequireAuth = ["^/private/.*"]
 httpSessionTokenLifetime = 3600
 httpSessionTokenSecret = ""
+shareLinkSecret = ""          # generated at the first start, see "Sharing a file"
 loginAttempts = 5
 loginLockout = 60
 trustedProxies = []
@@ -1120,6 +1121,41 @@ text and other data that compresses well packs at around 80 MB/s, but data that
 does not — video, images, archives — at well under 10 MB/s, so a large folder of
 those takes a while. `writeTimeout`, where set, caps an archive the way it caps
 any download.
+
+### Sharing a file
+
+**Share…** in the row menu of a file hands out a link that downloads that
+one file without an account, for passing a protected file to someone who has
+none. The dialog shows the full link to copy. It is the file's own URL with
+`?key=` added:
+
+```text
+https://example.com/osem/file.extension?key=3f9c…  (128 hex characters)
+```
+
+The key is an HMAC-SHA512, keyed by `http.shareLinkSecret`, over the file's
+path, its modification time and its size. Nothing is stored on the server: the
+key is computed again from the file at every request, so a link stops working
+as soon as the file is changed, touched, renamed or replaced. A link only reads.
+It answers `GET` and `HEAD` of the file it was made for, and nothing else: a
+folder, another file or any other method with the key is authenticated as it
+would be without it. A key that no longer matches is ignored, so a signed-in
+account holding an old link still gets the file.
+
+Any account that is signed in, with a session, Basic, Digest or a bearer token,
+and may read the file can make a link. The endpoint is `?go-fs=share` on the
+file and answers the path and query of the link as JSON:
+
+```shell
+curl -u john:doe 'https://example.com/osem/file.extension?go-fs=share'
+{"path":"/osem/file.extension?key=3f9c…"}
+```
+
+`http.shareLinkSecret` is generated and written into the configuration file at
+the first start, with the rest of the file left as it was. The admin interface
+shows it read-only. Changing it by hand revokes every link handed out so far.
+If the file cannot be written, a key is made for this run only, and the links
+stop working at the next restart.
 
 ### Fetching a file from a URL
 

@@ -434,6 +434,13 @@ type HTTP struct {
 	// browser out on a restart and stops two hosts serving the same folder
 	// from sharing a login. Changing it needs a restart.
 	SessionTokenSecret string `toml:"httpSessionTokenSecret"`
+	// ShareLinkSecret is the key a file's share link is signed with: a link
+	// carries ?key= with an HMAC-SHA512 over the file's path, modification
+	// time and size, which lets anyone holding it download that one file
+	// without an account until the file changes. It is generated and written
+	// into this file at the first start; changing it revokes every link handed
+	// out so far.
+	ShareLinkSecret string `toml:"shareLinkSecret"`
 	// LoginFailureDelay is the delay in seconds before a rejected request is
 	// answered, which slows down guessing.
 	LoginFailureDelay int `toml:"loginFailureDelay"`
@@ -973,6 +980,9 @@ func (c Config) validateHTTP() error {
 		if _, err := DecodeSessionSecret(h.SessionTokenSecret); err != nil {
 			return fmt.Errorf("http.httpSessionTokenSecret: %w", err)
 		}
+	}
+	if h.ShareLinkSecret != "" && len(h.ShareLinkSecret) < MinShareSecret {
+		return fmt.Errorf("http.shareLinkSecret has to be at least %d characters", MinShareSecret)
 	}
 	if h.LoginAttempts < 0 {
 		return errors.New("http.loginAttempts cannot be negative")

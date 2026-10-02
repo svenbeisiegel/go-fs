@@ -345,6 +345,11 @@ func TestFixedS3Fields(t *testing.T) {
 				t.Errorf("%s is not a documented read-only field: %+v", field.Key, field)
 			}
 		}
+		if field.Key == "shareLinkSecret" {
+			if !field.ReadOnly || field.Kind != kindSecret || field.Help == "" {
+				t.Errorf("%s is not a documented read-only secret: %+v", field.Key, field)
+			}
+		}
 	}
 	joined := strings.Join(order, ",")
 	if !strings.Contains(joined, "enableS3,s3Region") {

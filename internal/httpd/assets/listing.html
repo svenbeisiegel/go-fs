@@ -82,6 +82,7 @@
 
 <div id="menu" class="menu" role="menu" hidden>
   <a role="menuitem" data-do="download" download><svg class="ic"><use href="#i-download"/></svg><span>Download</span></a>
+  {{if .Rights.Share}}<button type="button" role="menuitem" data-do="share"><svg class="ic"><use href="#i-link"/></svg>Share&#8230;</button>{{end}}
   {{if and .Rights.Import .Session.Registry}}<a role="menuitem" data-do="import" data-registry="{{.Session.Registry}}" hidden><svg class="ic"><use href="#i-box"/></svg><span>Import into registry&#8230;</span></a>{{end}}
   {{if .Rights.Rename}}<button type="button" role="menuitem" data-do="rename"><svg class="ic"><use href="#i-pencil"/></svg>Rename&#8230;</button>{{end}}
   {{if or .Rights.DeleteFile .Rights.DeleteFolder}}<button type="button" role="menuitem" class="remove" data-do="delete"><svg class="ic"><use href="#i-trash"/></svg>Delete</button>{{end}}
@@ -126,6 +127,20 @@
       <button class="go" type="submit" value="start">Fetch</button>
       <button class="plain" type="submit" value="stop" formnovalidate hidden>Stop</button>
       <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
+
+{{if .Rights.Share}}
+<dialog id="share-dialog" aria-labelledby="share-title">
+  <form method="dialog">
+    <h2 id="share-title">Share file</h2>
+    <p></p>
+    <input class="link" type="text" readonly aria-label="Share link" spellcheck="false">
+    <div class="row">
+      <button class="go" type="submit" value="copy"><svg class="ic"><use href="#i-copy"/></svg><span>Copy</span></button>
+      <button class="plain" type="submit" value="cancel">Close</button>
     </div>
   </form>
 </dialog>

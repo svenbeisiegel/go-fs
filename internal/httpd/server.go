@@ -59,6 +59,10 @@ type Server struct {
 	// nonceKey signs the digest nonces this server hands out, so that a nonce
 	// carries its own age and needs nothing to be remembered about it.
 	nonceKey []byte
+	// shareFallback signs the share links while http.shareLinkSecret is
+	// empty, which it only is when the file could not be given one; see
+	// shareSecret in share.go.
+	shareFallback []byte
 	// logins counts the wrong passwords each client address has sent, and
 	// locks the ones that sent too many.
 	logins *loginTracker
@@ -253,6 +257,10 @@ func New(cfg config.HTTP, https config.HTTPS, users []config.User, bearers []con
 	if _, err := rand.Read(nonceKey); err != nil {
 		return nil, err
 	}
+	shareFallback := make([]byte, 64)
+	if _, err := rand.Read(shareFallback); err != nil {
+		return nil, err
+	}
 
 	tokens, err := newSigner(cfg.SessionTokenSecret, logger)
 	if err != nil {
@@ -260,12 +268,13 @@ func New(cfg config.HTTP, https config.HTTPS, users []config.User, bearers []con
 	}
 
 	server := &Server{
-		root:     root,
-		log:      logger,
-		tokens:   tokens,
-		nonceKey: nonceKey,
-		logins:   newLoginTracker(),
-		done:     make(chan struct{}),
+		root:          root,
+		log:           logger,
+		tokens:        tokens,
+		nonceKey:      nonceKey,
+		shareFallback: shareFallback,
+		logins:        newLoginTracker(),
+		done:          make(chan struct{}),
 	}
 	if configPath != "" {
 		// built whether or not the switch is on: the switch is read from the
@@ -526,6 +535,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// and so does the registry page, which lets in whoever may pull
 	if action := registryPageAction(r); action != "" {
 		s.handleRegistryPage(set, w, r, target, action)
+		return
+	}
+
+	// a share link stands in for an account, for the download of the one
+	// file it was made for and nothing else
+	if s.sharedFile(set, r, target) {
+		s.log.Info("http share link used", "file", target.Virtual,
+			"address", clientAddress(set, r))
+		s.handleGet(set, w, r, target, credential{method: "share"})
 		return
 	}
 

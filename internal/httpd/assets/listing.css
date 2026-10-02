@@ -271,6 +271,9 @@ dialog button.go {
   cursor: pointer;
 }
 dialog button.go.danger { border-color: var(--bad); background: var(--bad); }
+/* The share dialog: the link is shown whole, to be copied rather than typed. */
+dialog input.link { box-sizing: border-box; width: 100%; color: var(--faint); }
+dialog button.go .ic { margin-right: 0.35rem; vertical-align: -0.15em; }
 /* The dialogs that pull an image from another registry, push a tag to one
    and fetch a file from a URL: a few labelled fields, and the progress of the
    transfer once it runs. */
