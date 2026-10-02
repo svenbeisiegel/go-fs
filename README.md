@@ -1133,6 +1133,15 @@ none. The dialog shows the full link to copy. It is the file's own URL with
 https://example.com/osem/file.extension?key=3f9c…  (128 hex characters)
 ```
 
+The download names the file in its `Content-Disposition` header, which a
+browser follows. Command-line clients only use the header when asked to.
+Without that, `wget` names the file after the URL, key included:
+
+```shell
+wget --content-disposition 'https://example.com/osem/file.extension?key=3f9c…'
+curl -OJ 'https://example.com/osem/file.extension?key=3f9c…'
+```
+
 The key is an HMAC-SHA512, keyed by `http.shareLinkSecret`, over the file's
 path, its modification time and its size. Nothing is stored on the server: the
 key is computed again from the file at every request, so a link stops working
