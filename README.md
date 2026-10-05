@@ -1181,8 +1181,17 @@ like) are refused, and so is an `Authorization` header next to a username.
 such as a self-signed one. It holds for the redirects as well.
 
 The server downloads the file itself, in the background, as the registry page
-pulls an image: the dialog shows how many bytes have arrived, can stop the
-download, and may be closed while it runs; the banner then says how it ended.
+pulls an image, and finishes it whether or not a page is still open: closing
+or reloading the page does not stop it. The dialog waits only until the remote
+has answered; an error such as a `404` or a name that is taken is shown there,
+and once the download has begun the dialog closes. Several downloads can run
+side by side. While any runs, a button left of the filter, in every listing of
+the account, shows how fast they go together, and its background fills from
+left to right as far as they have got. It opens **Downloads**, which lists
+each with its name, the share that has arrived, its speed and **Stop**, which
+stops it and takes it off the list; a download that failed stays there with
+its reason until it is cleared. When one finishes into the folder on the
+screen, the page reloads to show the file; elsewhere the banner says so.
 Redirects are followed, ten at most, and the login and an `Authorization`
 header go only to the scheme, host and port they were given for, while the
 other headers follow the redirect. The file is stored as sent: a body with a
@@ -1194,15 +1203,18 @@ otherwise; only the last segment of either is used, so the file always lands
 in the folder shown. A name that is taken is replaced only for an account that
 sets `allowUserFileOverwrite`, as for an upload. `maxUploadSize` applies, and
 the bytes are staged in `http.uploadStagingFolder` until the download is
-complete. At most four fetches, pulls and pushes run at once, all accounts
-together.
+complete. At most eight fetches run at once, all accounts together, apart
+from the registry's pulls and pushes, of which at most four do.
 
 Fetch is offered to a session only: not to Basic, Digest or bearer
 credentials, which have `PUT` for the same job, and not to anyone where `PUT`
 is public. The endpoints are `?go-fs=fetch` (`POST` of `url`, `username`,
 `password`, `headers` and `skipVerify`) and
-`?go-fs=fetch-job&id=…` (`GET` for the progress, `DELETE` to stop) on the
-folder. Note that the server connects to whatever host is typed in, from its
+`?go-fs=fetch-job&id=…` (`GET` for the progress, `DELETE` to stop and clear)
+on the folder, and `?go-fs=fetch-jobs` (`GET`), on any folder, for the
+account's downloads that have not been cleared, with `name`, `folder`,
+`phase` (`downloading` once the remote has answered), `bytesDone`,
+`bytesTotal` and `bytesPerSecond`. Note that the server connects to whatever host is typed in, from its
 own network, internal addresses included: give the right to create files only
 to accounts that may do that.
 

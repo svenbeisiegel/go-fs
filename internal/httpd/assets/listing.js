@@ -660,9 +660,288 @@
   // --- fetching from a URL ---------------------------------------------
   //
   // The server does the download, as a job of its own, the way the registry
-  // page pulls an image: the dialog starts it, then asks every second how far
-  // it has got. Closing the dialog leaves the job running, and the banner
-  // says how it ended.
+  // page pulls an image, and it runs on to its end whether or not a page is
+  // still open. The dialog only starts it, and waits until the remote has
+  // answered and the file is on its way; from then on it is one of the
+  // downloads the button in the header follows, together with every other
+  // fetch of the account.
+
+  // the same units the server writes into the Size column
+  function readableSize(size) {
+    function tenth(value) {
+      return Math.round(value * 10) / 10;
+    }
+    if (size > 1000000000) {
+      return tenth(size / 1024 / 1024 / 1024) + " GB";
+    }
+    if (size > 1000000) {
+      return tenth(size / 1024 / 1024) + " MB";
+    }
+    return tenth(size / 1024) + " KB";
+  }
+
+  function readableRate(perSecond) {
+    return readableSize(perSecond || 0) + "/s";
+  }
+
+  function fetchJobURL(id) {
+    return folder + "?go-fs=fetch-job&id=" + encodeURIComponent(id);
+  }
+
+  function askFetch(method, url, body) {
+    var options = {
+      method: method,
+      headers: { Accept: "application/json" },
+      credentials: "same-origin"
+    };
+    if (body !== undefined) {
+      options.headers["Content-Type"] = "application/json";
+      options.body = JSON.stringify(body);
+    }
+    return fetch(url, options).then(function (res) {
+      if (res.ok) {
+        return res;
+      }
+      return res.text().then(function (text) {
+        throw new Error(reason("fetch", res.status, text.trim()));
+      });
+    });
+  }
+
+  // here is this folder as the server names it, unescaped, which is how a
+  // fetch says where it stores
+  var here = (function () {
+    try {
+      return folder.split("/").map(decodeURIComponent).join("/");
+    } catch (ignored) {
+      return folder;
+    }
+  })();
+
+  // The downloads: the button in the header says how fast the fetches of the
+  // account go together and fills as far as they have got, and opens the
+  // window that lists them one by one. The page asks after them every second
+  // while one runs or the window is open, and once when it loads, which
+  // finds those started before a reload or in another tab.
+  var downloads = (function () {
+    var button = document.getElementById("downloads");
+    var dialog = document.getElementById("downloads-dialog");
+    if (!button || !dialog) {
+      return { refresh: function () {} };
+    }
+    var label = button.querySelector(".rate");
+    var list = dialog.querySelector(".downloads-list");
+    var none = dialog.querySelector("p.none");
+    var menu = document.getElementById("menu");
+    var queue = document.getElementById("queue");
+    var timer = null;
+    var asking = false;
+    var again = false;
+    // shown are the fetches the button counts: those that run, and those
+    // that failed until they are cleared
+    var shown = [];
+    // told are the fetches whose end this page has already told about
+    var told = {};
+    // rows are the lines of the window, by job
+    var rows = {};
+
+    function running(job) {
+      return job.state === "running";
+    }
+
+    // quiet is a page a reload would take nothing from: no dialog or menu
+    // open, and no upload under way or with reasons left on the screen
+    function quiet() {
+      return !document.querySelector("dialog[open]") &&
+        (!menu || menu.hidden) && (!queue || queue.hidden);
+    }
+
+    // A fetch that ended is told about once and taken off the list. One that
+    // stored into this folder reloads the page to show the file, unless that
+    // would take something from the screen.
+    function finish(ended) {
+      if (ended.length === 0) {
+        return;
+      }
+      var messages = ended.map(function (job) {
+        return job.message;
+      }).join(" ");
+      var mine = ended.some(function (job) {
+        return job.folder === here;
+      });
+      Promise.all(ended.map(function (job) {
+        return askFetch("DELETE", fetchJobURL(job.id)).catch(function () {
+          // it is forgotten within the hour anyway
+        });
+      })).then(function () {
+        if (mine && quiet()) {
+          sayAfterReload(messages);
+          return;
+        }
+        say(mine ? messages + " Reload the page to see it." : messages, true);
+      });
+    }
+
+    function line(job) {
+      var row = rows[job.id];
+      if (!row) {
+        row = { item: document.createElement("li") };
+        var cell = document.createElement("span");
+        cell.className = "name";
+        row.file = document.createElement("span");
+        row.file.className = "file";
+        row.where = document.createElement("span");
+        row.where.className = "folder";
+        cell.appendChild(row.file);
+        cell.appendChild(row.where);
+        row.share = document.createElement("span");
+        row.share.className = "share";
+        row.speed = document.createElement("span");
+        row.speed.className = "speed";
+        var track = document.createElement("span");
+        track.className = "track";
+        row.fill = document.createElement("span");
+        row.fill.className = "fill";
+        track.appendChild(row.fill);
+        row.message = document.createElement("span");
+        row.message.className = "message";
+        row.stop = document.createElement("button");
+        row.stop.type = "button";
+        row.stop.className = "plain";
+        row.stop.addEventListener("click", function () {
+          row.stop.disabled = true;
+          askFetch("DELETE", fetchJobURL(job.id)).then(refresh, function (err) {
+            row.stop.disabled = false;
+            failed(err);
+          });
+        });
+        [cell, row.share, row.speed, track, row.message, row.stop].forEach(function (part) {
+          row.item.appendChild(part);
+        });
+        rows[job.id] = row;
+      }
+      var name = job.name || job.what;
+      var bad = job.state === "failed";
+      row.file.textContent = name;
+      row.file.title = name;
+      row.where.textContent = job.folder ? "into " + job.folder : "";
+      row.item.classList.toggle("failed", bad);
+      row.message.hidden = !bad;
+      row.message.textContent = bad ? (job.message || "The fetch failed.") : "";
+      row.stop.textContent = bad ? "Clear" : "Stop";
+      row.stop.setAttribute("aria-label", (bad ? "Clear " : "Stop ") + name);
+      if (bad) {
+        return row.item;
+      }
+      if (job.phase !== "downloading") {
+        row.share.textContent = "";
+        row.speed.textContent = "Connecting…";
+        row.fill.style.width = "0";
+      } else if (job.bytesTotal > 0) {
+        var percent = Math.floor(Math.min(job.bytesDone, job.bytesTotal) * 100 / job.bytesTotal);
+        row.share.textContent = percent + "%";
+        row.speed.textContent = readableRate(job.bytesPerSecond);
+        row.fill.style.width = percent + "%";
+      } else {
+        // the remote did not say how large it is
+        row.share.textContent = readableSize(job.bytesDone);
+        row.speed.textContent = readableRate(job.bytesPerSecond);
+        row.fill.style.width = "0";
+      }
+      return row.item;
+    }
+
+    function render(jobs) {
+      var ended = [];
+      shown = jobs.filter(function (job) {
+        if (job.state === "done" && !told[job.id]) {
+          told[job.id] = true;
+          ended.push(job);
+        }
+        return running(job) || job.state === "failed";
+      });
+      finish(ended);
+
+      var active = shown.filter(running);
+      var speed = 0;
+      var done = 0;
+      var total = 0;
+      active.forEach(function (job) {
+        speed += job.bytesPerSecond || 0;
+        if (job.bytesTotal > 0) {
+          done += Math.min(job.bytesDone, job.bytesTotal);
+          total += job.bytesTotal;
+        }
+      });
+      var percent = total > 0 ? Math.floor(done * 100 / total) : 0;
+      var lost = shown.length - active.length;
+      button.hidden = shown.length === 0;
+      button.style.setProperty("--progress", active.length > 0 ? percent + "%" : "0%");
+      button.classList.toggle("bad", active.length === 0 && lost > 0);
+      var words;
+      if (active.length > 0) {
+        label.textContent = readableRate(speed) + (active.length > 1 ? " · " + active.length : "");
+        words = (active.length === 1 ? "1 download" : active.length + " downloads") + ", " +
+          (total > 0 ? percent + "% done" : "size unknown") + ", " + readableRate(speed);
+      } else {
+        label.textContent = lost + " failed";
+        words = lost === 1 ? "1 download failed" : lost + " downloads failed";
+      }
+      button.title = words;
+      button.setAttribute("aria-label", "Downloads: " + words);
+
+      var keep = {};
+      shown.forEach(function (job) {
+        keep[job.id] = true;
+        list.appendChild(line(job));
+      });
+      Object.keys(rows).forEach(function (id) {
+        if (!keep[id]) {
+          list.removeChild(rows[id].item);
+          delete rows[id];
+        }
+      });
+      none.hidden = shown.length > 0;
+    }
+
+    function refresh() {
+      window.clearTimeout(timer);
+      timer = null;
+      if (asking) {
+        again = true;
+        return;
+      }
+      asking = true;
+      var wait = 1000;
+      askFetch("GET", folder + "?go-fs=fetch-jobs").then(function (res) {
+        return res.json();
+      }).then(function (view) {
+        render(view.jobs || []);
+      }).catch(function () {
+        // the server may be restarting; what was shown stays, and is asked
+        // after less often
+        wait = 5000;
+      }).then(function () {
+        asking = false;
+        if (again) {
+          again = false;
+          refresh();
+          return;
+        }
+        if (dialog.open || shown.some(running)) {
+          timer = window.setTimeout(refresh, wait);
+        }
+      });
+    }
+
+    button.addEventListener("click", function () {
+      clear();
+      dialog.showModal();
+      refresh();
+    });
+    refresh();
+    return { refresh: refresh };
+  })();
 
   (function () {
     var dialog = document.getElementById("fetch-dialog");
@@ -678,49 +957,12 @@
     var go = form.querySelector("button[value='start']");
     var stop = form.querySelector("button[value='stop']");
     var close = form.querySelector("button[value='cancel']");
-    // job is the id of the fetch that runs, null while none does
+    // job is the fetch the dialog waits on until its download begins, null
+    // while it waits on none
     var job = null;
 
     function field(name) {
       return form.elements[name];
-    }
-
-    function jobURL(id) {
-      return folder + "?go-fs=fetch-job&id=" + encodeURIComponent(id);
-    }
-
-    function request(method, url, body) {
-      var options = {
-        method: method,
-        headers: { Accept: "application/json" },
-        credentials: "same-origin"
-      };
-      if (body !== undefined) {
-        options.headers["Content-Type"] = "application/json";
-        options.body = JSON.stringify(body);
-      }
-      return fetch(url, options).then(function (res) {
-        if (res.ok) {
-          return res;
-        }
-        return res.text().then(function (text) {
-          throw new Error(reason("fetch", res.status, text.trim()));
-        });
-      });
-    }
-
-    // the same units the server writes into the Size column
-    function readableSize(size) {
-      function tenth(value) {
-        return Math.round(value * 10) / 10;
-      }
-      if (size > 1000000000) {
-        return tenth(size / 1024 / 1024 / 1024) + " GB";
-      }
-      if (size > 1000000) {
-        return tenth(size / 1024 / 1024) + " MB";
-      }
-      return tenth(size / 1024) + " KB";
     }
 
     function busy(on) {
@@ -744,51 +986,54 @@
       status.classList.remove("bad");
     }
 
-    function show(view) {
-      if (view.bytesTotal > 0) {
-        bar.max = view.bytesTotal;
-        bar.value = Math.min(view.bytesDone, view.bytesTotal);
-        tell(readableSize(view.bytesDone) + " of " + readableSize(view.bytesTotal));
-        return;
-      }
-      // the size is not known, or not yet: the bar runs without a value
-      bar.removeAttribute("value");
-      tell(view.bytesDone > 0 ? readableSize(view.bytesDone) + " so far" : "Connecting…");
+    function fresh() {
+      form.reset();
+      headers.open = false;
+      quiet();
     }
 
-    function end(view) {
-      job = null;
-      busy(false);
-      if (view.state === "done") {
-        if (dialog.open) {
-          dialog.close();
-        }
-        sayAfterReload(view.message);
+    // wait asks after the fetch until the remote has answered. A download
+    // that has begun leaves the dialog for the button in the header; one that
+    // could not begin is told here, where the URL can still be corrected.
+    function wait() {
+      var id = job;
+      if (!id) {
         return;
       }
-      var message = view.state === "cancelled" ? "Stopped." : (view.message || "The fetch failed.");
-      bar.value = 0;
-      tell(message, view.state !== "cancelled");
-      if (!dialog.open) {
-        say(message);
-      }
-    }
-
-    function poll() {
-      if (!job) {
-        return;
-      }
-      request("GET", jobURL(job)).then(function (res) {
+      askFetch("GET", fetchJobURL(id)).then(function (res) {
         return res.json();
       }).then(function (view) {
-        if (view.state === "running") {
-          show(view);
-          window.setTimeout(poll, 1000);
+        if (job !== id) {
           return;
         }
-        end(view);
+        if (view.state === "running" && view.phase !== "downloading") {
+          window.setTimeout(wait, 400);
+          return;
+        }
+        job = null;
+        busy(false);
+        if (view.state === "running" || view.state === "done") {
+          dialog.close();
+          fresh();
+          downloads.refresh();
+          return;
+        }
+        bar.value = 0;
+        if (view.state === "cancelled") {
+          tell("Stopped.");
+          return;
+        }
+        tell(view.message || "The fetch failed.", true);
+        // told here, so the downloads need not tell it again
+        askFetch("DELETE", fetchJobURL(id)).catch(function () {});
       }).catch(function (err) {
-        end({ state: "failed", message: err.message });
+        if (job !== id) {
+          return;
+        }
+        job = null;
+        busy(false);
+        bar.value = 0;
+        tell(err.message, true);
       });
     }
 
@@ -802,7 +1047,7 @@
       event.preventDefault();
       if (pressed === "stop") {
         if (job) {
-          request("DELETE", jobURL(job)).catch(failed);
+          askFetch("DELETE", fetchJobURL(job)).catch(failed);
         }
         return;
       }
@@ -818,13 +1063,12 @@
       };
       busy(true);
       bar.removeAttribute("value");
-      tell("Starting…");
-      request("POST", folder + "?go-fs=fetch", body).then(function (res) {
+      tell("Connecting…");
+      askFetch("POST", folder + "?go-fs=fetch", body).then(function (res) {
         return res.json();
       }).then(function (view) {
         job = view.id;
-        show(view);
-        window.setTimeout(poll, 1000);
+        wait();
       }).catch(function (err) {
         busy(false);
         bar.value = 0;
@@ -832,20 +1076,21 @@
       });
     });
 
-    // The dialog shows the fetch that runs as it was left, and a fresh form
-    // when none does.
+    // Closed while the remote has not answered yet: the fetch goes on, and
+    // the downloads follow it from here.
+    dialog.addEventListener("close", function () {
+      if (job) {
+        job = null;
+        busy(false);
+        downloads.refresh();
+      }
+    });
+
     button.addEventListener("click", function () {
       clear();
-      var fresh = !job;
-      if (fresh) {
-        form.reset();
-        headers.open = false;
-        quiet();
-      }
+      fresh();
       dialog.showModal();
-      if (fresh) {
-        field("url").focus();
-      }
+      field("url").focus();
     });
   })();
 

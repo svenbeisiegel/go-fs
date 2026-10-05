@@ -100,6 +100,21 @@ input[type="search"] {
 .plain:hover { border-color: var(--faint); }
 .plain .ic { font-size: 1rem; }
 
+/* The fetches of the account, while there are any: the button fills from
+   the left as far as they have got together, and says how fast they go. */
+.downloads {
+  min-width: 7.5rem;
+  justify-content: center;
+  background: linear-gradient(to right,
+    color-mix(in srgb, var(--accent) 24%, var(--ground)) var(--progress, 0%),
+    var(--ground) var(--progress, 0%));
+  font-variant-numeric: tabular-nums;
+}
+.downloads .ic { color: var(--accent); }
+.downloads.bad { border-color: var(--bad); color: var(--bad); }
+.downloads.bad .ic { color: var(--bad); }
+.js .downloads[hidden] { display: none; }
+
 /* The form that holds the Log out button: a form is a block, and this one
    sits in a row of controls. */
 .inline { display: contents; }
@@ -316,6 +331,34 @@ dialog .targets input[type="text"] { flex: 1; min-width: 0; }
 dialog .targets input.invalid { border-color: var(--bad); }
 dialog .targets .meta { color: var(--faint); font-size: 0.8rem; white-space: nowrap; }
 dialog .targets button.plain { align-self: flex-start; height: 1.6rem; font-size: 0.8rem; }
+/* The downloads window: a row a fetch, with how far it has got, how fast it
+   goes, and the button that stops it or clears it away. */
+dialog .downloads-list { display: flex; flex-direction: column; gap: 0.15rem; margin: 0; padding: 0; list-style: none; max-height: 60vh; overflow-y: auto; }
+dialog .downloads-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4.5rem 6.5rem auto;
+  grid-template-areas: "name share speed stop" "track track track stop";
+  gap: 0.2rem 0.75rem;
+  align-items: center;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+dialog .downloads-list li:last-child { border-bottom: 0; }
+dialog .downloads-list .name { grid-area: name; display: flex; flex-direction: column; min-width: 0; }
+dialog .downloads-list .file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+dialog .downloads-list .folder { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 0.75rem; }
+dialog .downloads-list .share { grid-area: share; text-align: right; font-variant-numeric: tabular-nums; }
+dialog .downloads-list .speed { grid-area: speed; text-align: right; color: var(--faint); font-variant-numeric: tabular-nums; }
+dialog .downloads-list .track { grid-area: track; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+dialog .downloads-list .fill { display: block; height: 100%; width: 0; background: var(--accent); }
+dialog .downloads-list button { grid-area: stop; height: 1.8rem; font-size: 0.8rem; }
+dialog .downloads-list li.failed .share, dialog .downloads-list li.failed .speed, dialog .downloads-list li.failed .track { display: none; }
+dialog .downloads-list .message { grid-row: 2; grid-column: 1 / -2; color: var(--bad); font-size: 0.8rem; overflow-wrap: anywhere; }
+@media (max-width: 30rem) {
+  dialog .downloads-list li { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "name name stop" "share speed stop" "track track track"; }
+}
+
 /* after every rule above that sets a display, so hidden wins over them */
 dialog [hidden] { display: none; }
 

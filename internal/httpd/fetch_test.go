@@ -3,7 +3,9 @@ package httpd
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -463,5 +465,305 @@ func TestParseFetchHeaders(t *testing.T) {
 	}
 	if header.Get("Accept") != "a" || len(header.Values("X-Many")) != 2 || header.Get("X-Empty") != "" {
 		t.Errorf("%v", header)
+	}
+}
+
+// fetchList is what the listing reads of the fetches of its account.
+func fetchList(t *testing.T, server *testServer, folder string, session *http.Cookie) []registryJobJSON {
+	t.Helper()
+	res, data := transferRequest(t, server, http.MethodGet, folder+"?go-fs=fetch-jobs", session, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("the fetches answered %d: %s", res.StatusCode, data)
+	}
+	var list fetchJobsJSON
+	if err := json.Unmarshal(data, &list); err != nil {
+		t.Fatal(err)
+	}
+	return list.Jobs
+}
+
+func listedFetch(jobs []registryJobJSON, id string) (registryJobJSON, bool) {
+	for _, job := range jobs {
+		if job.ID == id {
+			return job, true
+		}
+	}
+	return registryJobJSON{}, false
+}
+
+// slowOrigin sends a little of a file of a known size, and then nothing until
+// the test ends or the fetch is stopped.
+func slowOrigin(t *testing.T, disposition string) *httptest.Server {
+	t.Helper()
+	release := make(chan struct{})
+	remote := origin(t, func(w http.ResponseWriter, r *http.Request) {
+		if disposition != "" {
+			w.Header().Set("Content-Disposition", disposition)
+		}
+		w.Header().Set("Content-Length", "1000")
+		_, _ = w.Write([]byte("begun"))
+		w.(http.Flusher).Flush()
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	})
+	t.Cleanup(func() { close(release) })
+	return remote
+}
+
+// waitForDownload asks after a fetch until it stores its file.
+func waitForDownload(t *testing.T, server *testServer, folder, id string, session *http.Cookie) registryJobJSON {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		_, data := transferRequest(t, server, http.MethodGet, folder+"?go-fs=fetch-job&id="+id, session, nil)
+		var view registryJobJSON
+		_ = json.Unmarshal(data, &view)
+		if view.Phase == fetchDownloading && view.BytesDone > 0 {
+			return view
+		}
+		if view.State != jobRunning || time.Now().After(deadline) {
+			t.Fatalf("the download did not begin: %+v", view)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestFetchEndsWithoutThePage(t *testing.T) {
+	remote := origin(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("unwatched"))
+	})
+	server := newServer(t, nil)
+	if err := os.Mkdir(filepath.Join(server.base, "in"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	session := login(t, server, "/", "john", "doe")
+	job := startFetch(t, server, "/in/", session, fetchBody{URL: remote.URL + "/files/alone.txt"})
+
+	// nobody asks after the fetch until its file is there
+	stored := filepath.Join(server.base, "in", "alone.txt")
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if data, err := os.ReadFile(stored); err == nil && string(data) == "unwatched" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the fetch did not store its file")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// and any listing of the account finds how it ended
+	var view registryJobJSON
+	for {
+		var ok bool
+		view, ok = listedFetch(fetchList(t, server, "/", session), job.ID)
+		if !ok {
+			t.Fatal("the fetch is not listed")
+		}
+		if view.State != jobRunning || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	expectDone(t, view)
+	if view.Name != "alone.txt" || view.Folder != "/in/" {
+		t.Errorf("the fetch is listed as %q into %q", view.Name, view.Folder)
+	}
+}
+
+func TestFetchesAreListedToTheirAccountOnly(t *testing.T) {
+	remote := origin(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("x"))
+	})
+	server := newRegistryServer(t, func(cfg *httpConfig) {
+		both := fullUser("both", "pw")
+		both.Registry = true
+		cfg.Users = append(cfg.Users, both, readOnlyUser("reader", "pw"))
+	})
+	session := login(t, server, "/", "both", "pw")
+	job := startFetch(t, server, "/", session, fetchBody{URL: remote.URL + "/x.txt"})
+	expectDone(t, waitForFetch(t, server, "/", job.ID, session))
+	pull, err := server.startJob(jobPull, "both", "a pull", func(ctx context.Context, job *registryJob) (string, error) {
+		return "pulled", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jobs := fetchList(t, server, "/", session)
+	if _, ok := listedFetch(jobs, job.ID); !ok {
+		t.Error("the fetch is not listed to its account")
+	}
+	if _, ok := listedFetch(jobs, pull.id); ok {
+		t.Error("a pull is listed as a fetch")
+	}
+	if _, ok := listedFetch(fetchList(t, server, "/", login(t, server, "/", "john", "doe")), job.ID); ok {
+		t.Error("the fetch is listed to someone else")
+	}
+	// an account that may not fetch here still sees the fetches it has
+	if jobs := fetchList(t, server, "/", login(t, server, "/", "reader", "pw")); len(jobs) != 0 {
+		t.Errorf("a reader is listed %d fetches", len(jobs))
+	}
+
+	res, _ := transferRequest(t, server, http.MethodGet, "/?go-fs=fetch-jobs", nil, nil, "Authorization", "Basic "+
+		basicToken("both", "pw"))
+	if res.StatusCode != http.StatusForbidden {
+		t.Errorf("the fetches answered %d to a Basic header", res.StatusCode)
+	}
+	res, _ = transferRequest(t, server, http.MethodPost, "/?go-fs=fetch-jobs", session, nil)
+	if res.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("a POST to the fetches answered %d", res.StatusCode)
+	}
+}
+
+func TestFetchesRunSideBySide(t *testing.T) {
+	first := slowOrigin(t, "")
+	second := slowOrigin(t, `attachment; filename="named.iso"`)
+	server := newServer(t, nil)
+	session := login(t, server, "/", "john", "doe")
+	one := startFetch(t, server, "/", session, fetchBody{URL: first.URL + "/one.bin"})
+	two := startFetch(t, server, "/", session, fetchBody{URL: second.URL + "/download?id=2"})
+	waitForDownload(t, server, "/", one.ID, session)
+	view := waitForDownload(t, server, "/", two.ID, session)
+	if view.Name != "named.iso" {
+		t.Errorf("the second fetch is named %q", view.Name)
+	}
+
+	jobs := fetchList(t, server, "/", session)
+	if len(jobs) != 2 || jobs[0].ID != two.ID || jobs[1].ID != one.ID {
+		t.Fatalf("the fetches are listed as %+v", jobs)
+	}
+	for _, job := range jobs {
+		if job.State != jobRunning || job.BytesTotal != 1000 {
+			t.Errorf("a fetch is listed %s with %d of %d bytes", job.State, job.BytesDone, job.BytesTotal)
+		}
+	}
+
+	// stopping one takes it off the list and leaves the other running
+	res, data := transferRequest(t, server, http.MethodDelete, "/?go-fs=fetch-job&id="+one.ID, session, nil)
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("the stop answered %d: %s", res.StatusCode, data)
+	}
+	if ended := waitForFetch(t, server, "/", one.ID, session); ended.State != jobCancelled {
+		t.Errorf("the stopped fetch ended %s", ended.State)
+	}
+	jobs = fetchList(t, server, "/", session)
+	if len(jobs) != 1 || jobs[0].ID != two.ID || jobs[0].State != jobRunning {
+		t.Errorf("after a stop the fetches are listed as %+v", jobs)
+	}
+	if _, err := os.Stat(filepath.Join(server.base, "one.bin")); err == nil {
+		t.Error("a stopped fetch stored its file")
+	}
+}
+
+func TestClearingAFetchThatEndedKeepsItsAnswer(t *testing.T) {
+	remote := origin(t, func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
+	server := newServer(t, nil)
+	session := login(t, server, "/", "john", "doe")
+	job := fetched(t, server, "/", session, fetchBody{URL: remote.URL + "/gone.bin"})
+	expectFailed(t, job, "404")
+	if _, ok := listedFetch(fetchList(t, server, "/", session), job.ID); !ok {
+		t.Fatal("a failed fetch is not listed")
+	}
+	res, _ := transferRequest(t, server, http.MethodDelete, "/?go-fs=fetch-job&id="+job.ID, session, nil)
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("clearing answered %d", res.StatusCode)
+	}
+	if _, ok := listedFetch(fetchList(t, server, "/", session), job.ID); ok {
+		t.Error("a cleared fetch is still listed")
+	}
+	expectFailed(t, waitForFetch(t, server, "/", job.ID, session), "404")
+}
+
+func TestFetchesHaveTheirOwnLimit(t *testing.T) {
+	server := newServer(t, nil)
+	release := make(chan struct{})
+	defer close(release)
+	block := func(ctx context.Context, job *registryJob) (string, error) {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-release:
+			return "", nil
+		}
+	}
+	for i := 0; i < maxRunningJobs; i++ {
+		if _, err := server.startJob(jobPull, "john", "a pull", block); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := server.startJob(jobPush, "john", "a push", block); !errors.Is(err, errTooManyJobs) {
+		t.Errorf("a transfer past the limit started: %v", err)
+	}
+	for i := 0; i < maxRunningFetches; i++ {
+		if _, err := server.startJob(jobFetch, "john", "a fetch", block); err != nil {
+			t.Fatalf("fetch %d did not start beside the transfers: %v", i+1, err)
+		}
+	}
+	if _, err := server.startJob(jobFetch, "john", "a fetch", block); !errors.Is(err, errTooManyJobs) {
+		t.Errorf("a fetch past the limit started: %v", err)
+	}
+}
+
+func TestFetchSpeedIsMeasured(t *testing.T) {
+	job := &registryJob{state: jobRunning}
+	start := time.Now()
+	job.sample(start)
+	job.bytesDone.Store(1000)
+	job.sample(start.Add(rateWindow / 2))
+	if job.rate != 0 {
+		t.Errorf("the speed was measured within the window: %v", job.rate)
+	}
+	job.sample(start.Add(rateWindow))
+	if job.rate != 1000/rateWindow.Seconds() {
+		t.Errorf("the speed is %v", job.rate)
+	}
+	job.bytesDone.Store(4000)
+	job.sample(start.Add(2 * rateWindow))
+	if want := (1000 + 3000) / 2 / rateWindow.Seconds(); job.rate != want {
+		t.Errorf("the smoothed speed is %v, want %v", job.rate, want)
+	}
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	if got := job.rateAt(start.Add(2*rateWindow+rateStale/2), 4000); got != job.rate {
+		t.Errorf("a fresh speed reads %v", got)
+	}
+	// nothing more arrives: the speed falls the longer that lasts
+	stalled := job.rateAt(start.Add(2*rateWindow+2*rateStale), 4000)
+	if stalled != 0 {
+		t.Errorf("a stalled transfer reads %v", stalled)
+	}
+}
+
+func TestDownloadsAreShownToASession(t *testing.T) {
+	const button = `id="downloads"`
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = append(cfg.Users, readOnlyUser("reader", "pw"))
+	})
+	page := func(session *http.Cookie) string {
+		req, err := http.NewRequest(http.MethodGet, server.url("/"), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if session != nil {
+			req.AddCookie(session)
+		}
+		return bodyOf(t, do(t, req))
+	}
+	// shown where the account may not fetch as well, since its fetches into
+	// other folders are followed from every listing
+	if !strings.Contains(page(login(t, server, "/", "reader", "pw")), button) {
+		t.Error("a session is not shown its downloads")
+	}
+	open := newServer(t, publicServer)
+	req, err := http.NewRequest(http.MethodGet, open.url("/"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(bodyOf(t, do(t, req)), button) {
+		t.Error("an anonymous visitor is shown downloads")
 	}
 }

@@ -27,37 +27,51 @@ import (
 // upload of that name would: created where the account may create, and
 // replacing a file only where it may overwrite.
 //
+// A fetch runs on to its end whether or not a page still asks after it, and
+// several can run at once: every listing of a session asks for the fetches
+// of its account, wherever they store to, and shows them in its header, so
+// that one started before a reload, or in another tab, is still seen.
+//
 // The server reaches whatever URL it is given, inside the network it is in as
 // well as outside, so the dialog is offered to a session of an account and to
 // nobody else: not to a folder whose PUT is public, and not to a header or a
 // bearer token, which have the API.
 
 const (
-	actionFetch    = "fetch"
-	actionFetchJob = "fetch-job"
+	actionFetch     = "fetch"
+	actionFetchJob  = "fetch-job"
+	actionFetchJobs = "fetch-jobs"
 )
 
 // fetchMethods are the methods each endpoint answers.
 var fetchMethods = map[string]string{
-	actionFetch:    "POST",
-	actionFetchJob: "GET, HEAD, DELETE",
+	actionFetch:     "POST",
+	actionFetchJob:  "GET, HEAD, DELETE",
+	actionFetchJobs: "GET, HEAD",
 }
 
 // fetchAction reports which fetch endpoint a request is for, or "" for any
 // other request.
 func fetchAction(r *http.Request) string {
 	switch action := r.URL.Query().Get(sessionParam); action {
-	case actionFetch, actionFetchJob:
+	case actionFetch, actionFetchJob, actionFetchJobs:
 		return action
 	default:
 		return ""
 	}
 }
 
+// mayFollowFetches decides whether a listing shows the fetches of the account
+// looking at it, and whether it may ask for them: a session of an account,
+// whether or not it may fetch into this folder.
+func mayFollowFetches(cred credential) bool {
+	return cred.token && cred.user != nil
+}
+
 // mayFetch decides whether the listing of a folder offers Fetch, and whether
 // a fetch into it may start.
 func mayFetch(cred credential, virtual string) bool {
-	return cred.token && cred.user != nil && fetchGranted(cred.user, virtual, actCreate)
+	return mayFollowFetches(cred) && fetchGranted(cred.user, virtual, actCreate)
 }
 
 // fetchGranted is the right an account has to a path, whether or not the
@@ -84,7 +98,14 @@ func (s *Server) handleFetch(set *settings, w http.ResponseWriter, r *http.Reque
 		if job := s.fetchJobOf(w, r, cred); job != nil {
 			writeJSON(w, http.StatusOK, job.view())
 		}
+	case action == actionFetchJobs && read:
+		if !mayFollowFetches(cred) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		writeJSON(w, http.StatusOK, fetchJobsJSON{Jobs: s.fetchJobs(cred.user.name)})
 	case action == actionFetchJob && r.Method == http.MethodDelete:
+		// stops a fetch that runs, and takes it off the list either way
 		if !s.sameSite(set, w, r) {
 			return
 		}
@@ -92,9 +113,8 @@ func (s *Server) handleFetch(set *settings, w http.ResponseWriter, r *http.Reque
 		if job == nil {
 			return
 		}
-		if job.running() {
+		if job.dismiss() {
 			s.log.Info("http fetch stopped", "job", job.id, "what", job.what, "user", cred.user.name)
-			job.cancel()
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
@@ -103,10 +123,15 @@ func (s *Server) handleFetch(set *settings, w http.ResponseWriter, r *http.Reque
 	}
 }
 
+// fetchJobsJSON is what the page reads of the fetches of its account.
+type fetchJobsJSON struct {
+	Jobs []registryJobJSON `json:"jobs"`
+}
+
 // fetchJobOf finds the fetch a request names, and answers a request for one
 // that is not the caller's.
 func (s *Server) fetchJobOf(w http.ResponseWriter, r *http.Request, cred credential) *registryJob {
-	if !cred.token || cred.user == nil {
+	if !mayFollowFetches(cred) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return nil
 	}
@@ -277,6 +302,7 @@ func (s *Server) fetchStart(set *settings, w http.ResponseWriter, r *http.Reques
 	shown := shownURL(fetch.url)
 	address := clientAddress(set, r)
 	job, err := s.startJob(jobFetch, user.name, shown+" → "+folder, func(ctx context.Context, job *registryJob) (string, error) {
+		job.named(cleanFetchedName(fetch.url.Path), folder)
 		message, err := s.fetchFile(ctx, set, job, fetch, folder, user, address)
 		if err != nil && ctx.Err() == nil {
 			s.log.Warn("http fetch failed", "url", shown, "folder", folder, "user", user.name,
@@ -339,6 +365,7 @@ func (s *Server) fetchFile(ctx context.Context, set *settings, job *registryJob,
 	if limit > 0 && res.ContentLength > limit {
 		return "", fetchTooLarge(name, limit)
 	}
+	job.named(name, "")
 	if res.ContentLength > 0 {
 		job.plan(0, res.ContentLength)
 	}
@@ -361,6 +388,7 @@ func (s *Server) fetchFile(ctx context.Context, set *settings, job *registryJob,
 	if limit > 0 {
 		source = io.LimitReader(res.Body, limit+1)
 	}
+	job.downloading()
 	reader := watch(source, job, cancel)
 	written, err := io.Copy(staged, reader)
 	reader.done()

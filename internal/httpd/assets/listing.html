@@ -18,6 +18,9 @@
     {{range .Crumbs}}{{if .Link}}<a href="{{.Link}}">{{.Name}}</a>{{else}}<span class="here">{{.Name}}</span>{{end}}{{if .Sep}}<span class="sep">/</span>{{end}}{{end}}
   </nav>
   <div class="tools">
+    {{if .Rights.Downloads}}
+    <button id="downloads" class="plain downloads needs-js" type="button" aria-haspopup="dialog" hidden><svg class="ic"><use href="#i-download"/></svg><span class="rate"></span></button>
+    {{end}}
     <input id="filter" class="needs-js" type="search" placeholder="Filter&#8230;" aria-label="Filter this folder">
     {{if .Rights.Mkdir}}
     <button id="new-folder" class="plain needs-js" type="button"><svg class="ic"><use href="#i-folder-plus"/></svg>New folder</button>
@@ -127,6 +130,19 @@
       <button class="go" type="submit" value="start">Fetch</button>
       <button class="plain" type="submit" value="stop" formnovalidate hidden>Stop</button>
       <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
+
+{{if .Rights.Downloads}}
+<dialog id="downloads-dialog" class="transfer" aria-labelledby="downloads-title">
+  <form method="dialog">
+    <h2 id="downloads-title">Downloads</h2>
+    <ul class="downloads-list" aria-live="polite"></ul>
+    <p class="none">No downloads.</p>
+    <div class="row">
+      <button class="plain" type="submit" value="cancel">Close</button>
     </div>
   </form>
 </dialog>

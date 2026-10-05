@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,9 +36,25 @@ const (
 	jobCancelled = "cancelled"
 )
 
-// maxRunningJobs is how many transfers may run at once, for everyone
-// together: each holds connections and a share of the bandwidth.
-const maxRunningJobs = 4
+// maxRunningJobs is how many registry transfers may run at once, for
+// everyone together: each holds connections and a share of the bandwidth.
+// Fetches are counted apart, against maxRunningFetches, so that downloads
+// into the listing and the registry's transfers never wait for each other.
+const (
+	maxRunningJobs    = 4
+	maxRunningFetches = 8
+)
+
+// fetchDownloading is the phase of a fetch once the remote answered and the
+// file is being stored: what the dialog waits for before it closes.
+const fetchDownloading = "downloading"
+
+// rateWindow is how often the speed of a transfer is sampled, and
+// rateStale how long a sample may be old before the speed is taken to fall.
+const (
+	rateWindow = time.Second
+	rateStale  = 2 * time.Second
+)
 
 // jobRetention is how long a job that ended is kept for the page to read.
 const jobRetention = time.Hour
@@ -72,6 +89,17 @@ type registryJob struct {
 	offer     []importImageJSON
 	choice    chan importChoice
 	confirmed bool
+	// name and folder are a fetch's: the file it stores, as far as it is
+	// known yet, and where.
+	name, folder string
+	// dismissed is a job the page was told to forget: it is no longer listed,
+	// though it can still be asked after by its id.
+	dismissed bool
+	// sampleAt and sampleBytes are where the speed was last measured, and
+	// rate is what it was, in bytes a second.
+	sampleAt    time.Time
+	sampleBytes int64
+	rate        float64
 }
 
 // registryJobJSON is what the page reads of a job.
@@ -91,6 +119,11 @@ type registryJobJSON struct {
 	// found in its archive.
 	Phase  string            `json:"phase,omitempty"`
 	Images []importImageJSON `json:"images,omitempty"`
+	// Name and Folder are a fetch's: the file it stores and where.
+	Name   string `json:"name,omitempty"`
+	Folder string `json:"folder,omitempty"`
+	// BytesPerSecond is how fast a running job moves its bytes just now.
+	BytesPerSecond int64 `json:"bytesPerSecond"`
 }
 
 func (j *registryJob) view() registryJobJSON {
@@ -99,14 +132,85 @@ func (j *registryJob) view() registryJobJSON {
 	view := registryJobJSON{ID: j.id, Kind: j.kind, What: j.what, State: j.state, Message: j.message,
 		BlobsTotal: j.blobsTotal.Load(), BlobsDone: j.blobsDone.Load(),
 		BytesTotal: j.bytesTotal.Load(), BytesDone: j.bytesDone.Load(),
-		Started: j.started.UTC().Format(time.RFC3339), Phase: j.phase}
+		Started: j.started.UTC().Format(time.RFC3339), Phase: j.phase,
+		Name: j.name, Folder: j.folder}
 	if j.state == jobReady {
 		view.Images = j.offer
+	}
+	if j.state == jobRunning {
+		view.BytesPerSecond = int64(j.rateAt(time.Now(), view.BytesDone))
 	}
 	if !j.finished.IsZero() {
 		view.Finished = j.finished.UTC().Format(time.RFC3339)
 	}
 	return view
+}
+
+// sample measures the speed of the job, at most once every rateWindow. The
+// speed is smoothed, so that one slow read does not halve it.
+func (j *registryJob) sample(now time.Time) {
+	done := j.bytesDone.Load()
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.sampleAt.IsZero() {
+		j.sampleAt, j.sampleBytes = now, done
+		return
+	}
+	elapsed := now.Sub(j.sampleAt)
+	if elapsed < rateWindow {
+		return
+	}
+	current := float64(done-j.sampleBytes) / elapsed.Seconds()
+	if j.rate == 0 {
+		j.rate = current
+	} else {
+		j.rate = (j.rate + current) / 2
+	}
+	j.sampleAt, j.sampleBytes = now, done
+}
+
+// rateAt is the speed of the job at now, with done bytes moved: the last one
+// measured, or, when nothing has been measured for a while, what moved since,
+// which falls towards nothing as a transfer stalls. j.mu is held.
+func (j *registryJob) rateAt(now time.Time, done int64) float64 {
+	if j.sampleAt.IsZero() {
+		return 0
+	}
+	if elapsed := now.Sub(j.sampleAt); elapsed > rateStale {
+		return float64(done-j.sampleBytes) / elapsed.Seconds()
+	}
+	return j.rate
+}
+
+// named sets what a fetch stores, and where.
+func (j *registryJob) named(name, folder string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.name = name
+	if folder != "" {
+		j.folder = folder
+	}
+}
+
+// downloading says a fetch has its answer and stores the file now. The
+// counts stay as they are, unlike with setPhase.
+func (j *registryJob) downloading() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.phase = fetchDownloading
+}
+
+// dismiss forgets a job for the page, stopping it first if it runs. It
+// reports whether it was running.
+func (j *registryJob) dismiss() bool {
+	j.mu.Lock()
+	j.dismissed = true
+	j.mu.Unlock()
+	if !j.running() {
+		return false
+	}
+	j.cancel()
+	return true
 }
 
 func (j *registryJob) running() bool {
@@ -206,10 +310,15 @@ func (s *Server) startJob(kind, owner, what string, run func(ctx context.Context
 
 	jobs := &s.registryJobs
 	jobs.mu.Lock()
-	running := 0
+	running, limit := 0, maxRunningJobs
+	if kind == jobFetch {
+		limit = maxRunningFetches
+	}
 	for id, other := range jobs.jobs {
 		if other.running() {
-			running++
+			if (other.kind == jobFetch) == (kind == jobFetch) {
+				running++
+			}
 			continue
 		}
 		other.mu.Lock()
@@ -219,7 +328,7 @@ func (s *Server) startJob(kind, owner, what string, run func(ctx context.Context
 			delete(jobs.jobs, id)
 		}
 	}
-	if running >= maxRunningJobs {
+	if running >= limit {
 		jobs.mu.Unlock()
 		cancel()
 		return nil, errTooManyJobs
@@ -269,6 +378,37 @@ func (s *Server) job(id, owner string) *registryJob {
 	return job
 }
 
+// fetchJobs are the fetches of an account the page has not been told to
+// forget, the newest first.
+func (s *Server) fetchJobs(owner string) []registryJobJSON {
+	jobs := &s.registryJobs
+	jobs.mu.Lock()
+	var found []*registryJob
+	for _, job := range jobs.jobs {
+		if job.kind != jobFetch || job.owner != owner {
+			continue
+		}
+		job.mu.Lock()
+		dismissed := job.dismissed
+		job.mu.Unlock()
+		if !dismissed {
+			found = append(found, job)
+		}
+	}
+	jobs.mu.Unlock()
+	sort.Slice(found, func(a, b int) bool {
+		if !found[a].started.Equal(found[b].started) {
+			return found[a].started.After(found[b].started)
+		}
+		return found[a].id < found[b].id
+	})
+	views := make([]registryJobJSON, 0, len(found))
+	for _, job := range found {
+		views = append(views, job.view())
+	}
+	return views
+}
+
 // progressReader counts what passes through it towards a job, and gives up
 // when nothing has passed for remoteIdleTimeout: a connection that stalls
 // without closing would otherwise hold the job forever.
@@ -290,6 +430,7 @@ func (p *progressReader) Read(b []byte) (int, error) {
 	n, err := p.r.Read(b)
 	if n > 0 {
 		p.job.bytesDone.Add(int64(n))
+		p.job.sample(time.Now())
 		p.timer.Reset(remoteIdleTimeout)
 	}
 	return n, err
