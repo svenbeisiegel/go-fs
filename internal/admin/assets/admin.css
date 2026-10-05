@@ -109,6 +109,15 @@ h1 { margin: 0; font-size: 1.15rem; letter-spacing: 0.02em; white-space: nowrap;
   white-space: pre-wrap;
 }
 .banner.good { border-left-color: var(--accent); }
+.banner button.link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
 
 .tabs {
   display: flex;
@@ -379,3 +388,38 @@ input.readonly { color: var(--faint); }
   gap: 0.75rem;
 }
 .update-upload button:disabled { opacity: 0.5; cursor: default; }
+.release {
+  margin: 0 0 1.25rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--raised);
+}
+.release-status { margin: 0 0 0.6rem; }
+.release-status:last-child { margin-bottom: 0; }
+.release-new { font-weight: 600; }
+.release a { color: var(--accent); }
+button.primary {
+  padding: 0.35rem 0.9rem;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--ground);
+  font: inherit;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+}
+/* the mark on the update tab that a newer release is out */
+.tabs button.has-update { color: var(--accent); }
+.tabs .badge {
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--ground);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  vertical-align: 1px;
+}

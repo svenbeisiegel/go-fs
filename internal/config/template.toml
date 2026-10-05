@@ -297,7 +297,10 @@ enableAdminInterface = true
 # operating system and architecture, and only from a [[tokens]] entry that
 # sets allowSelfUpdate = true or from the browser session of an account that
 # sets isAdmin = true. The folder holding the executable has to be writable by
-# the account go-fs runs as.
+# the account go-fs runs as. The admin interface then also asks GitHub for the
+# latest release when it is opened, says when it is newer, and installs it at
+# the press of a button; ?go-fs=update&release=latest does the same for a
+# script.
 enableSelfUpdate = false
 
 # Answer requests signed with AWS Signature Version 4 as the S3 API, on both

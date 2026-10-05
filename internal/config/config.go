@@ -378,6 +378,8 @@ type HTTP struct {
 	// replaces the running one and restarts it. Only a file signed with a key
 	// built into this binary is accepted, and only from a token that sets
 	// allowSelfUpdate or from the session of an account that sets isAdmin.
+	// The admin interface then also asks GitHub for the latest release, says
+	// when it is newer, and installs it at the press of a button.
 	EnableSelfUpdate bool `toml:"enableSelfUpdate"`
 	// EnableS3 answers requests signed with AWS Signature Version 4 as the S3
 	// API, on both listeners. Every folder directly in Basefolder is a bucket,

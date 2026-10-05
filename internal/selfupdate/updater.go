@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -101,6 +102,15 @@ type Updater struct {
 
 	done      chan struct{}
 	requested sync.Once
+
+	// client and releaseAPI are what the latest release is fetched with and
+	// from, fields so that a test can point them elsewhere; release is the
+	// last lookup, which releaseMu also holds while one is made, so that page
+	// loads at the same moment ask GitHub once.
+	client     *http.Client
+	releaseAPI string
+	releaseMu  sync.Mutex
+	release    releaseCache
 }
 
 // New prepares the updater for the running binary.
@@ -114,6 +124,8 @@ func New(version string, keys []ed25519.PublicKey) *Updater {
 		maxSize:      MaxSize,
 		smokeTimeout: 10 * time.Second,
 		done:         make(chan struct{}),
+		client:       &http.Client{Transport: http.DefaultTransport},
+		releaseAPI:   releaseAPI,
 	}
 }
 

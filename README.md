@@ -935,7 +935,8 @@ at least one client:
 - **A bearer token** that sets `allowSelfUpdate = true`, for scripts. The token's
   `paths` do not matter here.
 - **An admin's browser session.** The admin interface then shows an **UPDATE**
-  tab with the running version and an upload button.
+  tab with the running version, the latest release, and an upload button (see
+  [Updating from GitHub](#updating-from-github)).
 
 Basic and Digest credentials are refused, even for an admin account, for the
 same reason the admin interface refuses them.
@@ -994,6 +995,50 @@ How the executable is replaced:
 
 Without `http.httpSessionTokenSecret` the restart also logs every browser out,
 the admin page included.
+
+#### Updating from GitHub
+
+go-fs can also fetch the update file itself, from the latest release on
+GitHub. When an admin opens the admin interface, it looks up the latest
+release in the background. If that release is newer than the running version,
+the **UPDATE** tab is marked with its version number and the page says so. The
+tab then offers **Update to X and restart**: go-fs downloads that release's
+`.update` file for its own platform and installs it exactly as if it had been
+uploaded. It goes through the same three checks, so a file that is not signed
+with a trusted key is refused wherever it came from.
+
+A script does the same with `release=latest`:
+
+```sh
+# the latest release, and whether it is newer than what runs
+curl -H "Authorization: Bearer gofs_…" "https://host:9443/?go-fs=update&release=latest"
+# {"current":"1.1.0","version":"1.2.0","newer":true,"url":"https://github.com/…/v1.2.0",
+#  "published":"2026-10-01T10:00:00Z","asset":"go-fs_1.2.0_linux_arm64.update"}
+
+# download and install it; go-fs answers, then restarts
+curl -X POST -H "Authorization: Bearer gofs_…" "https://host:9443/?go-fs=update&release=latest"
+# {"previous":"1.1.0","restarting":true,"version":"1.2.0"}
+```
+
+- Only the latest release can be installed this way. Drafts and pre-releases
+  are skipped. To install another version, upload its file.
+- The lookup is kept for 15 minutes, since GitHub answers only 60
+  unauthenticated requests an hour. **Check again** on the tab, or
+  `&refresh=1`, asks GitHub anew.
+- go-fs contacts GitHub only when it is asked to: when the admin interface is
+  opened with `http.enableSelfUpdate` on, or when a script asks. Nothing is
+  checked at startup or in the background.
+- The server needs outbound HTTPS to `api.github.com` and `github.com`, which
+  redirects the download to `objects.githubusercontent.com`. `HTTPS_PROXY` and
+  `NO_PROXY` are honoured. A server that cannot reach GitHub shows why on the
+  tab and can still be updated by upload.
+- Besides the statuses above, the endpoint answers `502` when GitHub cannot be
+  reached or does not answer as expected, and `404` when the latest release has
+  no update file for this server's platform.
+- A fork that publishes its own releases sets where they are looked up at build
+  time, with
+  `-ldflags "-X go-fs/internal/selfupdate.releaseAPI=https://api.github.com/repos/<owner>/<repo>/releases/latest"`.
+  It also needs its own signing key, see below.
 
 **Signing key.** Generate the key pair once:
 

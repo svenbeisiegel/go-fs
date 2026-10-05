@@ -23,6 +23,12 @@ import (
 // answers with err, and replaces no binary.
 type stubUpdater struct {
 	err error
+	// release is what Latest answers, with latestErr; Download hands out
+	// "release binary" or downloadErr
+	release     selfupdate.Release
+	latestErr   error
+	downloadErr error
+	refreshed   []bool
 
 	mu        sync.Mutex
 	staged    []byte
@@ -32,7 +38,11 @@ type stubUpdater struct {
 }
 
 func newStubUpdater() *stubUpdater {
-	return &stubUpdater{requested: make(chan struct{})}
+	return &stubUpdater{
+		requested: make(chan struct{}),
+		release: selfupdate.Release{Current: "1.0.0", Version: "2.0.0", Newer: true,
+			URL: "https://github.com/x/go-fs/releases/tag/v2.0.0", Asset: "go-fs_2.0.0_linux_amd64.update"},
+	}
 }
 
 func (u *stubUpdater) Current() selfupdate.Info {
@@ -57,6 +67,22 @@ func (u *stubUpdater) Stage(_ context.Context, body io.Reader) (selfupdate.Stage
 
 func (u *stubUpdater) Request() {
 	u.once.Do(func() { close(u.requested) })
+}
+
+func (u *stubUpdater) Latest(_ context.Context, refresh bool) (selfupdate.Release, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.refreshed = append(u.refreshed, refresh)
+	return u.release, u.latestErr
+}
+
+func (u *stubUpdater) Download(context.Context, selfupdate.Release) (io.ReadCloser, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.downloadErr != nil {
+		return nil, u.downloadErr
+	}
+	return io.NopCloser(strings.NewReader("release binary")), nil
 }
 
 func (u *stubUpdater) fail(err error) {
@@ -334,5 +360,145 @@ func TestUpdateMethodNotAllowed(t *testing.T) {
 	res := bearer(t, server.testServer, http.MethodDelete, updatePath, server.updating, nil)
 	if res.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("status %d", res.StatusCode)
+	}
+}
+
+const releasePath = "/?go-fs=update&release=latest"
+
+// With release=latest the endpoint describes the latest release, from the
+// updater's lookup unless refresh asks for a new one.
+func TestUpdateLatestRelease(t *testing.T) {
+	server := newUpdateServer(t, nil)
+	res := bearer(t, server.testServer, http.MethodGet, releasePath, server.updating, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d: %s", res.StatusCode, bodyOf(t, res))
+	}
+	var release selfupdate.Release
+	if err := json.NewDecoder(res.Body).Decode(&release); err != nil {
+		t.Fatal(err)
+	}
+	if release.Version != "2.0.0" || release.Current != "1.0.0" || !release.Newer ||
+		release.Asset == "" || release.URL == "" {
+		t.Errorf("release %+v", release)
+	}
+	bearer(t, server.testServer, http.MethodGet, releasePath+"&refresh=1", server.updating, nil)
+	server.updater.mu.Lock()
+	refreshed := server.updater.refreshed
+	server.updater.mu.Unlock()
+	if len(refreshed) != 2 || refreshed[0] || !refreshed[1] {
+		t.Errorf("refresh asked for %v", refreshed)
+	}
+	if calls := server.updater.stageCalls(); calls != 0 {
+		t.Errorf("describing the release staged %d updates", calls)
+	}
+}
+
+// The release is described only to whoever may update.
+func TestUpdateLatestReleaseRefusesCredentials(t *testing.T) {
+	server := newUpdateServer(t, nil)
+	if res := bearer(t, server.testServer, http.MethodGet, releasePath, server.plain, nil); res.StatusCode != http.StatusForbidden {
+		t.Errorf("token without allowSelfUpdate: status %d", res.StatusCode)
+	}
+	req, err := http.NewRequest(http.MethodGet, server.url(releasePath), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := do(t, req); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("no credentials: status %d", res.StatusCode)
+	}
+}
+
+// A lookup that fails is a bad gateway: go-fs itself is fine.
+func TestUpdateLatestReleaseUnreachable(t *testing.T) {
+	server := newUpdateServer(t, nil)
+	server.updater.latestErr = fmt.Errorf("%w: no route to host", selfupdate.ErrUnreachable)
+	res := bearer(t, server.testServer, http.MethodGet, releasePath, server.updating, nil)
+	if res.StatusCode != http.StatusBadGateway {
+		t.Errorf("status %d", res.StatusCode)
+	}
+}
+
+// An admin installs the latest release: go-fs downloads its update file and
+// stages it as it would an upload, answers and restarts.
+func TestUpdateInstallRelease(t *testing.T) {
+	server := newUpdateServer(t, nil)
+	session := login(t, server.testServer, "/", "root", "secret")
+	req, err := http.NewRequest(http.MethodPost, server.url(releasePath), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(session)
+	req.Header.Set("Origin", "http://"+req.URL.Host)
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	res := do(t, req)
+	if res.StatusCode != http.StatusAccepted {
+		t.Fatalf("status %d: %s", res.StatusCode, bodyOf(t, res))
+	}
+	server.updater.mu.Lock()
+	staged := string(server.updater.staged)
+	server.updater.mu.Unlock()
+	if staged != "release binary" {
+		t.Errorf("the updater was handed %q", staged)
+	}
+	if !server.updater.wasRequested(5 * time.Second) {
+		t.Error("no restart was requested")
+	}
+	if record := server.logs.find("http self update accepted, restarting"); record == nil ||
+		record["source"] != "go-fs_2.0.0_linux_amd64.update" {
+		t.Errorf("record %v", record)
+	}
+}
+
+// A page on another site cannot have an admin's session install a release.
+func TestUpdateInstallReleaseRefusesCrossSite(t *testing.T) {
+	server := newUpdateServer(t, nil)
+	session := login(t, server.testServer, "/", "root", "secret")
+	req, err := http.NewRequest(http.MethodPost, server.url(releasePath), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(session)
+	req.Header.Set("Origin", "https://evil.example")
+	if res := do(t, req); res.StatusCode != http.StatusForbidden {
+		t.Errorf("status %d", res.StatusCode)
+	}
+	server.updater.mu.Lock()
+	looked := len(server.updater.refreshed)
+	server.updater.mu.Unlock()
+	if looked != 0 || server.updater.stageCalls() != 0 {
+		t.Error("the updater was used")
+	}
+}
+
+// A release that cannot be fetched, or has nothing for this platform, is
+// refused with its own status, and no restart follows.
+func TestUpdateInstallReleaseRefusal(t *testing.T) {
+	tests := []struct {
+		name     string
+		latest   error
+		download error
+		status   int
+	}{
+		{"lookup fails", fmt.Errorf("%w: timeout", selfupdate.ErrUnreachable), nil, http.StatusBadGateway},
+		{"download fails", nil, fmt.Errorf("%w: 404", selfupdate.ErrUnreachable), http.StatusBadGateway},
+		{"no file for this platform", nil, selfupdate.ErrNoAsset, http.StatusNotFound},
+	}
+	server := newUpdateServer(t, nil)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server.updater.mu.Lock()
+			server.updater.latestErr, server.updater.downloadErr = test.latest, test.download
+			server.updater.mu.Unlock()
+			res := bearer(t, server.testServer, http.MethodPost, releasePath, server.updating, nil)
+			if res.StatusCode != test.status {
+				t.Errorf("status %d, want %d", res.StatusCode, test.status)
+			}
+		})
+	}
+	if calls := server.updater.stageCalls(); calls != 0 {
+		t.Errorf("the updater staged %d updates", calls)
+	}
+	if server.updater.wasRequested(2 * restartDelay) {
+		t.Error("a refused update requested a restart")
 	}
 }

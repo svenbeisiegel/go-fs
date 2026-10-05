@@ -27,8 +27,14 @@ const newTokens = new WeakMap();
 // does not answer this session: switched off, or not an admin. It is the one
 // tab the schema does not describe, since it edits no key of the file
 let update = null;
+// what the update endpoint says about the latest release: null until it has
+// been asked, then { checking: true }, { info } or { error }. It is asked once
+// per page, in the background, since the answer comes from GitHub
+let release = null;
 
 const banner = document.getElementById("banner");
+// beside the banner rather than in it, so that no other message hides it
+const releaseNotice = document.getElementById("release-notice");
 const tabs = document.getElementById("tabs");
 const panels = document.getElementById("panels");
 const footer = document.getElementById("footer");
@@ -66,6 +72,28 @@ async function load() {
 
   render();
   footer.hidden = false;
+  if (update && release === null) {
+    checkRelease(false);
+  }
+}
+
+// checkRelease asks the update endpoint about the latest release and shows
+// the answer on the update tab, and above the tabs when it is newer.
+async function checkRelease(refresh) {
+  release = { checking: true };
+  showRelease();
+  try {
+    const answer = await fetch("?go-fs=update&release=latest" + (refresh ? "&refresh=1" : ""),
+      { headers: { Accept: "application/json" } });
+    const text = await answer.text();
+    if (!answer.ok) {
+      throw new Error(text.trim() || answer.statusText);
+    }
+    release = { info: JSON.parse(text) };
+  } catch (error) {
+    release = { error: error.message };
+  }
+  showRelease();
 }
 
 // updateInfo asks the update endpoint what is running. Anything but an answer
@@ -88,8 +116,11 @@ function render() {
   });
   if (update) {
     const index = schema.sections.length;
-    tabs.append(tab({ label: "UPDATE" }, index));
+    const button = tab({ label: "UPDATE" }, index);
+    button.id = "update-tab";
+    tabs.append(button);
     panels.append(updatePanel(index));
+    showRelease();
   }
   select(Math.min(selected, tabs.children.length - 1));
 }
@@ -129,19 +160,25 @@ function panel(section, index) {
   return element;
 }
 
-// updatePanel is the tab that uploads a new go-fs binary. The file is sent as
-// it is, as octet-stream: the server checks its signature, its platform and
-// that it runs, and answers before it restarts into it.
+// updatePanel is the tab that installs a new go-fs binary: the latest release,
+// which the server downloads itself, or an update file uploaded here. Either
+// way the server checks its signature, its platform and that it runs, and
+// answers before it restarts into it.
 function updatePanel(index) {
   const element = document.createElement("section");
   element.hidden = index !== selected;
   element.className = "update";
+  const latest = document.createElement("div");
+  latest.id = "release";
+  latest.className = "release";
   element.append(
     paragraph("Running go-fs " + update.version + " for " + update.os + "/" + update.arch
       + " from " + update.executable + ".", "update-current"),
-    paragraph("Upload the go-fs_<version>_" + update.os + "_" + update.arch + ".update file of a "
-      + "release. It is accepted only when it is signed with a key built into the running "
-      + "binary (" + (update.keys.length ? update.keys.join(", ") : "this build has none")
+    latest,
+    paragraph("Or upload the go-fs_<version>_" + update.os + "_" + update.arch + ".update file "
+      + "of a release yourself, for a server that cannot reach GitHub. Either way the file is "
+      + "accepted only when it is signed with a key built into the running binary ("
+      + (update.keys.length ? update.keys.join(", ") : "this build has none")
       + ") and is built for this platform. go-fs then replaces its executable, keeping the "
       + "previous one beside it as .old, and restarts. Without http.httpSessionTokenSecret "
       + "the restart logs this page out.", "section-help"));
@@ -158,34 +195,124 @@ function updatePanel(index) {
   button.addEventListener("click", async () => {
     const file = input.files[0];
     if (!file) return;
-    button.disabled = true;
-    input.disabled = true;
     say("Uploading " + file.name + "...", true);
-    try {
-      const answer = await fetch("?go-fs=update", {
-        method: "PUT",
-        headers: { "Content-Type": "application/octet-stream" },
-        body: file,
-      });
-      const text = await answer.text();
-      if (!answer.ok) {
-        throw new Error(text.trim());
-      }
-      const result = JSON.parse(text);
-      say("go-fs " + result.version + " was accepted, restarting...", true);
-      await awaitRestart(result.previous);
-    } catch (error) {
-      say("The update was not accepted: " + error.message);
-      button.disabled = false;
-      input.disabled = false;
-    }
+    await install(() => fetch("?go-fs=update", {
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: file,
+    }));
   });
 
   const row = document.createElement("div");
-  row.className = "update-upload";
+  row.className = "update-upload update-file";
   row.append(input, button);
   element.append(row);
   return element;
+}
+
+// showRelease draws what is known about the latest release: a mark on the
+// update tab when it is newer, and on the tab itself what it is and the
+// button that installs it.
+function showRelease() {
+  const button = document.getElementById("update-tab");
+  const holder = document.getElementById("release");
+  if (!button || !holder) return;
+  const info = release && release.info;
+  button.textContent = "UPDATE";
+  button.classList.toggle("has-update", Boolean(info && info.newer));
+  releaseNotice.hidden = !(info && info.newer);
+  if (info && info.newer) {
+    button.append(span(info.version, "badge"));
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "link";
+    open.textContent = "Open the UPDATE tab";
+    open.addEventListener("click", () => select(schema.sections.length));
+    releaseNotice.replaceChildren("go-fs " + info.version + " is available, this server runs "
+      + info.current + ". ", open);
+  }
+
+  const again = plainButton("Check again", () => checkRelease(true));
+  if (!release || release.checking) {
+    holder.replaceChildren(paragraph("Checking GitHub for the latest release...", "release-status"));
+    return;
+  }
+  if (release.error) {
+    holder.replaceChildren(
+      paragraph("The latest release could not be looked up: " + release.error, "release-status"),
+      again);
+    return;
+  }
+
+  const notes = document.createElement("a");
+  notes.href = info.url;
+  notes.target = "_blank";
+  notes.rel = "noopener noreferrer";
+  notes.textContent = "release notes";
+  const published = info.published ? new Date(info.published) : null;
+  const when = published && !isNaN(published) ? ", published " + published.toLocaleDateString() : "";
+
+  if (!info.newer) {
+    const text = info.version === info.current
+      ? "This is the latest release, go-fs " + info.version + when + " ("
+      : "The latest release is go-fs " + info.version + when + ", which is not newer (";
+    const status = paragraph(text, "release-status");
+    status.append(notes, ").");
+    holder.replaceChildren(status, again);
+    return;
+  }
+
+  const status = paragraph("go-fs " + info.version + " is available" + when + " (", "release-status release-new");
+  status.append(notes, ").");
+  if (!info.asset) {
+    status.append(" It has no update file for " + update.os + "/" + update.arch
+      + ", so it cannot be installed from here.");
+    holder.replaceChildren(status, again);
+    return;
+  }
+  const install = document.createElement("button");
+  install.type = "button";
+  install.className = "primary";
+  install.textContent = "Update to " + info.version + " and restart";
+  install.addEventListener("click", () => installRelease(info));
+  const row = document.createElement("div");
+  row.className = "update-upload";
+  row.append(install, again);
+  holder.replaceChildren(status, row);
+}
+
+// installRelease has go-fs download and install the latest release.
+async function installRelease(info) {
+  if (!confirm("Download go-fs " + info.version + " from GitHub, install it and restart go-fs?")) {
+    return;
+  }
+  say("Downloading and checking go-fs " + info.version + "...", true);
+  await install(() => fetch("?go-fs=update&release=latest", { method: "POST" }));
+}
+
+// install sends an update with send and waits for the restart it leads to.
+// Every control on the update tab is off meanwhile, and on again when the
+// update was not accepted.
+async function install(send) {
+  const controls = Array.from(panels.querySelectorAll(".update button, .update input"));
+  controls.forEach((control) => (control.disabled = true));
+  try {
+    const answer = await send();
+    const text = await answer.text();
+    if (!answer.ok) {
+      throw new Error(text.trim() || answer.statusText);
+    }
+    const result = JSON.parse(text);
+    say("go-fs " + result.version + " was accepted, restarting...", true);
+    await awaitRestart(result.previous);
+  } catch (error) {
+    say("The update was not accepted: " + error.message);
+    controls.forEach((control) => (control.disabled = false));
+    // the upload button stays off until a file is chosen
+    const input = panels.querySelector(".update-file input");
+    const upload = panels.querySelector(".update-file button");
+    if (input && upload) upload.disabled = input.files.length === 0;
+  }
 }
 
 // awaitRestart waits for go-fs to come back and then reloads the page. It is
