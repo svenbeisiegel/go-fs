@@ -345,7 +345,8 @@ dialog .remote-path { display: flex; flex-wrap: wrap; align-items: center; font-
 dialog .remote-path button { padding: 0 0.15rem; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
 dialog .remote-path button[aria-current] { color: var(--ink); cursor: default; }
 dialog .remote-path .sep { color: var(--faint); }
-dialog .remote-list { margin: 0; padding: 0; list-style: none; max-height: 40vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--ground); }
+/* a fixed height, so the dialog keeps its size from one folder to the next */
+dialog .remote-list { margin: 0; padding: 0; list-style: none; height: min(18rem, 40vh); overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--ground); }
 dialog .remote-list li { border-bottom: 1px solid var(--line); }
 dialog .remote-list li:last-child { border-bottom: 0; }
 dialog .remote-list button, dialog .remote-list .entry {
