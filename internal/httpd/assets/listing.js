@@ -124,6 +124,10 @@
     share: {
       403: "Only a signed-in account that may read this file can share it.",
       404: "That file is gone."
+    },
+    send: {
+      403: "Only an account that is logged in and may read this file can send it.",
+      404: "That file is gone."
     }
   };
 
@@ -436,6 +440,8 @@
   var removal = menu.querySelector("[data-do='delete']");
   // Share is there for a file only: a link names one file as it is now
   var sharing = menu.querySelector("[data-do='share']");
+  // and so is Send via SFTP, which uploads one file
+  var sendItem = menu.querySelector("[data-do='send']");
   // Import into registry is there for a file whose name an image archive has;
   // it opens the registry page's Import dialog with that file
   var importing = menu.querySelector("[data-do='import']");
@@ -458,6 +464,9 @@
     }
     if (sharing) {
       sharing.hidden = isFolder;
+    }
+    if (sendItem) {
+      sendItem.hidden = isFolder;
     }
     if (importing) {
       importing.hidden = isFolder || !archiveName.test(row.dataset.name);
@@ -560,6 +569,8 @@
       deleteEntry(row);
     } else if (item.dataset.do === "share") {
       shareEntry(row);
+    } else if (item.dataset.do === "send") {
+      sending.open(row);
     }
   });
 
@@ -689,6 +700,12 @@
   }
 
   function askFetch(method, url, body) {
+    return askJSON("fetch", method, url, body);
+  }
+
+  // askJSON sends a request of a transfer and reads why it was refused, in
+  // the words of what was asked for
+  function askJSON(what, method, url, body) {
     var options = {
       method: method,
       headers: { Accept: "application/json" },
@@ -703,7 +720,7 @@
         return res;
       }
       return res.text().then(function (text) {
-        throw new Error(reason("fetch", res.status, text.trim()));
+        throw new Error(reason(what, res.status, text.trim()));
       });
     });
   }
@@ -718,9 +735,9 @@
     }
   })();
 
-  // The downloads: the button in the header says how fast the fetches of the
-  // account go together and fills as far as they have got, and opens the
-  // window that lists them one by one. The page asks after them every second
+  // The transfers: the button in the header says how fast the fetches and
+  // the sends of the account go together and fills as far as they have got,
+  // and opens the window that lists them one by one. The page asks after them every second
   // while one runs or the window is open, and once when it loads, which
   // finds those started before a reload or in another tab.
   var downloads = (function () {
@@ -756,9 +773,10 @@
         (!menu || menu.hidden) && (!queue || queue.hidden);
     }
 
-    // A fetch that ended is told about once and taken off the list. One that
-    // stored into this folder reloads the page to show the file, unless that
-    // would take something from the screen.
+    // A transfer that ended is told about once and taken off the list. A
+    // fetch that stored into this folder reloads the page to show the file,
+    // unless that would take something from the screen; a send changes
+    // nothing here.
     function finish(ended) {
       if (ended.length === 0) {
         return;
@@ -767,7 +785,7 @@
         return job.message;
       }).join(" ");
       var mine = ended.some(function (job) {
-        return job.folder === here;
+        return job.kind !== "send" && job.folder === here;
       });
       Promise.all(ended.map(function (job) {
         return askFetch("DELETE", fetchJobURL(job.id)).catch(function () {
@@ -822,12 +840,14 @@
       }
       var name = job.name || job.what;
       var bad = job.state === "failed";
+      var sent = job.kind === "send";
       row.file.textContent = name;
       row.file.title = name;
-      row.where.textContent = job.folder ? "into " + job.folder : "";
+      row.where.textContent = job.folder ? (sent ? "to " : "into ") + job.folder : "";
+      row.where.title = row.where.textContent;
       row.item.classList.toggle("failed", bad);
       row.message.hidden = !bad;
-      row.message.textContent = bad ? (job.message || "The fetch failed.") : "";
+      row.message.textContent = bad ? (job.message || (sent ? "The send failed." : "The fetch failed.")) : "";
       row.stop.textContent = bad ? "Clear" : "Stop";
       row.stop.setAttribute("aria-label", (bad ? "Clear " : "Stop ") + name);
       if (bad) {
@@ -881,14 +901,14 @@
       var words;
       if (active.length > 0) {
         label.textContent = readableRate(speed) + (active.length > 1 ? " · " + active.length : "");
-        words = (active.length === 1 ? "1 download" : active.length + " downloads") + ", " +
+        words = (active.length === 1 ? "1 transfer" : active.length + " transfers") + ", " +
           (total > 0 ? percent + "% done" : "size unknown") + ", " + readableRate(speed);
       } else {
         label.textContent = lost + " failed";
-        words = lost === 1 ? "1 download failed" : lost + " downloads failed";
+        words = lost === 1 ? "1 transfer failed" : lost + " transfers failed";
       }
       button.title = words;
-      button.setAttribute("aria-label", "Downloads: " + words);
+      button.setAttribute("aria-label", "Transfers: " + words);
 
       var keep = {};
       shown.forEach(function (job) {
@@ -1092,6 +1112,452 @@
       dialog.showModal();
       field("url").focus();
     });
+  })();
+
+  // --- sending to another host -----------------------------------------
+  //
+  // The server sends the file, as a job of its own like a fetch, and the
+  // dialog leads up to it in three steps: the host and the login; the key
+  // the host shows, which is accepted before any login is offered to it; and
+  // the folder of the host the file goes into. A key once accepted is
+  // remembered by this browser for its host and port, so that the next send
+  // there goes straight to the folders, and a key that changed since is
+  // asked about again, with a warning. Once the send is under way it is one
+  // of the transfers the button in the header follows.
+  var sending = (function () {
+    var dialog = document.getElementById("send-dialog");
+    if (!dialog) {
+      return { open: function () {} };
+    }
+    var form = dialog.querySelector("form");
+    var what = dialog.querySelector("p.what");
+    var fields = dialog.querySelector(".fields");
+    var keyBox = dialog.querySelector(".hostkey");
+    var warning = keyBox.querySelector(".warning");
+    var keyHost = keyBox.querySelector(".host");
+    var keyType = keyBox.querySelector(".fingerprint .type");
+    var keyPrint = keyBox.querySelector(".fingerprint code");
+    var remote = dialog.querySelector(".remote");
+    var crumbs = remote.querySelector(".remote-path");
+    var list = remote.querySelector(".remote-list");
+    var where = remote.querySelector(".where");
+    var progress = dialog.querySelector(".progress");
+    var bar = progress.querySelector("progress");
+    var status = progress.querySelector(".status");
+    var connect = form.querySelector("button[value='connect']");
+    var accept = form.querySelector("button[value='accept']");
+    var go = form.querySelector("button[value='start']");
+    var stop = form.querySelector("button[value='stop']");
+    var close = form.querySelector("button[value='cancel']");
+    var knownKeys = "go-fs-host-keys";
+    // name is the file the dialog sends, step the step it is at, shown the
+    // key the host showed, key the one accepted, and at the folder of the
+    // host listed now
+    var name = null;
+    var step = "connect";
+    var shown = null;
+    var key = null;
+    var at = null;
+    // asked counts the questions put to the server, so that the answer to
+    // one that was overtaken is dropped
+    var asked = 0;
+    // job is the send the dialog waits on until its upload begins
+    var job = null;
+
+    function field(name) {
+      return form.elements[name];
+    }
+
+    function hostId() {
+      return field("host").value.trim().toLowerCase() + ":" + (parseInt(field("port").value, 10) || 22);
+    }
+
+    function known() {
+      try {
+        return JSON.parse(window.localStorage.getItem(knownKeys) || "{}") || {};
+      } catch (ignored) {
+        return {};
+      }
+    }
+
+    // A key that cannot be remembered is only asked about again next time.
+    function remember(id, fingerprint) {
+      try {
+        var keys = known();
+        keys[id] = fingerprint;
+        window.localStorage.setItem(knownKeys, JSON.stringify(keys));
+      } catch (ignored) {
+        // asked again
+      }
+    }
+
+    function login(path) {
+      return {
+        host: field("host").value.trim(),
+        port: parseInt(field("port").value, 10) || 0,
+        username: field("username").value.trim(),
+        password: field("password").value,
+        hostKey: key,
+        path: path
+      };
+    }
+
+    function ask(action, body) {
+      return askJSON("send", "POST", segment(name) + "?go-fs=" + action, body).then(function (res) {
+        return res.json();
+      });
+    }
+
+    function show(next) {
+      step = next;
+      keyBox.hidden = next !== "hostkey";
+      remote.hidden = next !== "folder";
+      connect.hidden = next !== "connect";
+      accept.hidden = next !== "hostkey";
+      go.hidden = next !== "folder";
+    }
+
+    function tell(message, bad) {
+      progress.hidden = false;
+      status.textContent = message;
+      status.classList.toggle("bad", bad === true);
+    }
+
+    function quiet() {
+      progress.hidden = true;
+      status.textContent = "";
+      status.classList.remove("bad");
+    }
+
+    // working is the dialog while it waits on an answer of the server: the
+    // fields and the buttons that act are locked, Cancel is not
+    function working(on) {
+      form.classList.toggle("working", on);
+      Array.prototype.forEach.call(form.querySelectorAll("input, .remote button"), function (input) {
+        input.disabled = on;
+      });
+      [connect, accept, go].forEach(function (button) {
+        button.disabled = on;
+      });
+      if (on) {
+        bar.removeAttribute("value");
+      } else {
+        bar.value = 0;
+      }
+    }
+
+    // busy is the dialog while a send it started has not begun its upload
+    function busy(on) {
+      working(on);
+      go.hidden = on;
+      stop.hidden = !on;
+      close.textContent = on ? "Close" : "Cancel";
+    }
+
+    // what the dialog knows of the host is forgotten once the host or the
+    // login is changed, and it starts over at the first step
+    function forget() {
+      asked++;
+      shown = null;
+      key = null;
+      at = null;
+      quiet();
+      show("connect");
+    }
+
+    function failure(ticket, err) {
+      if (ticket !== asked) {
+        return;
+      }
+      working(false);
+      tell(err.message, true);
+      // a login that was refused is corrected in the fields; a folder that
+      // cannot be read leaves the one shown before
+      if (!at) {
+        show("connect");
+      }
+    }
+
+    function connectHost() {
+      var ticket = ++asked;
+      working(true);
+      tell("Connecting…");
+      ask("send-hostkey", { host: login().host, port: login().port }).then(function (view) {
+        if (ticket !== asked) {
+          return;
+        }
+        working(false);
+        shown = view;
+        var before = known()[hostId()];
+        if (before === view.fingerprint) {
+          key = view.fingerprint;
+          browse("");
+          return;
+        }
+        quiet();
+        warning.hidden = !before;
+        warning.textContent = before
+          ? "The key of this host has changed since you last accepted it. That happens when the host was set up anew, " +
+            "and when someone stands between it and this server. Do not accept it unless you know why it changed."
+          : "";
+        keyHost.textContent = view.host;
+        keyType.textContent = view.keyType;
+        keyPrint.textContent = view.fingerprint;
+        show("hostkey");
+        accept.focus();
+      }).catch(function (err) {
+        failure(ticket, err);
+      });
+    }
+
+    function acceptKey() {
+      remember(hostId(), shown.fingerprint);
+      key = shown.fingerprint;
+      browse("");
+    }
+
+    function browse(path) {
+      var ticket = ++asked;
+      working(true);
+      tell(at ? "Reading the folder…" : "Logging in…");
+      ask("send-browse", login(path)).then(function (view) {
+        if (ticket !== asked) {
+          return;
+        }
+        working(false);
+        quiet();
+        at = view;
+        render(view);
+        show("folder");
+        go.focus();
+      }).catch(function (err) {
+        failure(ticket, err);
+      });
+    }
+
+    function joined(path, entry) {
+      return (path === "/" ? "" : path) + "/" + entry;
+    }
+
+    function folderButton(label, path, icon) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.dataset.path = path;
+      var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("class", "ic");
+      var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+      use.setAttribute("href", icon);
+      svg.appendChild(use);
+      var text = document.createElement("span");
+      text.className = "label";
+      text.textContent = label;
+      button.appendChild(svg);
+      button.appendChild(text);
+      return button;
+    }
+
+    function render(view) {
+      crumbs.textContent = "";
+      var parts = view.path.split("/").filter(Boolean);
+      var root = document.createElement("button");
+      root.type = "button";
+      root.dataset.path = "/";
+      root.textContent = "/";
+      if (parts.length === 0) {
+        root.setAttribute("aria-current", "location");
+      }
+      crumbs.appendChild(root);
+      parts.forEach(function (part, i) {
+        if (i > 0) {
+          var sep = document.createElement("span");
+          sep.className = "sep";
+          sep.textContent = "/";
+          crumbs.appendChild(sep);
+        }
+        var button = document.createElement("button");
+        button.type = "button";
+        button.dataset.path = "/" + parts.slice(0, i + 1).join("/");
+        button.textContent = part;
+        if (i === parts.length - 1) {
+          button.setAttribute("aria-current", "location");
+        }
+        crumbs.appendChild(button);
+      });
+
+      list.textContent = "";
+      var clash = false;
+      if (view.parent) {
+        var up = document.createElement("li");
+        up.appendChild(folderButton("..", view.parent, "#i-up"));
+        list.appendChild(up);
+      }
+      (view.entries || []).forEach(function (entry) {
+        var item = document.createElement("li");
+        if (entry.dir) {
+          item.appendChild(folderButton(entry.name, joined(view.path, entry.name), "#i-folder"));
+        } else {
+          var line = document.createElement("span");
+          line.className = "entry";
+          if (entry.name === name) {
+            clash = true;
+            line.classList.add("clash");
+          }
+          var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          svg.setAttribute("class", "ic");
+          var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+          use.setAttribute("href", "#i-file");
+          svg.appendChild(use);
+          var label = document.createElement("span");
+          label.className = "label";
+          label.textContent = entry.name;
+          var size = document.createElement("span");
+          size.className = "size";
+          size.textContent = readableSize(entry.size);
+          line.appendChild(svg);
+          line.appendChild(label);
+          line.appendChild(size);
+          item.appendChild(line);
+        }
+        list.appendChild(item);
+      });
+      if (view.truncated) {
+        var note = document.createElement("li");
+        note.className = "note";
+        note.textContent = "Not everything in this folder is shown.";
+        list.appendChild(note);
+      } else if (!view.entries || view.entries.length === 0) {
+        var empty = document.createElement("li");
+        empty.className = "note";
+        empty.textContent = "This folder is empty.";
+        list.appendChild(empty);
+      }
+      var host = shown ? shown.host : login().host;
+      where.textContent = "Sends " + name + " to sftp://" + host + joined(view.path, name) +
+        (clash ? " · replaces the file there" : "");
+    }
+
+    remote.addEventListener("click", function (event) {
+      var button = event.target.closest("button[data-path]");
+      if (button && !button.disabled && !button.hasAttribute("aria-current") && !job) {
+        browse(button.dataset.path);
+      }
+    });
+
+    // wait asks after the send until its upload has begun, as the fetch
+    // dialog does; one that could not begin is told here
+    function wait() {
+      var id = job;
+      if (!id) {
+        return;
+      }
+      askFetch("GET", fetchJobURL(id)).then(function (res) {
+        return res.json();
+      }).then(function (view) {
+        if (job !== id) {
+          return;
+        }
+        if (view.state === "running" && view.phase !== "downloading") {
+          window.setTimeout(wait, 400);
+          return;
+        }
+        job = null;
+        busy(false);
+        if (view.state === "running" || view.state === "done") {
+          dialog.close();
+          quiet();
+          downloads.refresh();
+          return;
+        }
+        if (view.state === "cancelled") {
+          tell("Stopped.");
+          return;
+        }
+        tell(view.message || "The send failed.", true);
+        // told here, so the transfers need not tell it again
+        askFetch("DELETE", fetchJobURL(id)).catch(function () {});
+      }).catch(function (err) {
+        if (job !== id) {
+          return;
+        }
+        job = null;
+        busy(false);
+        tell(err.message, true);
+      });
+    }
+
+    function start() {
+      busy(true);
+      tell("Connecting…");
+      ask("send", login(at.path)).then(function (view) {
+        job = view.id;
+        wait();
+      }).catch(function (err) {
+        busy(false);
+        tell(err.message, true);
+      });
+    }
+
+    fields.addEventListener("input", function () {
+      if (step !== "connect" || key) {
+        forget();
+      }
+    });
+
+    // Enter presses whichever button acts first in the form, hidden or not,
+    // so what is done is decided by the step rather than by the button.
+    form.addEventListener("submit", function (event) {
+      var pressed = event.submitter ? event.submitter.value : "";
+      if (pressed === "cancel") {
+        return;
+      }
+      event.preventDefault();
+      if (pressed === "stop") {
+        if (job) {
+          askFetch("DELETE", fetchJobURL(job)).catch(failed);
+        }
+        return;
+      }
+      if (job || form.classList.contains("working")) {
+        return;
+      }
+      if (step === "connect") {
+        connectHost();
+      } else if (step === "hostkey") {
+        acceptKey();
+      } else if (at) {
+        start();
+      }
+    });
+
+    // Closed while the send has not begun its upload: it goes on, and the
+    // transfers follow it from here. A question still open is dropped.
+    dialog.addEventListener("close", function () {
+      asked++;
+      working(false);
+      if (job) {
+        job = null;
+        busy(false);
+        downloads.refresh();
+      }
+    });
+
+    // The host and the login stay for the next file, which most likely goes
+    // to the same place: that one opens on the folder this one went to.
+    function open(row) {
+      clear();
+      name = row.dataset.name;
+      what.textContent = "Uploads " + decodeURI(folder) + name + " to another host over SFTP.";
+      quiet();
+      dialog.showModal();
+      if (key && at) {
+        browse(at.path);
+        return;
+      }
+      forget();
+      (field("host").value ? field("password") : field("host")).focus();
+    }
+
+    return { open: open };
   })();
 
   // --- uploading -------------------------------------------------------

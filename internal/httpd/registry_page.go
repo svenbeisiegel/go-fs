@@ -1360,8 +1360,9 @@ func (s *Server) jobOf(w http.ResponseWriter, r *http.Request, user *account) *r
 		return nil
 	}
 	job := s.job(r.URL.Query().Get("id"), user.name)
-	// a fetch of the listing is a job too, but not one of the registry's
-	if job == nil || job.kind == jobFetch {
+	// a fetch or a send of the listing is a job too, but not one of the
+	// registry's
+	if job == nil || listingJob(job.kind) {
 		http.Error(w, "That transfer is not known.", http.StatusNotFound)
 		return nil
 	}

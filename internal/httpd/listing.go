@@ -238,7 +238,7 @@ type rights struct {
 	// Fetch is the Fetch button, which downloads a URL into the folder. It
 	// is offered to a session only; see mayFetch.
 	Fetch bool
-	// Downloads is the status of the fetches of the account in the header,
+	// Downloads is the status of the transfers of the account in the header,
 	// shown to a session wherever it is; see mayFollowFetches.
 	Downloads bool
 	// Import is Import into registry on an image archive, offered to a
@@ -247,6 +247,9 @@ type rights struct {
 	// Share is Share on a file, which hands out a link that downloads it
 	// without an account; it is offered to anyone signed in.
 	Share bool
+	// Send is Send via SFTP on a file, which uploads it to another host. It
+	// is offered to a session that may read the files here; see maySend.
+	Send bool
 }
 
 type crumb struct {

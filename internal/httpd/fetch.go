@@ -114,7 +114,7 @@ func (s *Server) handleFetch(set *settings, w http.ResponseWriter, r *http.Reque
 			return
 		}
 		if job.dismiss() {
-			s.log.Info("http fetch stopped", "job", job.id, "what", job.what, "user", cred.user.name)
+			s.log.Info("http "+job.kind+" stopped", "job", job.id, "what", job.what, "user", cred.user.name)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
@@ -128,16 +128,16 @@ type fetchJobsJSON struct {
 	Jobs []registryJobJSON `json:"jobs"`
 }
 
-// fetchJobOf finds the fetch a request names, and answers a request for one
-// that is not the caller's.
+// fetchJobOf finds the transfer of the listing a request names, a fetch or a
+// send, and answers a request for one that is not the caller's.
 func (s *Server) fetchJobOf(w http.ResponseWriter, r *http.Request, cred credential) *registryJob {
 	if !mayFollowFetches(cred) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return nil
 	}
 	job := s.job(r.URL.Query().Get("id"), cred.user.name)
-	if job == nil || job.kind != jobFetch {
-		http.Error(w, "That fetch is not known.", http.StatusNotFound)
+	if job == nil || !listingJob(job.kind) {
+		http.Error(w, "That transfer is not known.", http.StatusNotFound)
 		return nil
 	}
 	return job

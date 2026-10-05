@@ -261,7 +261,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
 dialog form { display: flex; flex-direction: column; gap: 0.75rem; padding: 1.1rem 1.25rem; width: min(50rem, calc(100vw - 2rem)); }
 dialog h2 { margin: 0; font-size: 1rem; }
 dialog p { margin: 0; color: var(--faint); font-size: 0.85rem; overflow-wrap: anywhere; }
-dialog input[type="text"], dialog input[type="password"], dialog input[type="url"], dialog textarea {
+dialog input[type="text"], dialog input[type="password"], dialog input[type="url"], dialog input[type="number"], dialog textarea {
   padding: 0.4rem 0.5rem;
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -331,7 +331,46 @@ dialog .targets input[type="text"] { flex: 1; min-width: 0; }
 dialog .targets input.invalid { border-color: var(--bad); }
 dialog .targets .meta { color: var(--faint); font-size: 0.8rem; white-space: nowrap; }
 dialog .targets button.plain { align-self: flex-start; height: 1.6rem; font-size: 0.8rem; }
-/* The downloads window: a row a fetch, with how far it has got, how fast it
+/* The send dialog: the key a host shows, to be compared rather than read,
+   and the folders of the host, to choose where the file goes. */
+dialog input[name="port"] { width: 7rem; }
+dialog .hostkey { display: flex; flex-direction: column; gap: 0.35rem; }
+dialog .hostkey p.warning { color: var(--bad); }
+dialog .hostkey .host { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+dialog .fingerprint { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.6rem; color: var(--ink); }
+dialog .fingerprint .type { color: var(--faint); font-size: 0.8rem; }
+dialog .fingerprint code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; overflow-wrap: anywhere; }
+dialog .remote { display: flex; flex-direction: column; gap: 0.4rem; }
+dialog .remote-path { display: flex; flex-wrap: wrap; align-items: center; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
+dialog .remote-path button { padding: 0 0.15rem; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
+dialog .remote-path button[aria-current] { color: var(--ink); cursor: default; }
+dialog .remote-path .sep { color: var(--faint); }
+dialog .remote-list { margin: 0; padding: 0; list-style: none; max-height: 40vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--ground); }
+dialog .remote-list li { border-bottom: 1px solid var(--line); }
+dialog .remote-list li:last-child { border-bottom: 0; }
+dialog .remote-list button, dialog .remote-list .entry {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.3rem 0.6rem;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+}
+dialog .remote-list button { cursor: pointer; }
+dialog .remote-list button:hover { background: var(--raised); }
+dialog .remote-list button:disabled { cursor: default; opacity: 0.6; }
+dialog .remote-list button .ic { color: var(--accent); }
+dialog .remote-list .entry { color: var(--faint); }
+dialog .remote-list .entry .size { margin-left: auto; font-variant-numeric: tabular-nums; }
+dialog .remote-list .entry.clash { color: var(--bad); }
+dialog .remote-list .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+dialog .remote-list li.note { padding: 0.3rem 0.6rem; color: var(--faint); font-size: 0.8rem; font-style: italic; }
+/* The downloads window: a row a fetch or a send, with how far it has got, how fast it
    goes, and the button that stops it or clears it away. */
 dialog .downloads-list { display: flex; flex-direction: column; gap: 0.15rem; margin: 0; padding: 0; list-style: none; max-height: 60vh; overflow-y: auto; }
 dialog .downloads-list li {

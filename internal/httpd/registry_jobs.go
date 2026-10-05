@@ -26,6 +26,8 @@ const (
 	jobPush   = "push"
 	jobFetch  = "fetch"
 	jobImport = "import"
+	// jobSend is a file of the listing sent to another host over SFTP.
+	jobSend = "send"
 
 	jobRunning = "running"
 	// jobReady is an import that has read its archive and waits to be told
@@ -38,15 +40,17 @@ const (
 
 // maxRunningJobs is how many registry transfers may run at once, for
 // everyone together: each holds connections and a share of the bandwidth.
-// Fetches are counted apart, against maxRunningFetches, so that downloads
-// into the listing and the registry's transfers never wait for each other.
+// The transfers of the listing, fetches and sends, are counted apart, against
+// maxRunningFetches, so that they and the registry's transfers never wait for
+// each other.
 const (
 	maxRunningJobs    = 4
 	maxRunningFetches = 8
 )
 
 // fetchDownloading is the phase of a fetch once the remote answered and the
-// file is being stored: what the dialog waits for before it closes.
+// file is being stored, and of a send once the file is being written there:
+// what the dialog waits for before it closes.
 const fetchDownloading = "downloading"
 
 // rateWindow is how often the speed of a transfer is sampled, and
@@ -89,8 +93,8 @@ type registryJob struct {
 	offer     []importImageJSON
 	choice    chan importChoice
 	confirmed bool
-	// name and folder are a fetch's: the file it stores, as far as it is
-	// known yet, and where.
+	// name and folder are a fetch's or a send's: the file it moves, as far
+	// as it is known yet, and where to.
 	name, folder string
 	// dismissed is a job the page was told to forget: it is no longer listed,
 	// though it can still be asked after by its id.
@@ -119,7 +123,8 @@ type registryJobJSON struct {
 	// found in its archive.
 	Phase  string            `json:"phase,omitempty"`
 	Images []importImageJSON `json:"images,omitempty"`
-	// Name and Folder are a fetch's: the file it stores and where.
+	// Name and Folder are a fetch's or a send's: the file it moves and
+	// where to.
 	Name   string `json:"name,omitempty"`
 	Folder string `json:"folder,omitempty"`
 	// BytesPerSecond is how fast a running job moves its bytes just now.
@@ -182,7 +187,7 @@ func (j *registryJob) rateAt(now time.Time, done int64) float64 {
 	return j.rate
 }
 
-// named sets what a fetch stores, and where.
+// named sets what a fetch or a send moves, and where to.
 func (j *registryJob) named(name, folder string) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -192,8 +197,8 @@ func (j *registryJob) named(name, folder string) {
 	}
 }
 
-// downloading says a fetch has its answer and stores the file now. The
-// counts stay as they are, unlike with setPhase.
+// downloading says a fetch has its answer and stores the file now, or a send
+// writes it. The counts stay as they are, unlike with setPhase.
 func (j *registryJob) downloading() {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -292,6 +297,12 @@ func (j *registryJob) skipped(size int64) {
 	j.blobsDone.Add(1)
 }
 
+// listingJob reports whether a kind of job is one of the transfers of the
+// listing, which the page lists in its header, rather than of the registry.
+func listingJob(kind string) bool {
+	return kind == jobFetch || kind == jobSend
+}
+
 // registryJobs are the jobs of a server.
 type registryJobs struct {
 	mu   sync.Mutex
@@ -311,12 +322,12 @@ func (s *Server) startJob(kind, owner, what string, run func(ctx context.Context
 	jobs := &s.registryJobs
 	jobs.mu.Lock()
 	running, limit := 0, maxRunningJobs
-	if kind == jobFetch {
+	if listingJob(kind) {
 		limit = maxRunningFetches
 	}
 	for id, other := range jobs.jobs {
 		if other.running() {
-			if (other.kind == jobFetch) == (kind == jobFetch) {
+			if listingJob(other.kind) == listingJob(kind) {
 				running++
 			}
 			continue
@@ -378,14 +389,14 @@ func (s *Server) job(id, owner string) *registryJob {
 	return job
 }
 
-// fetchJobs are the fetches of an account the page has not been told to
-// forget, the newest first.
+// fetchJobs are the transfers of the listing of an account, fetches and
+// sends, the page has not been told to forget, the newest first.
 func (s *Server) fetchJobs(owner string) []registryJobJSON {
 	jobs := &s.registryJobs
 	jobs.mu.Lock()
 	var found []*registryJob
 	for _, job := range jobs.jobs {
-		if job.kind != jobFetch || job.owner != owner {
+		if !listingJob(job.kind) || job.owner != owner {
 			continue
 		}
 		job.mu.Lock()

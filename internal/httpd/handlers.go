@@ -67,6 +67,7 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		allowed.Downloads = mayFollowFetches(cred)
 		allowed.Import = s.registrySession(set, r) != nil
 		allowed.Share = cred.user != nil
+		allowed.Send = maySend(cred, target.Virtual)
 		page, err := listingPage(vfs.AsFolder(target.Virtual), entries,
 			parseSort(r.URL.Query()), allowed,
 			s.sessionViewFor(set, r, cred), nonce, set.cfg.MaxChunkSize)

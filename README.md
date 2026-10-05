@@ -1232,7 +1232,7 @@ has answered; an error such as a `404` or a name that is taken is shown there,
 and once the download has begun the dialog closes. Several downloads can run
 side by side. While any runs, a button left of the filter, in every listing of
 the account, shows how fast they go together, and its background fills from
-left to right as far as they have got. It opens **Downloads**, which lists
+left to right as far as they have got. It opens **Transfers**, which lists
 each with its name, the share that has arrived, its speed and **Stop**, which
 stops it and takes it off the list; a download that failed stays there with
 its reason until it is cleared. When one finishes into the folder on the
@@ -1249,7 +1249,8 @@ in the folder shown. A name that is taken is replaced only for an account that
 sets `allowUserFileOverwrite`, as for an upload. `maxUploadSize` applies, and
 the bytes are staged in `http.uploadStagingFolder` until the download is
 complete. At most eight fetches run at once, all accounts together, apart
-from the registry's pulls and pushes, of which at most four do.
+from the registry's pulls and pushes, of which at most four do. Sends over
+SFTP (see below) count towards the same eight.
 
 Fetch is offered to a session only: not to Basic, Digest or bearer
 credentials, which have `PUT` for the same job, and not to anyone where `PUT`
@@ -1257,11 +1258,63 @@ is public. The endpoints are `?go-fs=fetch` (`POST` of `url`, `username`,
 `password`, `headers` and `skipVerify`) and
 `?go-fs=fetch-job&id=…` (`GET` for the progress, `DELETE` to stop and clear)
 on the folder, and `?go-fs=fetch-jobs` (`GET`), on any folder, for the
-account's downloads that have not been cleared, with `name`, `folder`,
+account's fetches and sends that have not been cleared, with `kind`, `name`, `folder`,
 `phase` (`downloading` once the remote has answered), `bytesDone`,
 `bytesTotal` and `bytesPerSecond`. Note that the server connects to whatever host is typed in, from its
 own network, internal addresses included: give the right to create files only
 to accounts that may do that.
+
+### Sending a file over SFTP
+
+**Send via SFTP…** in the row menu of a file uploads it to another host over
+SFTP. It is offered to an account that has logged in through the form and may
+read the file. The dialog takes three steps:
+
+1. **Connect.** The host name or address, the port (22 unless another is
+   given), a username and a password. The password is sent as SSH `password`
+   authentication, and as the answer to every prompt where the host asks by
+   `keyboard-interactive` instead.
+2. **Host key.** Before any login is offered, the server connects to the host
+   only far enough to see its key, and the dialog shows the key type and its
+   SHA256 fingerprint, as `ssh` does. **Accept key** goes on; every later
+   request names the fingerprint that was accepted, and a host that shows
+   another one is not logged in to. The browser remembers the accepted key
+   for that host and port, in its local storage, so the next send there skips
+   this step. A key that changed since is shown again, with a warning, and has
+   to be accepted anew. Nothing about keys is stored on the server.
+3. **Folder.** The server logs in and lists the folder the login starts in.
+   A click on a folder, on `..` or on a part of the path above the list goes
+   there. Files are shown, but only folders can be chosen. A file of the same
+   name is marked, and the line below the list then says it will be replaced.
+   **Send** starts the upload into the folder shown.
+
+The server sends the file in the background, as it fetches one: once the
+upload has begun the dialog closes and the send is listed under **Transfers**
+with the fetches, with the same progress, speed and **Stop**. The file is
+written under a hidden name, `.<name>.go-fs-<id>.part`, in the chosen folder
+and renamed into place once all of it is there, with
+`posix-rename@openssh.com` where the host offers it, so that a send that fails
+or is stopped never leaves half a file under the real name. A stopped send
+takes its partial file away again. A send that moves nothing for two minutes
+stops with an error. The dialog keeps the host and the login until the page is
+reloaded, so the next file opens on the folder the last one went to; the
+password is never stored, and it is never logged.
+
+The endpoints are on the file, all `POST`:
+
+- `?go-fs=send-hostkey` takes `host` and `port` and answers `host`, `keyType`
+  and `fingerprint`.
+- `?go-fs=send-browse` takes `host`, `port`, `username`, `password`, `hostKey`
+  (the accepted fingerprint) and `path` (empty for the folder the login starts
+  in). It answers `path`, `parent` and `entries` (`name`, `dir`, `size`).
+- `?go-fs=send` takes the same fields, with `path` as the folder to send into,
+  and answers `202` with the job.
+
+A send's progress is read and stopped through `?go-fs=fetch-job`, and it is
+listed by `?go-fs=fetch-jobs` with `kind` `send`. A remote that cannot be
+reached, refuses the login or has no such folder is answered `502` with the
+reason. As with Fetch, the server connects from its own network to whatever
+host is typed in, internal addresses included.
 
 ## Logging and diagnostics
 

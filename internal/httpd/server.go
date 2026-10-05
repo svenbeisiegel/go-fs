@@ -566,6 +566,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleFetch(set, w, r, target, cred, action)
 		return
 	}
+	// and so does sending a file to another host
+	if action := sendAction(r); action != "" {
+		s.handleSend(set, w, r, target, cred, action)
+		return
+	}
 	user := cred.user
 	act := actionOf(r.Method, target)
 	if !s.permits(set, user, method, target.Virtual, act) {

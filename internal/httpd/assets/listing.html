@@ -86,6 +86,7 @@
 <div id="menu" class="menu" role="menu" hidden>
   <a role="menuitem" data-do="download" download><svg class="ic"><use href="#i-download"/></svg><span>Download</span></a>
   {{if .Rights.Share}}<button type="button" role="menuitem" data-do="share"><svg class="ic"><use href="#i-link"/></svg>Share&#8230;</button>{{end}}
+  {{if .Rights.Send}}<button type="button" role="menuitem" data-do="send"><svg class="ic"><use href="#i-send"/></svg>Send via SFTP&#8230;</button>{{end}}
   {{if and .Rights.Import .Session.Registry}}<a role="menuitem" data-do="import" data-registry="{{.Session.Registry}}" hidden><svg class="ic"><use href="#i-box"/></svg><span>Import into registry&#8230;</span></a>{{end}}
   {{if .Rights.Rename}}<button type="button" role="menuitem" data-do="rename"><svg class="ic"><use href="#i-pencil"/></svg>Rename&#8230;</button>{{end}}
   {{if or .Rights.DeleteFile .Rights.DeleteFolder}}<button type="button" role="menuitem" class="remove" data-do="delete"><svg class="ic"><use href="#i-trash"/></svg>Delete</button>{{end}}
@@ -138,11 +139,51 @@
 {{if .Rights.Downloads}}
 <dialog id="downloads-dialog" class="transfer" aria-labelledby="downloads-title">
   <form method="dialog">
-    <h2 id="downloads-title">Downloads</h2>
+    <h2 id="downloads-title">Transfers</h2>
     <ul class="downloads-list" aria-live="polite"></ul>
-    <p class="none">No downloads.</p>
+    <p class="none">No transfers.</p>
     <div class="row">
       <button class="plain" type="submit" value="cancel">Close</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
+
+{{if .Rights.Send}}
+<dialog id="send-dialog" class="transfer" aria-labelledby="send-title">
+  <form method="dialog">
+    <h2 id="send-title">Send via SFTP</h2>
+    <p class="what"></p>
+    <div class="fields">
+      <label for="send-host">Host</label>
+      <input id="send-host" name="host" type="text" required placeholder="sftp.example.com" autocomplete="off" spellcheck="false">
+      <label for="send-port">Port</label>
+      <input id="send-port" name="port" type="number" required min="1" max="65535" value="22">
+      <label for="send-username">Username</label>
+      <input id="send-username" name="username" type="text" required autocomplete="off" spellcheck="false">
+      <label for="send-password">Password</label>
+      <input id="send-password" name="password" type="password" autocomplete="new-password">
+    </div>
+    <div class="hostkey" hidden>
+      <p class="warning" hidden></p>
+      <p>The host shows this key. Accept it only if it is the one you expect of <span class="host"></span>:</p>
+      <p class="fingerprint"><span class="type"></span><code></code></p>
+    </div>
+    <div class="remote" hidden>
+      <nav class="remote-path" aria-label="Remote folder"></nav>
+      <ul class="remote-list"></ul>
+      <p class="where"></p>
+    </div>
+    <div class="progress" hidden>
+      <progress max="1"></progress>
+      <p class="status" role="status" aria-live="polite"></p>
+    </div>
+    <div class="row">
+      <button class="go" type="submit" value="connect">Connect</button>
+      <button class="go" type="submit" value="accept" hidden>Accept key</button>
+      <button class="go" type="submit" value="start" hidden>Send</button>
+      <button class="plain" type="submit" value="stop" formnovalidate hidden>Stop</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
     </div>
   </form>
 </dialog>
