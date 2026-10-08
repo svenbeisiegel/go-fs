@@ -781,6 +781,21 @@ func TestServers(t *testing.T) {
 		t.Errorf("RemoteHost read %q, %v", host, err)
 	}
 
+	smb := Server{Name: "files", Type: ServerTypeSMB, Host: "files.example.com", Username: `CORP\alice`, Password: "secret"}
+	if err := check(valid, smb); err != nil {
+		t.Errorf("a valid SMB server without a fingerprint was refused: %v", err)
+	}
+	for name, change := range map[string]func(*Server){
+		"no host":     func(s *Server) { s.Host = "" },
+		"no username": func(s *Server) { s.Username = "" },
+	} {
+		server := smb
+		change(&server)
+		if err := check(server); err == nil {
+			t.Errorf("an SMB server with %s was accepted", name)
+		}
+	}
+
 	artifactory := Server{Name: "artifacts", Type: ServerTypeArtifactory,
 		URL: "https://acme.jfrog.io/artifactory", Token: "secret"}
 	if err := check(valid, artifactory); err != nil {

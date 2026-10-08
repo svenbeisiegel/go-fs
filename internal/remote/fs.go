@@ -50,6 +50,8 @@ func Open(ctx context.Context, l Login, sshCfg config.SSH) (FS, error) {
 	switch l.Type {
 	case config.ServerTypeSFTP:
 		return openSFTPFS(ctx, l, sshCfg)
+	case config.ServerTypeSMB:
+		return openSMB(ctx, l)
 	case config.ServerTypeArtifactory:
 		return openArtifactory(ctx, l), nil
 	}

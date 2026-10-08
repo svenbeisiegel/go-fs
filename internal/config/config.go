@@ -324,7 +324,8 @@ type Server struct {
 	// unique, whatever its case, and "Manual" is taken by the entry that
 	// asks for a login instead.
 	Name string `toml:"name"`
-	// Type is the protocol the server is reached with: sftp or artifactory.
+	// Type is the protocol the server is reached with: sftp, smb or
+	// artifactory.
 	Type string `toml:"type"`
 	// Host is the name or address of the server, without a scheme or a port,
 	// for a type reached by a host and a login.
@@ -411,6 +412,9 @@ type ServerType struct {
 const (
 	// ServerTypeSFTP is SFTP, over SSH with a password.
 	ServerTypeSFTP = "sftp"
+	// ServerTypeSMB is SMB 2 or 3, the file sharing of Windows and Samba,
+	// logged in to by NTLM with a password.
+	ServerTypeSMB = "smb"
 	// ServerTypeArtifactory is the REST API of a JFrog Artifactory, over HTTP
 	// or HTTPS with a Bearer token.
 	ServerTypeArtifactory = "artifactory"
@@ -425,6 +429,7 @@ const ManualServer = "Manual"
 var ServerTypes = []ServerType{
 	{ID: ServerTypeSFTP, Label: "SFTP", DefaultPort: 22, HostKey: true},
 	{ID: ServerTypeArtifactory, Label: "Artifactory", Token: true},
+	{ID: ServerTypeSMB, Label: "SMB", DefaultPort: 445},
 }
 
 // ServerTypeOf looks a protocol up by its ID.

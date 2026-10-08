@@ -213,8 +213,9 @@ func TestServerEditKeepsTheRights(t *testing.T) {
 func TestStateOffersTheProtocols(t *testing.T) {
 	_, front := testServer(t, testConfig(t))
 	body := get(t, front)
-	if len(body.Protocols) != 2 || body.Protocols[0].ID != config.ServerTypeSFTP ||
-		body.Protocols[1].ID != config.ServerTypeArtifactory || !body.Protocols[1].Token {
+	if len(body.Protocols) != 3 || body.Protocols[0].ID != config.ServerTypeSFTP ||
+		body.Protocols[1].ID != config.ServerTypeArtifactory || !body.Protocols[1].Token ||
+		body.Protocols[2].ID != config.ServerTypeSMB || body.Protocols[2].HostKey || body.Protocols[2].DefaultPort != 445 {
 		t.Errorf("the state offers %+v", body.Protocols)
 	}
 }

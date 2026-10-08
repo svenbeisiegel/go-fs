@@ -230,22 +230,23 @@ banner = []
 # [[servers]]
 # What the Send File dialog lists the server as. Unique, whatever its case.
 # name = "backup host"
-# The protocol the server is reached with: sftp, or artifactory for the REST
-# API of a JFrog Artifactory.
+# The protocol the server is reached with: sftp, smb for a Windows file
+# server or a Samba, or artifactory for the REST API of a JFrog Artifactory.
 # type = "sftp"
 # The name or address of the server, without a scheme or a port. An
 # artifactory server names its url and token instead of this, the port and
 # the login.
 # host = "sftp.example.com"
-# Where the server listens, the default of its type (22 for sftp) when not
-# set.
+# Where the server listens, the default of its type (22 for sftp, 445 for
+# smb) when not set.
 # port = 22
 # The login on the server. The password is kept as it is, so keep this file
 # private.
 # username = "backup"
 # password = "secret"
 # The SHA-256 fingerprint of the key the server showed when it was stored. A
-# server that shows another is not logged in to until it is edited.
+# server that shows another is not logged in to until it is edited. An smb
+# server shows no key and has none.
 # hostKeyFingerprint = "SHA256:…"
 # What go-fs may do on the server, for any account, on top of what the
 # account itself may. Downloading and fetching a file of it: true when not
@@ -269,6 +270,16 @@ banner = []
 # type = "artifactory"
 # url = "https://acme.jfrog.io/artifactory"
 # token = "…"
+#
+# An SMB server is reached by SMB 2 or 3 and logged in to by NTLM. A username
+# of DOMAIN\user logs in to that domain. Its shares are the folders at the top
+# of the server.
+# [[servers]]
+# name = "file server"
+# type = "smb"
+# host = "files.example.com"
+# username = "CORP\\backup"
+# password = "secret"
 
 [ftp]
 # Serve the plain control port. The TLS listener has its own switch in [ftps];

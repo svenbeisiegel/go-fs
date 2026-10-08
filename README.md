@@ -1339,7 +1339,8 @@ to accounts that may do that.
 ### Sending a file to another server
 
 **Send File…** in the row menu of a file uploads it to another host, over SFTP
-or to a JFrog Artifactory (see [Artifactory](#artifactory)). It is offered to
+or SMB (see [SMB](#smb)), or to a JFrog Artifactory (see
+[Artifactory](#artifactory)). It is offered to
 an account that has logged in through the form and may read the file. The
 dialog opens with a **Server** list: the servers an admin stored (see
 [Stored servers](#stored-servers)), and **Manual**, chosen at first, which
@@ -1357,9 +1358,10 @@ has to edit the server.
 1. **Connect.** The protocol (SFTP), the host name or address, the port (22
    unless another is given), a username and a password. The password is sent
    as SSH `password` authentication, and as the answer to every prompt where
-   the host asks by `keyboard-interactive` instead. For **Artifactory** the
-   dialog asks for the server address and a token instead, and goes straight
-   to the folders, since an Artifactory shows no key.
+   the host asks by `keyboard-interactive` instead. For **SMB** the port is
+   445 unless another is given, and the dialog goes straight to the folders,
+   since an SMB host shows no key. For **Artifactory** the dialog asks for the
+   server address and a token instead, and goes straight to the folders too.
 2. **Host key.** Before any login is offered, the server connects to the host
    only far enough to see its key, and the dialog shows the key type and its
    SHA256 fingerprint, as `ssh` does. **Accept key** goes on; every later
@@ -1379,7 +1381,7 @@ upload has begun the dialog closes and the send is listed under **Transfers**
 with the fetches, with the same progress, speed and **Stop**. The file is
 written under a hidden name, `.<name>.go-fs-<id>.part`, in the chosen folder
 and renamed into place once all of it is there, with
-`posix-rename@openssh.com` where the host offers it, so that a send that fails
+`posix-rename@openssh.com` where an SFTP host offers it, so that a send that fails
 or is stopped never leaves half a file under the real name. A stopped send
 takes its partial file away again. An Artifactory needs none of that: it keeps
 an upload only once all of it was taken. A send that moves nothing for two minutes
@@ -1395,7 +1397,7 @@ The endpoints are on the file, all `POST`:
   (the accepted fingerprint) and `path` (empty for the folder the login starts
   in), or `protocol` `artifactory` with `url`, `token` and `path`, or `server`
   (the name of a stored server) and `path`. It answers `base` (`sftp://host`,
-  or the address of an Artifactory), `path`, `parent` and `entries` (`name`,
+  `smb://host`, or the address of an Artifactory), `path`, `parent` and `entries` (`name`,
   `dir`, `size`).
 - `?go-fs=send` takes the same fields, with `path` as the folder to send into,
   and answers `202` with the job.
@@ -1417,7 +1419,8 @@ The servers the dialog lists are `[[servers]]` entries, managed on the
 
 1. **Add server…** asks for a name, the protocol, the host, the port, a
    username and a password; for Artifactory, for a name, the server address
-   and a token instead, and it skips to the last step.
+   and a token instead. For SMB and Artifactory it skips to the last step,
+   since neither shows a key.
 2. **Connect** shows the key the host shows, without logging in, as the send
    dialog does. When a server is edited, the dialog says whether the key is
    the one the server is stored with.
@@ -1498,6 +1501,36 @@ size or time. A rename is the Move API, also of Pro; without it a rename fails
 with what Artifactory says. A folder is deleted only when there is nothing in
 it, as on an SFTP server, although Artifactory would remove all of it.
 
+#### SMB
+
+A Windows file server, a NAS or a Samba is a server of `type = "smb"`,
+reached by SMB 2 or 3 on port 445 and logged in to by NTLMv2 with a username
+and a password. A username of `DOMAIN\user` logs in to that domain; a plain
+one, or `user@domain`, is handed on as it is. SMB shows no host key, so there
+is nothing to accept: the admin dialog stores the server once the login
+works.
+
+```toml
+[[servers]]
+name = "file server"
+type = "smb"
+host = "files.example.com"
+username = "CORP\\backup"
+password = "secret"
+```
+
+Its files are in shares, so the top of the server, `/`, lists the shares the
+login may see as folders, and `/<share>/<path>` is a file or a folder in one.
+The shares whose names end in `$` (`C$`, `ADMIN$`, `IPC$`) are left out of
+the list; a host that does not list its shares to the login is still reached
+by the path of a share. Files and folders go into a share; a share itself is
+created, renamed and removed on the host. A rename stays within its share. A
+send replaces a file of the same name, as on an SFTP server, but never a
+folder.
+
+SMB 1 is not spoken, nor Kerberos: a host that only takes those refuses the
+login.
+
 #### Browsing a stored server
 
 The menu in the corner of the header lists the stored servers by name, after
@@ -1506,7 +1539,8 @@ to an account that has logged in through the form and may read files
 (`allowUserFileRetrieve`), the same accounts that may send.
 
 Picking a server logs in with its stored login and key, and shows the folder
-the login starts in; for an Artifactory, the list of its repositories. The page is the file listing: crumbs, sortable columns,
+the login starts in; for an Artifactory, the list of its repositories, and
+for an SMB host, the list of its shares. The page is the file listing: crumbs, sortable columns,
 the filter, **Upload or Drop file**, **New folder**, the **Transfers** button,
 and the row menu with **Download**, **Rename…** and **Delete**. Download on a
 folder packs it as a `.tar.xz`, as it does for a folder of the served tree.
