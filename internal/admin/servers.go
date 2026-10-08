@@ -154,10 +154,12 @@ func (h *Handler) handleServerSave(w http.ResponseWriter, r *http.Request) {
 	}
 	server := login.ConfigServer(name)
 	if index >= 0 {
-		// the dialog changes the login, and the rights stay as they were
+		// the dialog changes the login, and the rights and who may use the
+		// server stay as they were
 		was := cfg.Servers[index]
 		server.AllowDownload, server.AllowUpload, server.AllowCreate = was.AllowDownload, was.AllowUpload, was.AllowCreate
 		server.AllowDelete, server.AllowRename = was.AllowDelete, was.AllowRename
+		server.AllowedUsers = was.AllowedUsers
 		cfg.Servers[index] = server
 	} else {
 		cfg.Servers = append(cfg.Servers, server)

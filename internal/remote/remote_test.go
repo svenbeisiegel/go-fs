@@ -3,6 +3,7 @@ package remote_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -60,7 +61,7 @@ func TestServerRoundTrips(t *testing.T) {
 	if login.Server != "backup" {
 		t.Errorf("the login of a server is named %q", login.Server)
 	}
-	if back := login.ConfigServer("backup"); back != server {
+	if back := login.ConfigServer("backup"); !reflect.DeepEqual(back, server) {
 		t.Errorf("the server came back as %+v", back)
 	}
 }

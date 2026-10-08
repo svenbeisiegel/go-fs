@@ -1355,7 +1355,8 @@ dialog opens with a **Server** list: the servers an admin stored (see
 asks for a login instead.
 
 A stored server is listed only when it allows uploads (`allowUpload`, see
-[Stored servers](#stored-servers)). It is picked by its name. **Connect** goes straight to its
+[Stored servers](#stored-servers)) and the account may use it
+(`allowedUsers`). It is picked by its name. **Connect** goes straight to its
 folders with the login and the host key the configuration file holds. The
 page never sees the password or the key; a host that shows another key than
 the stored one is not logged in to, and the dialog says that an administrator
@@ -1437,11 +1438,11 @@ The servers the dialog lists are `[[servers]]` entries, managed on the
    page; other changes still wait for **Apply**. The file is rewritten and kept
    as `.bak`, as Apply does.
 
-On the tab, the name and the rights of a server can be changed and the server
+On the tab, the name, the rights and the allowed users of a server can be changed and the server
 removed, all written by **Apply**; everything else is read-only and changed
 with **Edit…**, which goes through the same dialog. An edit that leaves the
 password or the token empty keeps the stored one, and an edit keeps the
-rights as they are.
+rights and the allowed users as they are.
 
 ```toml
 [[servers]]
@@ -1452,11 +1453,18 @@ port = 22
 username = "backup"
 password = "secret"
 hostKeyFingerprint = "SHA256:…"
+allowedUsers = ["alice", "bob"]
 ```
 
 The name has to be unique, whatever its case, and cannot be `Manual`. The
-password is kept in plain text, as an account's is. Every account that may
-send sees every stored server, by name.
+password is kept in plain text, as an account's is.
+
+`allowedUsers` names the accounts, one per line on the admin tab, that may use
+the server: see it in the menu, browse it, download and fetch from it, and send
+to it. It is empty when not set. An account that sets `isAdmin` sees and may
+use every server, named or not; any other account that is not named has no
+access to the server at all, and is answered as if it did not exist. Names are
+matched with their case, as logging in matches them.
 
 What go-fs may do on a server is set per server, for every account, on top of
 what the account itself may: an action needs both.

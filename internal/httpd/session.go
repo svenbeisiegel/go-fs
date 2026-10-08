@@ -270,7 +270,7 @@ func (s *Server) sessionViewFor(set *settings, r *http.Request, cred credential)
 	if cred.token && cred.user != nil {
 		who.User = cred.user.name
 		if mayBrowseRemote(cred) {
-			for _, server := range set.servers {
+			for _, server := range serversFor(set, cred.user) {
 				who.Servers = append(who.Servers, serverLink{Name: server.Name, Link: remoteURL(server.Name, "")})
 			}
 		}

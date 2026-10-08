@@ -424,10 +424,15 @@ func storedServer(h *remotetest.SFTPHost, name string) config.Server {
 		Username: "alice", Password: "secret", HostKeyFingerprint: h.Fingerprint})
 }
 
-// allowingAll is the server with every right switched on.
+// testAccounts are the accounts the tests of stored servers log in as.
+var testAccounts = []string{"john", "reader", "kim", "blind", "adder"}
+
+// allowingAll is the server with every right switched on, admitting every
+// account the tests log in as.
 func allowingAll(server config.Server) config.Server {
 	server.AllowDownload, server.AllowUpload, server.AllowCreate = ptr(true), ptr(true), ptr(true)
 	server.AllowDelete, server.AllowRename = ptr(true), ptr(true)
+	server.AllowedUsers = testAccounts
 	return server
 }
 

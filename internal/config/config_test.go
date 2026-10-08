@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -765,6 +766,12 @@ func TestServers(t *testing.T) {
 		},
 		"no username":    func(s *Server) { s.Username = "" },
 		"no fingerprint": func(s *Server) { s.HostKeyFingerprint = "" },
+		"an empty allowed user": func(s *Server) {
+			s.AllowedUsers = []string{"alice", " "}
+		},
+		"an allowed user with spaces": func(s *Server) {
+			s.AllowedUsers = []string{"alice "}
+		},
 	} {
 		server := valid
 		change(&server)
@@ -778,7 +785,13 @@ func TestServers(t *testing.T) {
 		t.Error("two servers of one name, in another case, were accepted")
 	}
 
-	if got, ok := FindServer([]Server{valid}, "Backup"); !ok || got != valid {
+	named := valid
+	named.AllowedUsers = []string{"alice", "nobody-configured"}
+	if err := check(named); err != nil {
+		t.Errorf("a server with allowed users was refused: %v", err)
+	}
+
+	if got, ok := FindServer([]Server{valid}, "Backup"); !ok || !reflect.DeepEqual(got, valid) {
 		t.Errorf("FindServer found %+v, %v", got, ok)
 	}
 	if _, ok := FindServer([]Server{valid}, "other"); ok {
@@ -965,5 +978,31 @@ func TestRetiredKeysAreReported(t *testing.T) {
 	}
 	if found := RetiredKeys([]byte("this is not toml at all")); found != nil {
 		t.Errorf("RetiredKeys of an unreadable file = %v, want nothing", found)
+	}
+}
+
+// A server admits an admin always, and any other account only by its name,
+// in its case.
+func TestServerAdmits(t *testing.T) {
+	server := Server{Name: "backup", AllowedUsers: []string{"alice"}}
+	for _, c := range []struct {
+		user  string
+		admin bool
+		want  bool
+	}{
+		{"alice", false, true},
+		{"Alice", false, false},
+		{"bob", false, false},
+		{"bob", true, true},
+	} {
+		if got := server.Admits(c.user, c.admin); got != c.want {
+			t.Errorf("Admits(%q, admin %v) is %v, want %v", c.user, c.admin, got, c.want)
+		}
+	}
+	if (Server{Name: "empty"}).Admits("alice", false) {
+		t.Error("a server that names nobody admitted an account that is no admin")
+	}
+	if !(Server{Name: "empty"}).Admits("root", true) {
+		t.Error("a server that names nobody refused an admin")
 	}
 }

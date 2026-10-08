@@ -237,8 +237,8 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 		table.Create = config.KindToken
 	}
 	// nor is a server: the page edits one in a dialog of its own, which logs
-	// in to it before the server stores it, so only the name and its rights
-	// are typed in here
+	// in to it before the server stores it, so only the name, its rights and
+	// its allowed users are typed in here
 	isServer := element == reflect.TypeOf(config.Server{})
 	if isServer {
 		table.Create = KindServer
@@ -269,8 +269,8 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 				field.Summary = true
 			}
 		}
-		// what may be done on a server is no part of its login, and is
-		// switched here as an account's rights are
+		// what may be done on a server, and by whom, is no part of its login,
+		// and is set here as an account's rights are
 		if isServer && inner.Name != "Name" && !strings.HasPrefix(inner.Name, "Allow") {
 			field.ReadOnly = true
 		}

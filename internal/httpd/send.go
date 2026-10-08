@@ -109,7 +109,8 @@ func (s *Server) handleSend(set *settings, w http.ResponseWriter, r *http.Reques
 		http.Error(w, "The request could not be read.", http.StatusBadRequest)
 		return
 	}
-	req, err := body.request(action, set.servers)
+	// a server that does not admit the account is not there to be named
+	req, err := body.request(action, serversFor(set, cred.user))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

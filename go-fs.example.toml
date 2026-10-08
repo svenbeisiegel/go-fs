@@ -268,6 +268,11 @@ banner = []
 # allowDelete = true
 # Renaming a file or a folder on it: false when not set.
 # allowRename = true
+# The accounts, by username, that may use the server at all: see it, browse
+# it, fetch from it and send to it. Empty when not set. An account that sets
+# isAdmin may always use every server; any other account not named here has
+# no access to it.
+# allowedUsers = ["alice", "bob"]
 #
 # An Artifactory is reached by its address and logged in to with a token,
 # sent as "Authorization: Bearer <token>". The address is where the REST API

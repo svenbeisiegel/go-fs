@@ -155,8 +155,9 @@ func (s *Server) remoteFetchStart(set *settings, w http.ResponseWriter, r *http.
 		return
 	}
 	query := r.URL.Query()
-	server, ok := config.FindServer(set.servers, query.Get(remoteServerParam))
+	server, ok := config.FindServer(serversFor(set, cred.user), query.Get(remoteServerParam))
 	if !ok {
+		s.logUnadmitted(set, cred, query.Get(remoteServerParam), address)
 		http.NotFound(w, r)
 		return
 	}

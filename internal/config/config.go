@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -320,9 +321,9 @@ func (t Token) ExpiresAt() (time.Time, bool) {
 // Server is a remote host the file listing can send a file to under a name,
 // without whoever sends it typing the login or ever seeing the password. The
 // admin interface adds and edits servers, and stores one only once it has
-// logged in to it; the listing offers every server to every session that may
-// send, and what may be done on one is what both the account and the server
-// allow (see Rights).
+// logged in to it; the listing offers a server to a session that may send and
+// whose account it admits (see Admits), and what may be done on one is what
+// both the account and the server allow (see Rights).
 type Server struct {
 	// Name is what the Send File dialog lists the server as. It has to be
 	// unique, whatever its case, and "Manual" is taken by the entry that
@@ -352,6 +353,12 @@ type Server struct {
 	// It is kept as it is, as the password is.
 	Token string `toml:"token,omitempty"`
 
+	// AllowedUsers are the accounts, by username, that may use the server:
+	// see it in the menu, browse it, fetch from it and send to it. An
+	// account that sets isAdmin may use every server whether it is named
+	// here or not, so a server that names nobody is for those alone.
+	AllowedUsers []string `toml:"allowedUsers,omitempty"`
+
 	// The rights below are what go-fs may do on the server, for any account
 	// and on top of what the account itself may; Rights resolves them. They
 	// are pointers only so that Save can leave an unset key out of the file.
@@ -371,6 +378,16 @@ type Server struct {
 	// AllowRename lets a file or a folder of the server be renamed. Denied
 	// when not set.
 	AllowRename *bool `toml:"allowRename,omitempty"`
+}
+
+// Admits reports whether the account named username may use the server at
+// all: an admin always may, any other account only when the server names it.
+// Usernames are told apart by their case, as logging in tells them apart.
+func (s Server) Admits(username string, isAdmin bool) bool {
+	if isAdmin {
+		return true
+	}
+	return slices.Contains(s.AllowedUsers, username)
 }
 
 // ServerRights are what go-fs may do on a stored server.
@@ -1276,6 +1293,16 @@ func (c Config) validateServers() error {
 			return fmt.Errorf("%s: %q is configured twice", where, server.Name)
 		}
 		names[strings.ToLower(name)] = true
+		// an account that is not configured (any more) is left alone, so
+		// removing one does not make the file fail to load
+		for k, user := range server.AllowedUsers {
+			if strings.TrimSpace(user) == "" {
+				return fmt.Errorf("%s %q: allowedUsers[%d] is empty", where, server.Name, k)
+			}
+			if strings.TrimSpace(user) != user {
+				return fmt.Errorf("%s %q: allowedUsers %q cannot begin or end with a space", where, server.Name, user)
+			}
+		}
 		kind, ok := ServerTypeOf(server.Type)
 		if !ok {
 			known := make([]string, len(ServerTypes))

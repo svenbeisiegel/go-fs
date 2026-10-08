@@ -67,6 +67,21 @@ func mayBrowseRemote(cred credential) bool {
 	return mayFollowFetches(cred) && granted(cred.user.perms, actRead)
 }
 
+// serversFor are the stored servers the account may use at all (see
+// config.Server.Admits); every other server is as if it did not exist.
+func serversFor(set *settings, user *account) []config.Server {
+	if user == nil {
+		return nil
+	}
+	var admitted []config.Server
+	for _, server := range set.servers {
+		if server.Admits(user.name, user.isAdmin) {
+			admitted = append(admitted, server)
+		}
+	}
+	return admitted
+}
+
 // remoteURL is the link to a path of a stored server, "" for where its login
 // starts. The path comes last, so that the page can append an escaped name to
 // the link of a folder.
@@ -134,8 +149,9 @@ func (s *Server) handleRemote(set *settings, w http.ResponseWriter, r *http.Requ
 	}
 
 	query := r.URL.Query()
-	server, ok := config.FindServer(set.servers, query.Get(remoteServerParam))
+	server, ok := config.FindServer(serversFor(set, cred.user), query.Get(remoteServerParam))
 	if !ok {
+		s.logUnadmitted(set, cred, query.Get(remoteServerParam), clientAddress(set, r))
 		http.NotFound(w, r)
 		return
 	}
@@ -178,6 +194,15 @@ func (s *Server) handleRemote(set *settings, w http.ResponseWriter, r *http.Requ
 		s.remoteMove(set, w, r, q)
 	case http.MethodDelete:
 		s.remoteDelete(w, r, q)
+	}
+}
+
+// logUnadmitted logs a request for a stored server that exists but does not
+// admit the account, which is answered as one that does not exist.
+func (s *Server) logUnadmitted(set *settings, cred credential, name, address string) {
+	if _, exists := config.FindServer(set.servers, name); exists {
+		s.log.Info("http remote refused, the server does not admit the account",
+			"server", name, "user", nameOf(cred.user), "address", address)
 	}
 }
 

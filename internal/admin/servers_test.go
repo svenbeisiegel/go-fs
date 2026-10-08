@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -117,7 +118,7 @@ func TestServerIsStoredOnceTheLoginWorks(t *testing.T) {
 	servers := loadServers(t, path)
 	want := config.Server{Name: "backup", Type: config.ServerTypeSFTP, Host: host.Host, Port: host.Port,
 		Username: "alice", Password: "secret", HostKeyFingerprint: host.Fingerprint}
-	if len(servers) != 1 || servers[0] != want {
+	if len(servers) != 1 || !reflect.DeepEqual(servers[0], want) {
 		t.Fatalf("the file holds %+v, want %+v", servers, want)
 	}
 	// nothing else of the file changed
@@ -196,6 +197,7 @@ func TestServerEditKeepsTheRights(t *testing.T) {
 	}
 	yes, no := true, false
 	cfg.Servers[0].AllowDownload, cfg.Servers[0].AllowUpload, cfg.Servers[0].AllowRename = &no, &yes, &yes
+	cfg.Servers[0].AllowedUsers = []string{"bob", "carol"}
 	if err := config.Save(path, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -207,6 +209,9 @@ func TestServerEditKeepsTheRights(t *testing.T) {
 	rights := loadServers(t, path)[0].Rights()
 	if want := (config.ServerRights{Upload: true, Rename: true}); rights != want {
 		t.Errorf("the edited server allows %+v, want %+v", rights, want)
+	}
+	if users := loadServers(t, path)[0].AllowedUsers; !reflect.DeepEqual(users, []string{"bob", "carol"}) {
+		t.Errorf("the edited server admits %v", users)
 	}
 }
 
@@ -241,7 +246,7 @@ func TestArtifactoryIsStoredOnceTheTokenWorks(t *testing.T) {
 	}
 	stored := loadServers(t, path)
 	want := config.Server{Name: "artifacts", Type: config.ServerTypeArtifactory, URL: host.URL, Token: "secret"}
-	if len(stored) != 1 || stored[0] != want {
+	if len(stored) != 1 || !reflect.DeepEqual(stored[0], want) {
 		t.Fatalf("the file holds %+v, want %+v", stored, want)
 	}
 

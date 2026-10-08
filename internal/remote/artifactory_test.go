@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -63,7 +64,7 @@ func TestArtifactoryLoginIsChecked(t *testing.T) {
 
 	server := config.Server{Name: "artifacts", Type: config.ServerTypeArtifactory,
 		URL: "https://acme.jfrog.io/artifactory", Token: "abc"}
-	if back := remote.FromServer(server).ConfigServer("artifacts"); back != server {
+	if back := remote.FromServer(server).ConfigServer("artifacts"); !reflect.DeepEqual(back, server) {
 		t.Errorf("the server came back as %+v", back)
 	}
 }

@@ -70,7 +70,7 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		allowed.Send = maySend(cred, target.Virtual)
 		var send sendView
 		if allowed.Send {
-			send = sendViewOf(set.servers)
+			send = sendViewOf(serversFor(set, cred.user))
 		}
 		page, err := listingPage(localPlace(vfs.AsFolder(target.Virtual)), entries,
 			parseSort(r.URL.Query()), allowed, send,
