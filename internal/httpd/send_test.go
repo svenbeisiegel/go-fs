@@ -148,6 +148,16 @@ func (c slowChannel) Read(b []byte) (int, error) {
 	return c.Channel.Read(b)
 }
 
+// sftpPath is a local path as an SFTP server names it: with slashes, and on
+// Windows with a slash before the drive letter.
+func sftpPath(p string) string {
+	p = filepath.ToSlash(p)
+	if len(p) > 1 && p[1] == ':' {
+		p = "/" + p
+	}
+	return p
+}
+
 // body is a send to the host, as the dialog asks for one once the key was
 // accepted.
 func (h *sftpHost) body(path string) sendBody {
@@ -285,7 +295,7 @@ func TestSendListsTheFoldersOfTheHost(t *testing.T) {
 		return view
 	}
 	home := browse("")
-	if home.Path != filepath.ToSlash(remote.dir) {
+	if home.Path != sftpPath(remote.dir) {
 		t.Errorf("the login starts in %q, want %q", home.Path, remote.dir)
 	}
 	var names []string
@@ -298,7 +308,7 @@ func TestSendListsTheFoldersOfTheHost(t *testing.T) {
 	if !home.Entries[0].Dir || home.Entries[2].Dir || home.Entries[2].Size != 1 {
 		t.Errorf("the entries are %+v", home.Entries)
 	}
-	if home.Parent != filepath.ToSlash(filepath.Dir(remote.dir)) {
+	if home.Parent != sftpPath(filepath.Dir(remote.dir)) {
 		t.Errorf("the parent is %q", home.Parent)
 	}
 
@@ -322,7 +332,7 @@ func TestSendUploadsTheFile(t *testing.T) {
 	server.write(t, "docs/report.txt", content)
 	session := login(t, server, "/", "john", "doe")
 
-	folder := filepath.ToSlash(filepath.Join(remote.dir, "inbox"))
+	folder := sftpPath(filepath.Join(remote.dir, "inbox"))
 	job := startSend(t, server, "/docs/report.txt", session, remote.body(folder))
 	ended := waitForFetch(t, server, "/", job.ID, session)
 	expectDone(t, ended)
@@ -369,7 +379,7 @@ func TestSendReplacesAFileThatIsThere(t *testing.T) {
 	server.write(t, "report.txt", "the new one")
 	session := login(t, server, "/", "john", "doe")
 
-	job := startSend(t, server, "/report.txt", session, remote.body(filepath.ToSlash(remote.dir)))
+	job := startSend(t, server, "/report.txt", session, remote.body(sftpPath(remote.dir)))
 	expectDone(t, waitForFetch(t, server, "/", job.ID, session))
 	stored, err := os.ReadFile(filepath.Join(remote.dir, "report.txt"))
 	if err != nil {
@@ -381,7 +391,7 @@ func TestSendReplacesAFileThatIsThere(t *testing.T) {
 
 	// a folder of that name is not replaced
 	remote.write(t, "taken/report.txt/inside", "x")
-	job = startSend(t, server, "/report.txt", session, remote.body(filepath.ToSlash(filepath.Join(remote.dir, "taken"))))
+	job = startSend(t, server, "/report.txt", session, remote.body(sftpPath(filepath.Join(remote.dir, "taken"))))
 	expectFailed(t, waitForFetch(t, server, "/", job.ID, session), "is a folder")
 }
 
@@ -392,7 +402,7 @@ func TestSendCanBeStopped(t *testing.T) {
 	session := login(t, server, "/", "john", "doe")
 
 	remote.slow.Store(int64(20 * time.Millisecond))
-	job := startSend(t, server, "/big.bin", session, remote.body(filepath.ToSlash(remote.dir)))
+	job := startSend(t, server, "/big.bin", session, remote.body(sftpPath(remote.dir)))
 	waitForDownload(t, server, "/", job.ID, session)
 	res, data := transferRequest(t, server, http.MethodDelete, "/?go-fs=fetch-job&id="+job.ID, session, nil)
 	if res.StatusCode != http.StatusNoContent {
