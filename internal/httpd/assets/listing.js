@@ -148,6 +148,14 @@
     send: {
       403: "Only an account that is logged in and may read this file can send it.",
       404: "That file is gone."
+    },
+    browse: {
+      403: "You may not list that folder.",
+      404: "That folder is gone."
+    },
+    "remote-fetch": {
+      403: "Only an account that is logged in and may create files in that folder can fetch into it.",
+      404: "That server is no longer stored."
     }
   };
 
@@ -462,6 +470,8 @@
   var sharing = menu.querySelector("[data-do='share']");
   // and so is Send File, which uploads one file
   var sendItem = menu.querySelector("[data-do='send']");
+  // and so is Fetch, on the page of a stored server
+  var remoteFetchItem = menu.querySelector("[data-do='remote-fetch']");
   // Import into registry is there for a file whose name an image archive has;
   // it opens the registry page's Import dialog with that file
   var importing = menu.querySelector("[data-do='import']");
@@ -488,6 +498,9 @@
     }
     if (sendItem) {
       sendItem.hidden = isFolder;
+    }
+    if (remoteFetchItem) {
+      remoteFetchItem.hidden = isFolder;
     }
     if (importing) {
       importing.hidden = isFolder || !archiveName.test(row.dataset.name);
@@ -592,6 +605,8 @@
       shareEntry(row);
     } else if (item.dataset.do === "send") {
       sending.open(row);
+    } else if (item.dataset.do === "remote-fetch") {
+      remoteFetching.open(row);
     }
   });
 
@@ -1169,6 +1184,115 @@
     });
   })();
 
+  // --- choosing a folder ------------------------------------------------
+  //
+  // Send File and Fetch File both list a folder for the user to choose where
+  // a file goes: a path of crumbs above a list of what is in it, whose
+  // folders are buttons that carry the path they lead to, and whose files
+  // are shown only, the one named like the file that goes there marked, as
+  // it is about to be replaced.
+
+  function joinedPath(path, entry) {
+    return (path === "/" ? "" : path) + "/" + entry;
+  }
+
+  function folderButton(label, path, icon) {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.dataset.path = path;
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "ic");
+    var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    use.setAttribute("href", icon);
+    svg.appendChild(use);
+    var text = document.createElement("span");
+    text.className = "label";
+    text.textContent = label;
+    button.appendChild(svg);
+    button.appendChild(text);
+    return button;
+  }
+
+  // renderFolders lists a folder into crumbs and list, and reports whether a
+  // file named name is in it
+  function renderFolders(crumbs, list, view, name) {
+    crumbs.textContent = "";
+    var parts = view.path.split("/").filter(Boolean);
+    var root = document.createElement("button");
+    root.type = "button";
+    root.dataset.path = "/";
+    root.textContent = "/";
+    if (parts.length === 0) {
+      root.setAttribute("aria-current", "location");
+    }
+    crumbs.appendChild(root);
+    parts.forEach(function (part, i) {
+      if (i > 0) {
+        var sep = document.createElement("span");
+        sep.className = "sep";
+        sep.textContent = "/";
+        crumbs.appendChild(sep);
+      }
+      var button = document.createElement("button");
+      button.type = "button";
+      button.dataset.path = "/" + parts.slice(0, i + 1).join("/");
+      button.textContent = part;
+      if (i === parts.length - 1) {
+        button.setAttribute("aria-current", "location");
+      }
+      crumbs.appendChild(button);
+    });
+
+    list.textContent = "";
+    var clash = false;
+    if (view.parent) {
+      var up = document.createElement("li");
+      up.appendChild(folderButton("..", view.parent, "#i-up"));
+      list.appendChild(up);
+    }
+    (view.entries || []).forEach(function (entry) {
+      var item = document.createElement("li");
+      if (entry.dir) {
+        item.appendChild(folderButton(entry.name, joinedPath(view.path, entry.name), "#i-folder"));
+      } else {
+        var line = document.createElement("span");
+        line.className = "entry";
+        if (entry.name === name) {
+          clash = true;
+          line.classList.add("clash");
+        }
+        var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("class", "ic");
+        var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+        use.setAttribute("href", "#i-file");
+        svg.appendChild(use);
+        var label = document.createElement("span");
+        label.className = "label";
+        label.textContent = entry.name;
+        var size = document.createElement("span");
+        size.className = "size";
+        size.textContent = readableSize(entry.size);
+        line.appendChild(svg);
+        line.appendChild(label);
+        line.appendChild(size);
+        item.appendChild(line);
+      }
+      list.appendChild(item);
+    });
+    if (view.truncated) {
+      var note = document.createElement("li");
+      note.className = "note";
+      note.textContent = "Not everything in this folder is shown.";
+      list.appendChild(note);
+    } else if (!view.entries || view.entries.length === 0) {
+      var empty = document.createElement("li");
+      empty.className = "note";
+      empty.textContent = "This folder is empty.";
+      list.appendChild(empty);
+    }
+    return clash;
+  }
+
   // --- sending to another host -----------------------------------------
   //
   // The server sends the file, as a job of its own like a fetch, and the
@@ -1478,103 +1602,9 @@
       });
     }
 
-    function joined(path, entry) {
-      return (path === "/" ? "" : path) + "/" + entry;
-    }
-
-    function folderButton(label, path, icon) {
-      var button = document.createElement("button");
-      button.type = "button";
-      button.dataset.path = path;
-      var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      svg.setAttribute("class", "ic");
-      var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
-      use.setAttribute("href", icon);
-      svg.appendChild(use);
-      var text = document.createElement("span");
-      text.className = "label";
-      text.textContent = label;
-      button.appendChild(svg);
-      button.appendChild(text);
-      return button;
-    }
-
     function render(view) {
-      crumbs.textContent = "";
-      var parts = view.path.split("/").filter(Boolean);
-      var root = document.createElement("button");
-      root.type = "button";
-      root.dataset.path = "/";
-      root.textContent = "/";
-      if (parts.length === 0) {
-        root.setAttribute("aria-current", "location");
-      }
-      crumbs.appendChild(root);
-      parts.forEach(function (part, i) {
-        if (i > 0) {
-          var sep = document.createElement("span");
-          sep.className = "sep";
-          sep.textContent = "/";
-          crumbs.appendChild(sep);
-        }
-        var button = document.createElement("button");
-        button.type = "button";
-        button.dataset.path = "/" + parts.slice(0, i + 1).join("/");
-        button.textContent = part;
-        if (i === parts.length - 1) {
-          button.setAttribute("aria-current", "location");
-        }
-        crumbs.appendChild(button);
-      });
-
-      list.textContent = "";
-      var clash = false;
-      if (view.parent) {
-        var up = document.createElement("li");
-        up.appendChild(folderButton("..", view.parent, "#i-up"));
-        list.appendChild(up);
-      }
-      (view.entries || []).forEach(function (entry) {
-        var item = document.createElement("li");
-        if (entry.dir) {
-          item.appendChild(folderButton(entry.name, joined(view.path, entry.name), "#i-folder"));
-        } else {
-          var line = document.createElement("span");
-          line.className = "entry";
-          if (entry.name === name) {
-            clash = true;
-            line.classList.add("clash");
-          }
-          var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-          svg.setAttribute("class", "ic");
-          var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
-          use.setAttribute("href", "#i-file");
-          svg.appendChild(use);
-          var label = document.createElement("span");
-          label.className = "label";
-          label.textContent = entry.name;
-          var size = document.createElement("span");
-          size.className = "size";
-          size.textContent = readableSize(entry.size);
-          line.appendChild(svg);
-          line.appendChild(label);
-          line.appendChild(size);
-          item.appendChild(line);
-        }
-        list.appendChild(item);
-      });
-      if (view.truncated) {
-        var note = document.createElement("li");
-        note.className = "note";
-        note.textContent = "Not everything in this folder is shown.";
-        list.appendChild(note);
-      } else if (!view.entries || view.entries.length === 0) {
-        var empty = document.createElement("li");
-        empty.className = "note";
-        empty.textContent = "This folder is empty.";
-        list.appendChild(empty);
-      }
-      where.textContent = "Sends " + name + " to " + view.base + joined(view.path, name) +
+      var clash = renderFolders(crumbs, list, view, name);
+      where.textContent = "Sends " + name + " to " + view.base + joinedPath(view.path, name) +
         (clash ? " · replaces the file there" : "");
     }
 
@@ -1726,6 +1756,229 @@
       } else {
         (field("host").value ? field("password") : field("host")).focus();
       }
+    }
+
+    return { open: open };
+  })();
+
+  // --- fetching from a stored server -----------------------------------
+  //
+  // The page of a stored server fetches one of its files into the served
+  // tree: the dialog lists the folders of that tree, from its root, and the
+  // server reads the file from the stored server as a job like a fetch from a
+  // URL, which the transfers in the header follow once it is under way. A
+  // folder the account may not create in is listed, to pass through, but not
+  // offered to fetch into.
+  var remoteFetching = (function () {
+    var dialog = document.getElementById("remote-fetch-dialog");
+    if (!dialog) {
+      return { open: function () {} };
+    }
+    var form = dialog.querySelector("form");
+    var what = dialog.querySelector("p.what");
+    var local = dialog.querySelector(".remote");
+    var crumbs = local.querySelector(".remote-path");
+    var list = local.querySelector(".remote-list");
+    var where = local.querySelector(".where");
+    var spinner = local.querySelector(".spinner");
+    var progress = dialog.querySelector(".progress");
+    var bar = progress.querySelector("progress");
+    var status = progress.querySelector(".status");
+    var go = form.querySelector("button[value='start']");
+    var stop = form.querySelector("button[value='stop']");
+    var close = form.querySelector("button[value='cancel']");
+    // name is the file the dialog fetches, source the link that starts the
+    // fetch of it, and at the folder listed now, which the next file opens on
+    var name = null;
+    var source = null;
+    var at = null;
+    // asked counts the folders asked for, so that the answer to one that was
+    // overtaken is dropped
+    var asked = 0;
+    // job is the fetch the dialog waits on until its download begins
+    var job = null;
+
+    function tell(message, bad) {
+      progress.hidden = false;
+      status.textContent = message;
+      status.classList.toggle("bad", bad === true);
+    }
+
+    function quiet() {
+      progress.hidden = true;
+      status.textContent = "";
+      status.classList.remove("bad");
+    }
+
+    // Fetch is offered once a folder that may be fetched into is listed
+    function offer() {
+      go.disabled = form.classList.contains("working") || !at || !at.writable;
+    }
+
+    function working(on) {
+      form.classList.toggle("working", on);
+      Array.prototype.forEach.call(local.querySelectorAll("button"), function (button) {
+        button.disabled = on;
+      });
+      if (on) {
+        bar.removeAttribute("value");
+      } else {
+        bar.value = 0;
+        spinner.hidden = true;
+      }
+      offer();
+    }
+
+    // busy is the dialog while a fetch it started has not begun its download
+    function busy(on) {
+      working(on);
+      go.hidden = on;
+      stop.hidden = !on;
+      close.textContent = on ? "Close" : "Cancel";
+    }
+
+    function render(view) {
+      var clash = renderFolders(crumbs, list, view, name);
+      if (!view.writable) {
+        where.textContent = "You may not store files in " + view.path + ".";
+        return;
+      }
+      where.textContent = "Stores " + name + " as " + joinedPath(view.path, name) +
+        (clash ? " · replaces the file there" : "");
+    }
+
+    function browse(path) {
+      var ticket = ++asked;
+      working(true);
+      quiet();
+      spinner.hidden = false;
+      askJSON("browse", "GET", "/?go-fs=local-browse&path=" + encodeURIComponent(path)).then(function (res) {
+        return res.json();
+      }).then(function (view) {
+        if (ticket !== asked) {
+          return;
+        }
+        at = view;
+        working(false);
+        render(view);
+        (go.disabled ? close : go).focus();
+      }).catch(function (err) {
+        if (ticket !== asked) {
+          return;
+        }
+        working(false);
+        tell(err.message, true);
+        // a folder that is gone is left for the root, once
+        if (path !== "/" && !at) {
+          browse("/");
+        }
+      });
+    }
+
+    local.addEventListener("click", function (event) {
+      var button = event.target.closest("button[data-path]");
+      if (button && !button.disabled && !button.hasAttribute("aria-current") && !job) {
+        browse(button.dataset.path);
+      }
+    });
+
+    // wait asks after the fetch until its download has begun, as Send File
+    // does; one that could not begin is told here
+    function wait() {
+      var id = job;
+      if (!id) {
+        return;
+      }
+      askFetch("GET", fetchJobURL(id)).then(function (res) {
+        return res.json();
+      }).then(function (view) {
+        if (job !== id) {
+          return;
+        }
+        if (view.state === "running" && view.phase !== "downloading") {
+          window.setTimeout(wait, 400);
+          return;
+        }
+        job = null;
+        busy(false);
+        if (view.state === "running" || view.state === "done") {
+          dialog.close();
+          quiet();
+          downloads.refresh();
+          return;
+        }
+        if (view.state === "cancelled") {
+          tell("Stopped.");
+          return;
+        }
+        tell(view.message || "The fetch failed.", true);
+        // told here, so the transfers need not tell it again
+        askFetch("DELETE", fetchJobURL(id)).catch(function () {});
+      }).catch(function (err) {
+        if (job !== id) {
+          return;
+        }
+        job = null;
+        busy(false);
+        tell(err.message, true);
+      });
+    }
+
+    function start() {
+      busy(true);
+      tell("Connecting…");
+      askJSON("remote-fetch", "POST", source, { folder: at.path }).then(function (res) {
+        return res.json();
+      }).then(function (view) {
+        job = view.id;
+        wait();
+      }).catch(function (err) {
+        busy(false);
+        tell(err.message, true);
+      });
+    }
+
+    form.addEventListener("submit", function (event) {
+      var pressed = event.submitter ? event.submitter.value : "";
+      if (pressed === "cancel") {
+        return;
+      }
+      event.preventDefault();
+      if (pressed === "stop") {
+        if (job) {
+          askFetch("DELETE", fetchJobURL(job)).catch(failed);
+        }
+        return;
+      }
+      if (job || form.classList.contains("working") || !at || !at.writable) {
+        return;
+      }
+      start();
+    });
+
+    // Closed while the fetch has not begun its download: it goes on, and the
+    // transfers follow it from here. A folder still asked for is dropped.
+    dialog.addEventListener("close", function () {
+      asked++;
+      working(false);
+      if (job) {
+        job = null;
+        busy(false);
+        downloads.refresh();
+      }
+    });
+
+    function open(row) {
+      clear();
+      name = row.dataset.name;
+      var link = new URL(segment(name), window.location.href);
+      link.searchParams.set("go-fs", "remote-fetch");
+      source = link.pathname + link.search;
+      what.textContent = "Downloads " + shown + name + " into a folder of this server.";
+      quiet();
+      busy(false);
+      dialog.showModal();
+      browse(at ? at.path : "/");
     }
 
     return { open: open };

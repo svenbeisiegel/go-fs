@@ -576,6 +576,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleSend(set, w, r, target, cred, action)
 		return
 	}
+	// and so does fetching a file of a stored server into the served tree,
+	// with the listing of its folders that the dialog chooses from
+	if action := remoteFetchAction(r); action != "" {
+		s.handleRemoteFetch(set, w, r, cred, action)
+		return
+	}
 	// and so does browsing a stored server
 	if remoteAction(r) {
 		s.handleRemote(set, w, r, cred)

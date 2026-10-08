@@ -24,7 +24,8 @@ import (
 // listing, of a folder of that server. Downloading, uploading, creating a
 // folder, renaming and deleting go through go-fs, which logs in with the
 // login the file holds, so the password never reaches the page; sharing and
-// sending are left out, since they are about files go-fs serves itself.
+// sending are left out, since they are about files go-fs serves itself. A file
+// can be fetched into the served tree instead; see remote_fetch.go.
 //
 // Every request is one marker on the root of the served tree, naming the
 // server and the path on it, and answers the verbs the listing sends to a
@@ -243,7 +244,8 @@ func readRemoteDirectory(fsys remote.FS, folder string) ([]entry, error) {
 
 // remoteRights are what the page of a server offers: what the account may do
 // in the served folder, short of sharing and sending, which go-fs does with
-// what it serves itself.
+// what it serves itself; and fetching a file into the served tree, where the
+// account may create one.
 func remoteRights(cred credential) rights {
 	perms := cred.user.perms
 	return rights{
@@ -253,6 +255,7 @@ func remoteRights(cred credential) rights {
 		DeleteFile:   granted(perms, actDeleteFile),
 		DeleteFolder: granted(perms, actDeleteFolder),
 		Downloads:    mayFollowFetches(cred),
+		RemoteFetch:  granted(perms, actCreate),
 	}
 }
 

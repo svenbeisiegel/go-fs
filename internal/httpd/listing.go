@@ -252,6 +252,10 @@ type rights struct {
 	// Send is Send File on a file, which uploads it to another host. It is
 	// offered to a session that may read the files here; see maySend.
 	Send bool
+	// RemoteFetch is Fetch on a file of the page of a stored server, which
+	// stores it in a folder of the served tree. It is offered to a session
+	// that may create files; the folder chosen decides the rest.
+	RemoteFetch bool
 }
 
 // sendView is what the Send File dialog offers: the stored servers, by name

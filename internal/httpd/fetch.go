@@ -370,13 +370,33 @@ func (s *Server) fetchFile(ctx context.Context, set *settings, job *registryJob,
 		job.plan(0, res.ContentLength)
 	}
 
+	written, replace, err := s.storeFetched(set, job, res.Body, cancel, target, name, host, user)
+	if err != nil {
+		if errors.Is(context.Cause(getCtx), errStalled) {
+			return "", fmt.Errorf("%s from %s: %w", name, host, errStalled)
+		}
+		return "", err
+	}
+	s.log.Info("http fetch", "user", user.name, "url", shownURL(fetch.url), "file", target.Virtual,
+		"bytes", written, "replaced", replace, "address", address,
+		"took", time.Since(started).Round(time.Millisecond))
+	return fmt.Sprintf("Fetched %s (%s) into %s.", name, readableSize(written), folder), nil
+}
+
+// storeFetched downloads what a fetch reads into the staging folder and puts
+// it where it goes, once all of it is there, and says how much it stored and
+// whether that replaced a file. A read that fails is named with the file and
+// from, where it came from; cancel is what the watch stops the read with when
+// it stalls.
+func (s *Server) storeFetched(set *settings, job *registryJob, body io.Reader, cancel context.CancelCauseFunc,
+	target vfs.Target, name, from string, user *account) (int64, bool, error) {
 	staging := stagingFolder(set)
 	if err := os.MkdirAll(staging, 0o755); err != nil {
-		return "", err
+		return 0, false, err
 	}
 	staged, err := os.CreateTemp(staging, "fetch-*")
 	if err != nil {
-		return "", err
+		return 0, false, err
 	}
 	stagedPath := staged.Name()
 	defer func() { _ = os.Remove(stagedPath) }()
@@ -384,9 +404,10 @@ func (s *Server) fetchFile(ctx context.Context, set *settings, job *registryJob,
 	// file of the served folder like an upload
 	_ = staged.Chmod(0o644)
 
-	source := io.Reader(res.Body)
+	limit := set.cfg.MaxUploadSize
+	source := body
 	if limit > 0 {
-		source = io.LimitReader(res.Body, limit+1)
+		source = io.LimitReader(body, limit+1)
 	}
 	job.downloading()
 	reader := watch(source, job, cancel)
@@ -396,13 +417,10 @@ func (s *Server) fetchFile(ctx context.Context, set *settings, job *registryJob,
 		err = closeErr
 	}
 	if err != nil {
-		if errors.Is(context.Cause(getCtx), errStalled) {
-			return "", fmt.Errorf("%s from %s: %w", name, host, errStalled)
-		}
-		return "", fmt.Errorf("%s from %s: %w", name, host, err)
+		return 0, false, fmt.Errorf("%s from %s: %w", name, from, err)
 	}
 	if limit > 0 && written > limit {
-		return "", fetchTooLarge(name, limit)
+		return 0, false, fetchTooLarge(name, limit)
 	}
 
 	lock := s.uploadLock(target.Path)
@@ -410,15 +428,12 @@ func (s *Server) fetchFile(ctx context.Context, set *settings, job *registryJob,
 	defer lock.Unlock()
 	replace, err := fetchReplaces(target, name, user)
 	if err != nil {
-		return "", err
+		return 0, false, err
 	}
 	if err := finalizeUpload(stagedPath, target.Path, replace); err != nil {
-		return "", err
+		return 0, false, err
 	}
-	s.log.Info("http fetch", "user", user.name, "url", shownURL(fetch.url), "file", target.Virtual,
-		"bytes", written, "replaced", replace, "address", address,
-		"took", time.Since(started).Round(time.Millisecond))
-	return fmt.Sprintf("Fetched %s (%s) into %s.", name, readableSize(written), folder), nil
+	return written, replace, nil
 }
 
 // fetchReplaces decides whether a fetch may store its file, and whether that

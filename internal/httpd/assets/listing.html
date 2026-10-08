@@ -87,6 +87,7 @@
   <a role="menuitem" data-do="download" download><svg class="ic"><use href="#i-download"/></svg><span>Download</span></a>
   {{if .Rights.Share}}<button type="button" role="menuitem" data-do="share"><svg class="ic"><use href="#i-link"/></svg>Share&#8230;</button>{{end}}
   {{if .Rights.Send}}<button type="button" role="menuitem" data-do="send"><svg class="ic"><use href="#i-send"/></svg>Send File&#8230;</button>{{end}}
+  {{if .Rights.RemoteFetch}}<button type="button" role="menuitem" data-do="remote-fetch"><svg class="ic"><use href="#i-download"/></svg>Fetch&#8230;</button>{{end}}
   {{if and .Rights.Import .Session.Registry}}<a role="menuitem" data-do="import" data-registry="{{.Session.Registry}}" hidden><svg class="ic"><use href="#i-box"/></svg><span>Import into registry&#8230;</span></a>{{end}}
   {{if .Rights.Rename}}<button type="button" role="menuitem" data-do="rename"><svg class="ic"><use href="#i-pencil"/></svg>Rename&#8230;</button>{{end}}
   {{if or .Rights.DeleteFile .Rights.DeleteFolder}}<button type="button" role="menuitem" class="remove" data-do="delete"><svg class="ic"><use href="#i-trash"/></svg>Delete</button>{{end}}
@@ -209,6 +210,32 @@
       <button class="go" type="submit" value="connect">Connect</button>
       <button class="go" type="submit" value="accept" hidden>Accept key</button>
       <button class="go" type="submit" value="start" hidden>Send</button>
+      <button class="plain" type="submit" value="stop" formnovalidate hidden>Stop</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
+
+{{if .Rights.RemoteFetch}}
+<dialog id="remote-fetch-dialog" class="transfer" aria-labelledby="remote-fetch-title">
+  <form method="dialog">
+    <h2 id="remote-fetch-title">Fetch File</h2>
+    <p class="what"></p>
+    <div class="remote">
+      <div class="remote-head">
+        <nav class="remote-path" aria-label="Local folder"></nav>
+        <span class="spinner" role="status" aria-label="Reading the folder" hidden></span>
+      </div>
+      <ul class="remote-list"></ul>
+      <p class="where"></p>
+    </div>
+    <div class="progress" hidden>
+      <progress max="1"></progress>
+      <p class="status" role="status" aria-live="polite"></p>
+    </div>
+    <div class="row">
+      <button class="go" type="submit" value="start">Fetch</button>
       <button class="plain" type="submit" value="stop" formnovalidate hidden>Stop</button>
       <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
     </div>

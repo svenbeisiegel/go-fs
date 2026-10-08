@@ -282,8 +282,15 @@ func (s *Server) sendBrowse(w http.ResponseWriter, r *http.Request, req sendRequ
 		}
 		view.Entries = append(view.Entries, entry)
 	}
-	sort.Slice(view.Entries, func(a, b int) bool {
-		ea, eb := view.Entries[a], view.Entries[b]
+	sortFolderEntries(view.Entries)
+	writeJSON(w, http.StatusOK, view)
+}
+
+// sortFolderEntries puts the entries of a folder the dialogs list in order:
+// folders first, then by name, whatever its case.
+func sortFolderEntries(entries []sendEntryJSON) {
+	sort.Slice(entries, func(a, b int) bool {
+		ea, eb := entries[a], entries[b]
 		if ea.Dir != eb.Dir {
 			return ea.Dir
 		}
@@ -293,7 +300,6 @@ func (s *Server) sendBrowse(w http.ResponseWriter, r *http.Request, req sendRequ
 		}
 		return ea.Name < eb.Name
 	})
-	writeJSON(w, http.StatusOK, view)
 }
 
 // remoteFolderFailure says why a folder of a host could not be read.
