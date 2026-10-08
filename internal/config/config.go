@@ -425,16 +425,25 @@ type HTTP struct {
 	// Basefolder, so finishing a chunked upload is a fast, atomic rename
 	// rather than a slow or outright-failing cross-device move.
 	UploadStagingFolder string `toml:"uploadStagingFolder"`
-	// SessionTokenLifetime is how long a browser stays logged in after using
-	// the login form, in seconds. It bounds a token that cannot be withdrawn:
-	// a signed token is accepted until it runs out, whoever holds it.
+	// SessionTokenLifetime is how long a browser that logged in with the
+	// login form stays logged in without being used, in seconds. Every
+	// request it makes in the second half of that window renews its token,
+	// so a browser in use is not logged out by it. It bounds a token that
+	// cannot be withdrawn: a signed token is accepted until it runs out,
+	// whoever holds it.
 	SessionTokenLifetime int `toml:"httpSessionTokenLifetime"`
+	// SessionMaxLifetime is how long a login lasts at most, in seconds,
+	// counted from the login however busy the browser has been since. No
+	// renewal reaches beyond it. A value below SessionTokenLifetime is taken
+	// as SessionTokenLifetime.
+	SessionMaxLifetime int `toml:"httpSessionMaxLifetime"`
 	// SessionTokenSecret is the key the login tokens are signed with, base64
 	// of at least 32 random bytes:
 	//   head -c 32 /dev/urandom | base64
-	// With it empty a key is generated at every start, which logs every
-	// browser out on a restart and stops two hosts serving the same folder
-	// from sharing a login. Changing it needs a restart.
+	// It is generated and written into this file at the first start, so a
+	// login survives a restart and an update. Changing it logs every browser
+	// out. Should the file not be writable, a key is generated for every run
+	// instead.
 	SessionTokenSecret string `toml:"httpSessionTokenSecret"`
 	// ShareLinkSecret is the key a file's share link is signed with: a link
 	// carries ?key= with an HMAC-SHA512 over the file's path, modification
@@ -563,8 +572,9 @@ func Default() Config {
 			MaxConnections:        100,
 			ReadTimeout:           120,
 			IdleTimeout:           120,
-			MaxChunkSize:          50 << 20, // 50 MB
-			SessionTokenLifetime:  3600,
+			MaxChunkSize:          50 << 20,         // 50 MB
+			SessionTokenLifetime:  8 * 60 * 60,      // 8 hours idle
+			SessionMaxLifetime:    7 * 24 * 60 * 60, // 7 days from the login
 			LoginFailureDelay:     1,
 			LoginAttempts:         5,
 			LoginLockout:          60,
@@ -975,6 +985,12 @@ func (c Config) validateHTTP() error {
 	// 0 would hand out tokens that have already expired
 	if h.SessionTokenLifetime < 1 {
 		return errors.New("http.httpSessionTokenLifetime has to be at least 1")
+	}
+	// one shorter than httpSessionTokenLifetime is raised to it rather than
+	// refused, so that a file written before the cap existed, which may set a
+	// lifetime longer than the default cap, still starts
+	if h.SessionMaxLifetime < 1 {
+		return errors.New("http.httpSessionMaxLifetime has to be at least 1")
 	}
 	// checked here rather than at the first login, so that a key too short to
 	// sign with is reported by -check and not by a user who cannot log in

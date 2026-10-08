@@ -496,9 +496,10 @@ port = 9080
 basefolder = "/srv/http"
 methodsRequireAuth = ["PUT", "DELETE", "POST", "MKCOL", "MOVE"]
 pathsRequireAuth = ["^/private/.*"]
-httpSessionTokenLifetime = 3600
-httpSessionTokenSecret = ""
-shareLinkSecret = ""          # generated at the first start, see "Sharing a file"
+httpSessionTokenLifetime = 28800   # idle timeout, renewed while in use
+httpSessionMaxLifetime = 604800    # a login lasts a week at most
+httpSessionTokenSecret = ""        # generated at the first start
+shareLinkSecret = ""               # generated at the first start, see "Sharing a file"
 loginAttempts = 5
 loginLockout = 60
 trustedProxies = []
@@ -993,8 +994,10 @@ How the executable is replaced:
   and started again, so the servers come back either way.
 - Open connections are dropped by the restart, as they are by `SIGTERM`.
 
-Without `http.httpSessionTokenSecret` the restart also logs every browser out,
-the admin page included.
+Browsers stay logged in across the restart, since `http.httpSessionTokenSecret`
+is kept in the configuration file. Only when that file cannot be written, and
+the key is made for each run, does the restart log every browser out, the admin
+page included.
 
 #### Updating from GitHub
 
@@ -1097,20 +1100,37 @@ real name, while a query key can shadow nothing. It is also why there is no
 A successful login is carried by a **JSON Web Token** (RFC 7519) signed with
 HMAC-SHA256 (RFC 7515) in the `goFsSessionToken` cookie, which is `HttpOnly`,
 `SameSite=Lax` and `Secure` over TLS, scoped to `/`. The token carries
-`iss`, `sub` (the account name), `aud`, `iat`, `nbf`, `exp`, `jti` and a
-fingerprint of the credentials — and **nothing else**. It deliberately does not
+`iss`, `sub` (the account name), `aud`, `iat`, `nbf`, `exp`, `jti`,
+`auth_time` (when the login happened) and a fingerprint of the credentials —
+and **nothing else**. It deliberately does not
 carry the paths or the rights: those are looked up from the configuration as it
 stands on every request, so a token can never reach further than the account
 behind it does right now, and a `paths` narrowed by a reload takes effect at
 once. Verification pins the algorithm to HS256, so a token that says `alg: none`
 or names an asymmetric algorithm is refused rather than trusted.
 
-`httpSessionTokenLifetime` is how long a login lasts, one hour by default. It
-matters, because a signed token cannot be withdrawn once it is out: logging out
-clears the browser's own copy, but a stolen token works until it expires. The
-three things that do cut one short are that lifetime, changing the account's
-password — which changes the fingerprint, so every browser logged in under the
-old one is signed out — and removing the account.
+A login has two limits, both in seconds:
+
+- `httpSessionTokenLifetime` is how long a browser stays logged in **without
+  being used**, eight hours by default. A token is good for that long from the
+  request that got it, and a request made in the second half of that window is
+  answered with a fresh one. So a browser in use stays logged in, and one left
+  alone is logged out. A page that is merely open does not count as use. It
+  only sends requests while a fetch or registry job runs or its dialog is open.
+- `httpSessionMaxLifetime` is how long a login lasts **at most**, counted from
+  the login, a week by default. No renewal reaches past it, and a token from a
+  login older than it is refused even if it has not expired.
+
+These limits matter because a signed token cannot be withdrawn once it is out.
+Logging out clears the browser's own copy, but a stolen token keeps working
+until it expires, which is at most `httpSessionTokenLifetime` after it was
+handed out. Things that cut a login short:
+
+- those two limits;
+- changing the account's password, which changes the fingerprint, so every
+  browser logged in under the old one is signed out;
+- removing the account;
+- changing `httpSessionTokenSecret`, which signs out every browser at once.
 
 **Behind a reverse proxy**, list it in `trustedProxies`, as an address or a
 CIDR range. A request from one of them is recorded, counted and locked under
@@ -1132,10 +1152,14 @@ account, or none, the header authenticates the request on its own.
 head -c 32 /dev/urandom | base64
 ```
 
-Leave it empty and a key is generated at every start, which is enough for a look
-around but logs every browser out on a restart and stops two hosts serving the
-same folder from sharing a login. Changing it needs a restart, as the TLS
-certificate does. The web interface will generate one for you.
+Leave it empty and one is generated at the first start and written into the
+configuration file, as `shareLinkSecret` is, with the rest of the file left as
+it was. That is what keeps a browser logged in across a restart, an update and
+a change that rebuilds the HTTP server. If the file cannot be written, a key is
+made for each run instead, which logs every browser out on a restart. Two hosts
+serving the same folder share a login when they are given the same key. The
+web interface will generate a new one for you. Changing it logs out every
+browser.
 
 `http.sessionTimeout` was what this used to be called, before the session became
 a token that expires rather than a row in memory. A file that still sets it

@@ -44,6 +44,12 @@ const (
 // registered claim, so a token from this server reads as a token anywhere.
 type sessionClaims struct {
 	jwt.RegisteredClaims
+	// AuthTime is when the account logged in with the login form, the
+	// auth_time of OpenID Connect. A renewed token carries it over unchanged,
+	// which is what lets a renewal be capped by http.httpSessionMaxLifetime.
+	// A token minted before the claim existed has none; its IssuedAt stands
+	// in, since such a token was never renewed.
+	AuthTime *jwt.NumericDate `json:"auth_time,omitempty"`
 	// Credentials fingerprints the account this token was issued for, so that
 	// changing its password signs out the browsers already holding one.
 	Credentials string `json:"cred"`
@@ -57,11 +63,13 @@ type signer struct {
 
 // newSigner prepares the signer from the configured secret.
 //
-// As with the TLS certificate and the SFTP host key, a secret that is not
-// configured is generated for this run, which keeps the server usable without
-// any setup at the cost of a key that changes on every restart: every browser
-// is logged out, and two hosts serving the same folder cannot share a login.
-// The warning says so.
+// The secret is generated and written into the configuration file at the
+// first start (config.EnsureSecrets), so it is only missing here when that
+// file could not be written. Then, as with the TLS certificate and the SFTP
+// host key, one is generated for this run, which keeps the server usable at
+// the cost of a key that changes on every restart: every browser is logged
+// out, and two hosts serving the same folder cannot share a login. The
+// warning says so.
 func newSigner(configured string, logger *slog.Logger) (*signer, error) {
 	var key []byte
 	if configured != "" {
@@ -98,15 +106,39 @@ func newSigner(configured string, logger *slog.Logger) (*signer, error) {
 	}, nil
 }
 
-// mint signs a token for an account. A lifetime that has already passed is
-// what a test asks for; nothing else produces one.
-func (s *signer) mint(user *account, lifetime time.Duration) (string, time.Time, error) {
+// sessionWindow is how long a token lasts: idle is how long it is good for
+// from the request that minted it, and max how long after the login no token
+// of that login is good any more.
+type sessionWindow struct {
+	idle, max time.Duration
+}
+
+// sessionWindowOf reads the window from the section. A cap shorter than the
+// idle window is raised to it: a file from before the cap existed may set a
+// lifetime longer than the default cap, and meant it.
+func sessionWindowOf(cfg config.HTTP) sessionWindow {
+	window := sessionWindow{
+		idle: time.Duration(cfg.SessionTokenLifetime) * time.Second,
+		max:  time.Duration(cfg.SessionMaxLifetime) * time.Second,
+	}
+	window.max = max(window.max, window.idle)
+	return window
+}
+
+// mint signs a token for an account that logged in at loggedIn, good for the
+// idle part of window from now but never beyond its max from loggedIn. A
+// window that has already passed is what a test asks for; nothing else
+// produces one.
+func (s *signer) mint(user *account, loggedIn time.Time, window sessionWindow) (string, time.Time, error) {
 	id := make([]byte, 16)
 	if _, err := rand.Read(id); err != nil {
 		return "", time.Time{}, err
 	}
 	now := time.Now()
-	expires := now.Add(lifetime)
+	expires := now.Add(window.idle)
+	if limit := loggedIn.Add(window.max); limit.Before(expires) {
+		expires = limit
+	}
 
 	claims := sessionClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -118,6 +150,7 @@ func (s *signer) mint(user *account, lifetime time.Duration) (string, time.Time,
 			ExpiresAt: jwt.NewNumericDate(expires),
 			ID:        base64.RawURLEncoding.EncodeToString(id),
 		},
+		AuthTime:    jwt.NewNumericDate(loggedIn),
 		Credentials: s.fingerprint(user),
 	}
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.key)
@@ -148,6 +181,42 @@ func (s *signer) read(raw string) (*sessionClaims, error) {
 		return nil, errors.New("the token names no account")
 	}
 	return claims, nil
+}
+
+// loggedIn is when the login a token belongs to happened.
+func (c *sessionClaims) loggedIn() time.Time {
+	if c.AuthTime != nil {
+		return c.AuthTime.Time
+	}
+	if c.IssuedAt != nil {
+		return c.IssuedAt.Time
+	}
+	// read refuses a token without an expiry, and every token this server
+	// mints has both; a hand-made one without either is treated as ancient
+	return time.Time{}
+}
+
+// outlived reports whether the login a token belongs to is older than the
+// window allows, whatever its own expiry says: a token minted while the cap
+// was longer is held to the one configured now.
+func (c *sessionClaims) outlived(window sessionWindow, now time.Time) bool {
+	return now.After(c.loggedIn().Add(window.max).Add(tokenLeeway))
+}
+
+// renewable reports whether a browser presenting the token should be handed a
+// fresh one: once less than half of the idle window is left, and only while a
+// fresh one would reach further than this one does. Waiting for the second
+// half is what keeps a busy browser from being sent a cookie with every
+// request.
+func (c *sessionClaims) renewable(window sessionWindow, now time.Time) bool {
+	if c.ExpiresAt == nil {
+		return false
+	}
+	expires := c.ExpiresAt.Time
+	if expires.Sub(now) >= window.idle/2 {
+		return false
+	}
+	return expires.Before(c.loggedIn().Add(window.max))
 }
 
 // issuedFor reports whether a token was issued for the credentials an account

@@ -199,13 +199,13 @@ func TestTheTokenCarriesTheNameAndNotTheRights(t *testing.T) {
 		t.Fatalf("the payload is not JSON: %v", err)
 	}
 
-	for _, want := range []string{"iss", "sub", "aud", "iat", "nbf", "exp", "jti", "cred"} {
+	for _, want := range []string{"iss", "sub", "aud", "iat", "nbf", "exp", "jti", "auth_time", "cred"} {
 		if _, ok := claims[want]; !ok {
 			t.Errorf("the token has no %q claim", want)
 		}
 	}
-	if len(claims) != 8 {
-		t.Errorf("the token carries %v, want those eight claims and nothing else", claims)
+	if len(claims) != 9 {
+		t.Errorf("the token carries %v, want those nine claims and nothing else", claims)
 	}
 	if claims["sub"] != "john" {
 		t.Errorf("sub = %v, want john", claims["sub"])
@@ -459,7 +459,7 @@ func TestAnExpiredTokenIsRefusedByRead(t *testing.T) {
 		cfg.Users = []config.User{fullUser("john", "doe")}
 	})
 	user := server.settings().accounts[0]
-	token, _, err := server.tokens.mint(user, -time.Minute)
+	token, _, err := server.tokens.mint(user, time.Now(), sessionWindow{idle: -time.Minute, max: time.Hour})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}

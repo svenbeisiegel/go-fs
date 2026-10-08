@@ -311,13 +311,21 @@ func (s *Server) checkToken(set *settings, w http.ResponseWriter, r *http.Reques
 		s.clearSession(w)
 		return nil
 	}
-	user := accountNamed(set.accounts, claims.Subject)
-	if user == nil && s.registryClaims(set, claims) != nil {
-		// a session of an account that sets registry and not http: the file
-		// tree does not know it, but the registry page does, so it is kept
+	if claims.outlived(sessionWindowOf(set.cfg), time.Now()) {
+		s.log.Info("http session token is older than http.httpSessionMaxLifetime",
+			"user", claims.Subject, "address", clientAddress(set, r))
+		s.clearSession(w)
 		return nil
 	}
+	user := accountNamed(set.accounts, claims.Subject)
 	if user == nil {
+		if registryUser := s.registryClaims(set, claims); registryUser != nil {
+			// a session of an account that sets registry and not http: the
+			// file tree does not know it, but the registry page does, so it
+			// is kept, and renewed like any other
+			s.renewSession(set, w, r, registryUser, claims)
+			return nil
+		}
 		s.log.Info("http session token names an account that is no longer configured",
 			"user", claims.Subject, "address", clientAddress(set, r))
 		s.clearSession(w)
@@ -329,6 +337,7 @@ func (s *Server) checkToken(set *settings, w http.ResponseWriter, r *http.Reques
 		s.clearSession(w)
 		return nil
 	}
+	s.renewSession(set, w, r, user, claims)
 	return user
 }
 
@@ -592,20 +601,51 @@ func sameHost(origin, host string) bool {
 	return parsed.Host == host
 }
 
-// setSession hands a browser the token it carries from here on.
+// setSession hands a browser that has just logged in the token it carries
+// from here on.
 func (s *Server) setSession(set *settings, w http.ResponseWriter, r *http.Request, user *account) error {
-	lifetime := time.Duration(set.cfg.SessionTokenLifetime) * time.Second
-	token, expires, err := s.tokens.mint(user, lifetime)
+	token, expires, err := s.tokens.mint(user, time.Now(), sessionWindowOf(set.cfg))
 	if err != nil {
 		return err
 	}
 	s.log.Info("http login", "user", user.name, "address", clientAddress(set, r))
+	writeSessionCookie(set, w, r, token, expires)
+	// a browser upgraded into this version still holds the opaque session
+	// cookie, which nothing will read again
+	clearCookie(w, legacyCookie)
+	return nil
+}
+
+// renewSession hands a browser in use a fresh token for the login it already
+// has, once the one it presents is in the second half of its idle window.
+// This is what makes http.httpSessionTokenLifetime an idle timeout rather than
+// a lifetime: a browser that keeps making requests keeps being renewed, up to
+// http.httpSessionMaxLifetime after the login. Failing to renew is not worth
+// failing the request for, since the token it came with is still good.
+func (s *Server) renewSession(set *settings, w http.ResponseWriter, r *http.Request, user *account, claims *sessionClaims) {
+	window := sessionWindowOf(set.cfg)
+	if !claims.renewable(window, time.Now()) {
+		return
+	}
+	token, expires, err := s.tokens.mint(user, claims.loggedIn(), window)
+	if err != nil {
+		s.log.Error("http cannot renew a session token", "user", user.name, "error", err)
+		return
+	}
+	s.log.Debug("http session renewed", "user", user.name, "expires", expires,
+		"address", clientAddress(set, r))
+	writeSessionCookie(set, w, r, token, expires)
+}
+
+// writeSessionCookie sets the cookie that carries a token, the same way for a
+// login and a renewal.
+func writeSessionCookie(set *settings, w http.ResponseWriter, r *http.Request, token string, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name:  sessionCookie,
 		Value: token,
 		Path:  "/",
 		// both, because a client that ignores one honours the other
-		MaxAge:   int(lifetime.Seconds()),
+		MaxAge:   int(time.Until(expires).Round(time.Second).Seconds()),
 		Expires:  expires,
 		HttpOnly: true,
 		// Secure follows the connection, or X-Forwarded-Proto when the
@@ -620,10 +660,6 @@ func (s *Server) setSession(set *settings, w http.ResponseWriter, r *http.Reques
 		// in return.
 		SameSite: http.SameSiteLaxMode,
 	})
-	// a browser upgraded into this version still holds the opaque session
-	// cookie, which nothing will read again
-	clearCookie(w, legacyCookie)
-	return nil
 }
 
 // clearSession tells the browser to drop its session token.

@@ -180,8 +180,9 @@ function updatePanel(index) {
       + "accepted only when it is signed with a key built into the running binary ("
       + (update.keys.length ? update.keys.join(", ") : "this build has none")
       + ") and is built for this platform. go-fs then replaces its executable, keeping the "
-      + "previous one beside it as .old, and restarts. Without http.httpSessionTokenSecret "
-      + "the restart logs this page out.", "section-help"));
+      + "previous one beside it as .old, and restarts. You stay logged in, unless "
+      + "http.httpSessionTokenSecret could not be stored in the configuration file.",
+      "section-help"));
 
   const input = document.createElement("input");
   input.type = "file";

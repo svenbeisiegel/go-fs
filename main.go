@@ -95,15 +95,19 @@ func run() error {
 		"logFormat", cfg.General.LogFormat)
 	warnAboutSecrets(logger.Logger, *configPath, cfg)
 
-	// the share links of files are signed with a key the file keeps, so a
-	// link handed out survives a restart; a file without one is given one
-	if ensured, generated, err := config.EnsureShareSecret(*configPath, cfg); err != nil {
-		logger.Warn("cannot store a generated http.shareLinkSecret in the configuration file, "+
-			"so share links stop working at every restart", "path", *configPath, "error", err)
-	} else if generated {
+	// the share links of files and the login tokens of browsers are signed
+	// with keys the file keeps, so a link handed out and a browser logged in
+	// survive a restart and an update; a file without them is given them
+	if ensured, generated, err := config.EnsureSecrets(*configPath, cfg); err != nil {
+		logger.Warn("cannot store generated secrets in the configuration file, so share "+
+			"links stop working and browsers are logged out at every restart",
+			"path", *configPath, "error", err)
+	} else {
 		cfg = ensured
-		logger.Info("generated http.shareLinkSecret and stored it in the configuration file",
-			"path", *configPath)
+		for _, key := range generated {
+			logger.Info("generated a secret and stored it in the configuration file",
+				"key", key, "path", *configPath)
+		}
 	}
 
 	keys, err := selfupdate.TrustedKeys()

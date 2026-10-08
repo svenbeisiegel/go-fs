@@ -280,7 +280,7 @@ func TestRegistryRefusesTokensItShouldNot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, _, err := server.tokens.mint(pusherAccount, time.Hour)
+	session, _, err := server.tokens.mint(pusherAccount, time.Now(), sessionWindow{idle: time.Hour, max: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}

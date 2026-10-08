@@ -247,6 +247,11 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 			c.HTTP.Basefolder = folder
 			c.HTTP.SessionTokenLifetime = 0
 		}, "http.httpSessionTokenLifetime"},
+		{"http session cap", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.SessionMaxLifetime = 0
+		}, "http.httpSessionMaxLifetime"},
 		{"http session token secret that is not base64", func(c *Config) {
 			c.HTTP.Enabled = true
 			c.HTTP.Basefolder = folder

@@ -348,13 +348,18 @@ maxChunkSize = 52428800
 # finishing an upload is a fast rename rather than a slow or failing
 # cross-device copy.
 uploadStagingFolder = ""
-# How long a browser stays logged in after using the login form, in seconds.
-# The token cannot be withdrawn once it is signed, so this is what bounds it.
-httpSessionTokenLifetime = 3600
+# How long a browser that logged in with the login form stays logged in
+# without being used, in seconds. A browser in use has its login renewed, so
+# this is an idle timeout. The token cannot be withdrawn once it is signed, so
+# this is what bounds a stolen one.
+httpSessionTokenLifetime = 28800
+# How long a login lasts at most, in seconds, counted from the login however
+# busy the browser has been since. A value below httpSessionTokenLifetime is
+# taken as httpSessionTokenLifetime.
+httpSessionMaxLifetime = 604800
 # The key the login tokens are signed with, base64 of at least 32 random bytes.
-# Empty generates one at every start, which logs every browser out on a restart
-# and stops two hosts serving the same folder from sharing a login. Changing it
-# needs a restart.
+# Left empty it is generated at the first start and written in here, so a login
+# survives a restart and an update. Changing it logs every browser out.
 httpSessionTokenSecret = ""
 # for instance: head -c 32 /dev/urandom | base64
 
