@@ -229,10 +229,17 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 			c.HTTP.PathsRequireAuth = []string{"([bad"}
 		}, "http.pathsRequireAuth[0]"},
 		{"cleanup without a path", func(c *Config) {
-			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
-			c.HTTP.Cleanup = []Cleanup{{Keep: 3}}
-		}, "http.cleanup[0] has no path"},
+			c.General.Basefolder = folder
+			c.General.Cleanup = []Cleanup{{Keep: 3}}
+		}, "general.cleanup[0] has no path"},
+		{"cleanup with a negative keep", func(c *Config) {
+			c.General.Basefolder = folder
+			c.General.Cleanup = []Cleanup{{Path: "/iso", Keep: -1}}
+		}, "general.cleanup[0].keep cannot be negative"},
+		{"cleanup without a base folder", func(c *Config) {
+			c.General.Basefolder = ""
+			c.General.Cleanup = []Cleanup{{Path: "/iso", Keep: 3}}
+		}, "general.cleanup needs general.basefolder"},
 		{"ftp bind address", func(c *Config) { c.FTP.Address = "not-an-address" }, "ftp.address"},
 		{"ftp passive address", func(c *Config) { c.FTP.PassiveAddress = "2001:db8::1" }, "ftp.passiveAddress"},
 		{"ftp data timeout", func(c *Config) { c.FTP.DataTimeout = 0 }, "ftp.dataTimeout"},

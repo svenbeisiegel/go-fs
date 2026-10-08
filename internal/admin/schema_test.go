@@ -31,7 +31,7 @@ func TestSchemaCoversTheWholeFile(t *testing.T) {
 			len(sections), reflect.TypeOf(config.Config{}).NumField())
 	}
 
-	tables := map[string]int{"ftp": 0, "sftp": 0, "http": 1, "general": 0, "users": 1, "tokens": 1, "servers": 1}
+	tables := map[string]int{"ftp": 0, "sftp": 0, "http": 0, "general": 1, "users": 1, "tokens": 1, "servers": 1}
 	for name, want := range tables {
 		if got := len(sections[name].Tables); got != want {
 			t.Errorf("%s has %d repeated tables, want %d", name, got, want)
@@ -83,8 +83,8 @@ func TestSummaryFields(t *testing.T) {
 		"users.users.password":            false,
 		"users.users.basefolder":          false,
 		"users.users.allowUserFileCreate": false,
-		"http.cleanup.path":               true,
-		"http.cleanup.keep":               false,
+		"general.cleanup.path":            true,
+		"general.cleanup.keep":            false,
 	} {
 		if summary[key] != want {
 			t.Errorf("%s summary = %v, want %v", key, summary[key], want)
@@ -129,7 +129,7 @@ func TestFieldKinds(t *testing.T) {
 		"users.users.allowUserFileCreate":   kindBool,
 		"users.users.authorizedKeys":        kindLines,
 		"users.users.paths":                 kindLines,
-		"http.cleanup.keep":                 kindInt,
+		"general.cleanup.keep":              kindInt,
 		"tokens.tokens.hash":                kindText,
 		"tokens.tokens.expires":             kindText,
 		"tokens.tokens.paths":               kindLines,
@@ -189,7 +189,7 @@ func TestValuesRoundTrip(t *testing.T) {
 		{Username: "anonymous", FTP: true, AllowLoginWithoutPassword: &yes},
 		{Username: "max", SFTP: true, AuthorizedKeys: []string{"ssh-ed25519 AAAA max@laptop"}},
 	}
-	cfg.HTTP.Cleanup = []config.Cleanup{{Path: "/iso", Keep: 10}}
+	cfg.General.Cleanup = []config.Cleanup{{Path: "/iso", Keep: 10}}
 	cfg.Tokens = []config.Token{
 		{Name: "ci", Hash: strings.Repeat("ab", 32), Expires: "2030-01-02T03:04:05Z",
 			Paths: []string{"^/.*"}, AllowUserFileCreate: &yes},
@@ -223,8 +223,8 @@ func TestValuesRoundTrip(t *testing.T) {
 	if applied.HTTP.MaxUploadSize != 1<<30 {
 		t.Errorf("http.maxUploadSize is %d", applied.HTTP.MaxUploadSize)
 	}
-	if applied.HTTP.Cleanup[0].Keep != 10 {
-		t.Errorf("http.cleanup did not survive: %+v", applied.HTTP.Cleanup)
+	if applied.General.Cleanup[0].Keep != 10 {
+		t.Errorf("general.cleanup did not survive: %+v", applied.General.Cleanup)
 	}
 	if applied.Users[2].AuthorizedKeys[0] != "ssh-ed25519 AAAA max@laptop" {
 		t.Errorf("the authorized key did not survive: %+v", applied.Users[2])

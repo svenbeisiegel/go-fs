@@ -170,11 +170,17 @@ function panel(section, index) {
 
   // a section with tables nested in it, [general.ssh] and the like, gets a
   // row of tabs of its own: main for the keys of the section itself, then
-  // one per nested table, each with its own description
-  const parts = [{ key: "main", body: sectionBody(section, values[section.key], section.key) }]
+  // one per nested table, each with its own description, and one per list
+  // that repeats in it, [[general.cleanup]] and the like
+  const own = Object.assign({}, section, { tables: [] });
+  const parts = [{ key: "main", body: sectionBody(own, values[section.key], section.key) }]
     .concat(section.subsections.map((sub) => ({
       key: sub.key,
       body: sectionBody(sub, values[section.key][sub.key], section.key + "." + sub.key),
+    })))
+    .concat((section.tables || []).map((table) => ({
+      key: table.key,
+      body: [tableBlock(values[section.key], table.key, table, section.key + "." + table.key)],
     })));
   const row = document.createElement("nav");
   row.className = "subtabs";

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"go-fs/internal/cleanup"
 	"go-fs/internal/config"
 	"go-fs/internal/ftp"
 	"go-fs/internal/httpd"
@@ -92,7 +93,21 @@ var services = []entry{
 			return s.(*tftp.Server).Reload(e.cfg.TFTP)
 		},
 	},
+	{
+		name:    sweeper,
+		enabled: func(e env) bool { return len(e.cfg.General.Cleanup) > 0 },
+		create: func(e env, log *slog.Logger) (service.Server, error) {
+			return cleanup.New(e.cfg.General, log)
+		},
+		reload: func(s service.Server, e env) error {
+			return s.(*cleanup.Sweeper).Reload(e.cfg.General)
+		},
+	},
 }
+
+// sweeper is the service that runs [[general.cleanup]]. It serves no client,
+// so it alone does not count as a server being enabled.
+const sweeper = "cleanup"
 
 // Supervisor holds what is running.
 type Supervisor struct {
@@ -198,7 +213,7 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 		s.current = cfg
 		s.applied = true
 	}
-	if len(s.running) == 0 {
+	if _, sweeping := s.running[sweeper]; len(s.running) == 0 || sweeping && len(s.running) == 1 {
 		return errors.New("no server is enabled, nothing to do")
 	}
 	s.log.Debug("configuration applied", "running", strings.Join(s.runningLocked(), ","),

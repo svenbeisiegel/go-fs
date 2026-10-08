@@ -404,45 +404,6 @@ func TestPathPatternsCannotBeWalkedAround(t *testing.T) {
 	}
 }
 
-func TestCleanupKeepsTheNewest(t *testing.T) {
-	base := t.TempDir()
-	for i, name := range []string{"old3.iso", "old2.iso", "old1.iso", "new2.iso", "new1.iso"} {
-		path := filepath.Join(base, "iso", name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(name), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		when := time.Now().Add(time.Duration(i-10) * time.Hour)
-		if err := os.Chtimes(path, when, when); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	server := newServer(t, func(cfg *httpConfig) {
-		cfg.Basefolder = base
-		cfg.Cleanup = []config.Cleanup{{Path: "/iso", Keep: 2}}
-	})
-	// the sweep runs at startup; wait for it to report
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) && server.logs.find("http cleanup removed a file") == nil {
-		time.Sleep(20 * time.Millisecond)
-	}
-
-	left, err := os.ReadDir(filepath.Join(base, "iso"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(left) != 2 {
-		t.Fatalf("%d files left, want 2", len(left))
-	}
-	kept := map[string]bool{left[0].Name(): true, left[1].Name(): true}
-	if !kept["new1.iso"] || !kept["new2.iso"] {
-		t.Errorf("the wrong files were kept: %v", kept)
-	}
-}
-
 // The limit belongs on the request body itself: the multipart parser reads the
 // body directly, so a limit put on a reader derived from it would leave a
 // multipart upload unbounded.

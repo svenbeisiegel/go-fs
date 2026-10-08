@@ -27,7 +27,7 @@ var generatedSecrets = []generatedSecret{
 	{"httpSessionTokenSecret", func(c *Config) *string { return &c.HTTP.SessionTokenSecret }, GenerateSessionSecret},
 }
 
-// a table or an array of tables: [[http.cleanup]] ends [http] as well
+// a table or an array of tables: [[general.cleanup]] ends [http] as well
 var sectionLine = regexp.MustCompile(`^\s*\[\[?\s*([^\[\]]+?)\s*\]\]?\s*(#.*)?$`)
 
 // EnsureSecrets makes sure the file at path sets every secret of [http] that

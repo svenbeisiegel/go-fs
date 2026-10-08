@@ -73,7 +73,7 @@ func TestEnsureSecretsFillsTheEmptyKeys(t *testing.T) {
 }
 
 func TestEnsureSecretsAddsTheKeysToTheSection(t *testing.T) {
-	body := "[general]\nlogLevel = \"info\"\n\n[http] # served\nport = 9081\n\n[[http.cleanup]]\npath = \"/tmp\"\n"
+	body := "[general]\nlogLevel = \"info\"\n\n[http] # served\nport = 9081\n\n[[general.cleanup]]\npath = \"/tmp\"\n"
 	cfg, written, _ := ensureIn(t, body)
 	if !strings.Contains(written, "[http] # served\n"+
 		"httpSessionTokenSecret = \""+cfg.HTTP.SessionTokenSecret+"\"\n"+
@@ -81,8 +81,8 @@ func TestEnsureSecretsAddsTheKeysToTheSection(t *testing.T) {
 		"port = 9081\n") {
 		t.Errorf("the keys are not the first of [http]:\n%s", written)
 	}
-	if reread := rereadSecrets(t, written, cfg); len(reread.HTTP.Cleanup) != 1 {
-		t.Errorf("cleanup = %+v", reread.HTTP.Cleanup)
+	if reread := rereadSecrets(t, written, cfg); len(reread.General.Cleanup) != 1 {
+		t.Errorf("cleanup = %+v", reread.General.Cleanup)
 	}
 }
 

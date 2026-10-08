@@ -94,6 +94,14 @@ banner = []
 #
 # banner = ["Authorized use only.", "Every login is logged."]
 
+# Folders that are kept from growing without bound: once an hour everything but
+# the newest "keep" files in them is deleted. No entry means no sweep. Paths
+# are relative to general.basefolder, and the sweep runs whichever servers are
+# enabled.
+# [[general.cleanup]]
+# path = "/iso"
+# keep = 10
+
 # The examples below are commented out on purpose — uncomment one and put a
 # name and a password of your own in, rather than starting with the ones
 # printed in the documentation.
@@ -531,13 +539,6 @@ port = 9443
 cert = ""
 key = ""
 # to fill them in by hand: base64 < server.crt | tr -d "\n"
-
-# Folders that are kept from growing without bound: once an hour everything but
-# the newest "keep" files in them is deleted. No entry means no sweep. Paths
-# are relative to http.basefolder.
-# [[http.cleanup]]
-# path = "/iso"
-# keep = 10
 
 # The TFTP server. TFTP has no accounts and no passwords: the protocol has no
 # way to carry them, so anyone who can reach this port can read what allowRead

@@ -174,6 +174,27 @@ func TestApplyStartsStopsAndRestarts(t *testing.T) {
 	logs.waitFor(t, "server stopped server=tftp")
 }
 
+// [[general.cleanup]] runs as a service of its own, whichever servers are
+// enabled, but it alone does not count as a server.
+func TestCleanupRunsBesideTheServers(t *testing.T) {
+	sup, logs, ctx := newSupervisor(t)
+	cfg := baseConfig(t)
+	cfg.General.Cleanup = []config.Cleanup{{Path: "/iso", Keep: 1}}
+
+	if err := sup.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	logs.waitFor(t, "server started server=cleanup")
+	if got := sup.Running(); !slices.Contains(got, "cleanup") || !slices.Contains(got, "http") {
+		t.Fatalf("running = %v, want http and cleanup", got)
+	}
+
+	cfg.HTTP.Enabled = false
+	if err := sup.Apply(ctx, cfg); err == nil {
+		t.Error("a configuration with only the cleanup was taken as enabling a server")
+	}
+}
+
 // An account change is applied to the running server; a port change rebinds it.
 func TestApplyReloadsOrRestarts(t *testing.T) {
 	sup, logs, ctx := newSupervisor(t)

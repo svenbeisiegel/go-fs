@@ -73,6 +73,10 @@ type General struct {
 	// SSH is the SSH transport under the SFTP server and under sending a file
 	// to another host from the listing.
 	SSH SSH `toml:"ssh"`
+
+	// Cleanup are the folders kept from growing without bound, relative to
+	// Basefolder. They are swept whichever servers are enabled.
+	Cleanup []Cleanup `toml:"cleanup"`
 }
 
 // SSH configures the SSH transport: the algorithms go-fs offers, for the SFTP
@@ -736,8 +740,6 @@ type HTTP struct {
 	// PathsRequireAuth are regular expressions; a request whose path matches
 	// one of them needs an account whatever its method.
 	PathsRequireAuth []string `toml:"pathsRequireAuth"`
-
-	Cleanup []Cleanup `toml:"cleanup"`
 }
 
 // S3Region is the one region the S3 API of the HTTP server answers for. It is
@@ -907,6 +909,8 @@ var retired = map[string]string{
 	// cookie is scoped to the root
 	"users.cookie":     "nothing: every http account may log in through the browser",
 	"users.cookiePath": "nothing: the session cookie is always scoped to /",
+	// the folder sweep is not part of the http server
+	"http.cleanup": "[[general.cleanup]], whose paths are relative to general.basefolder",
 }
 
 // RetiredKeys reports the retired keys a file still sets, each as
@@ -1082,6 +1086,17 @@ func (c Config) Validate() error {
 		}
 		if err := checkFolder("general.basefolder", c.General.Basefolder); err != nil {
 			return err
+		}
+	}
+	if len(c.General.Cleanup) > 0 && c.General.Basefolder == "" {
+		return errors.New("general.cleanup needs general.basefolder")
+	}
+	for i, entry := range c.General.Cleanup {
+		if entry.Path == "" {
+			return fmt.Errorf("general.cleanup[%d] has no path", i)
+		}
+		if entry.Keep < 0 {
+			return fmt.Errorf("general.cleanup[%d].keep cannot be negative", i)
 		}
 	}
 	if !c.FTP.Enabled && !c.FTPS.Enabled && !c.SFTP.Enabled &&
@@ -1371,14 +1386,6 @@ func (c Config) validateHTTP() error {
 	for i, pattern := range h.PathsRequireAuth {
 		if _, err := regexp.Compile(pattern); err != nil {
 			return fmt.Errorf("http.pathsRequireAuth[%d]: %w", i, err)
-		}
-	}
-	for i, entry := range h.Cleanup {
-		if entry.Path == "" {
-			return fmt.Errorf("http.cleanup[%d] has no path", i)
-		}
-		if entry.Keep < 0 {
-			return fmt.Errorf("http.cleanup[%d].keep cannot be negative", i)
 		}
 	}
 	if err := c.validateRegistry(); err != nil {

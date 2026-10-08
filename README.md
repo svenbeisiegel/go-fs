@@ -75,8 +75,8 @@ them for you, or run on high ports behind a redirect.
 
 ## Configuration
 
-One TOML file with a `[general]` section and its `[general.ssh]` table, a
-`[[users]]` list, an `[ftp]`, an `[ftps]`, an `[sftp]`, an `[http]`, an
+One TOML file with a `[general]` section, its `[general.ssh]` table and
+`[[general.cleanup]]` list, a `[[users]]` list, an `[ftp]`, an `[ftps]`, an `[sftp]`, an `[http]`, an
 `[https]` and a `[tftp]` section.
 Every key is optional and keeps the documented default when absent, so a
 working file can be this short:
@@ -103,6 +103,18 @@ section does not name one, which is usually what you want — they all serve the
 same tree. It has to be an absolute path and it has to exist. A section that
 sets its own `basefolder` keeps it, so one server can be pointed somewhere else
 without repeating the folder for the rest.
+
+`[[general.cleanup]]` keeps a folder from growing without bound: once an hour
+everything but the newest `keep` files in it is removed. Paths are relative to
+`general.basefolder`, which has to be set for it, and the sweep runs whichever
+servers are enabled. It is the one thing in go-fs that deletes without a client
+asking, so every removal is logged.
+
+```toml
+[[general.cleanup]]
+path = "/iso"
+keep = 10
+```
 
 ### Reloading
 
@@ -240,10 +252,10 @@ off, which a reload applies without a restart.
 
 It shows every section of the configuration as a tab, with the accounts on a
 **USERS** tab of their own between GENERAL and FTP, and every repeated table —
-`[[users]]`, `[[http.cleanup]]` — as a list of records that can be added to and
+`[[users]]`, `[[general.cleanup]]` — as a list of records that can be added to and
 removed from. A table nested in a section, `[general.ssh]`, gets a row of tabs
 of its own under the section's: **main** for the section's own keys, then one
-per nested table, so GENERAL shows **main** and **ssh**. Each record folds up to one line naming it, `john · ftp, http`,
+per nested table and per repeated list, so GENERAL shows **main**, **ssh** and **cleanup**. Each record folds up to one line naming it, `john · ftp, http`,
 and starts folded, so a long account list reads as a list of names and one
 opens to be edited. Each key comes with the comment that documents it in
 `go-fs.example.toml`. One **Apply** button writes
@@ -1212,10 +1224,6 @@ browser.
 `http.sessionTimeout` was what this used to be called, before the session became
 a token that expires rather than a row in memory. A file that still sets it
 loads, and says on startup that it is ignored.
-
-`[[http.cleanup]]` keeps a folder from growing without bound: once an hour
-everything but the newest `keep` files in it is removed. It is the one thing in
-go-fs that deletes without a client asking, so every removal is logged.
 
 ### Downloading a folder
 

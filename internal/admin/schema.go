@@ -25,7 +25,7 @@ type Section struct {
 	Label  string  `json:"label"`
 	Help   string  `json:"help,omitempty"`
 	Fields []Field `json:"fields"`
-	// Tables are the tables that repeat, [[http.cleanup]] and the like. The
+	// Tables are the tables that repeat, [[general.cleanup]] and the like. The
 	// tab shows each of them as a list with one record per entry.
 	Tables []Table `json:"tables"`
 	// Direct says the section is itself a repeated table, [[users]] at the top
@@ -552,7 +552,7 @@ func (s Section) apply(into reflect.Value, posted map[string]any, path string) e
 }
 
 // apply replaces one repeated table with what the page posted for it. path
-// names the table in an error, "http.cleanup" or "users".
+// names the table in an error, "general.cleanup" or "users".
 func (t Table) apply(slice reflect.Value, raw any, path string) error {
 	records, ok := raw.([]any)
 	if !ok {
