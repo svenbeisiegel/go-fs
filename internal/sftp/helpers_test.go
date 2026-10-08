@@ -107,15 +107,16 @@ func fullUser(name, password string) config.User {
 // under [[users]], so that one closure tunes both.
 type sftpConfig struct {
 	config.SFTP
+	SSH   config.SSH
 	Users []config.User
 }
 
 // newServer starts a server on an ephemeral port with a single account
 // "john"/"doe" that may do everything.
-func newServer(t *testing.T, tune func(*sftpConfig)) *testServer {
+func newServer(t testing.TB, tune func(*sftpConfig)) *testServer {
 	t.Helper()
 	base := t.TempDir()
-	cfg := sftpConfig{SFTP: config.Default().SFTP}
+	cfg := sftpConfig{SFTP: config.Default().SFTP, SSH: config.Default().General.SSH}
 	cfg.Enabled = true
 	cfg.Port = 0
 	cfg.Basefolder = base
@@ -129,7 +130,7 @@ func newServer(t *testing.T, tune func(*sftpConfig)) *testServer {
 	}
 
 	logs := &logStore{}
-	server, err := New(cfg.SFTP, cfg.Users, slog.New(&recorder{store: logs}))
+	server, err := New(cfg.SFTP, cfg.SSH, cfg.Users, slog.New(&recorder{store: logs}))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -146,7 +147,7 @@ func newServer(t *testing.T, tune func(*sftpConfig)) *testServer {
 }
 
 // write puts a file into the served folder, creating the folders above it.
-func (s *testServer) write(t *testing.T, name, content string) string {
+func (s *testServer) write(t testing.TB, name, content string) string {
 	t.Helper()
 	path := filepath.Join(s.base, filepath.FromSlash(name))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -175,7 +176,7 @@ func (s *testServer) port() int {
 }
 
 // dial opens an SSH connection with the given authentication method.
-func dial(t *testing.T, server *testServer, user string, auth ssh.AuthMethod) (*ssh.Client, error) {
+func dial(t testing.TB, server *testServer, user string, auth ssh.AuthMethod) (*ssh.Client, error) {
 	t.Helper()
 	client, err := ssh.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(server.port())), &ssh.ClientConfig{
 		User:            user,
@@ -190,7 +191,7 @@ func dial(t *testing.T, server *testServer, user string, auth ssh.AuthMethod) (*
 }
 
 // connect logs in and opens the SFTP subsystem, failing the test if it cannot.
-func connect(t *testing.T, server *testServer, user, password string) *sftp.Client {
+func connect(t testing.TB, server *testServer, user, password string) *sftp.Client {
 	t.Helper()
 	ssh, err := dial(t, server, user, ssh.Password(password))
 	if err != nil {
@@ -205,7 +206,7 @@ func connect(t *testing.T, server *testServer, user, password string) *sftp.Clie
 }
 
 // login is connect for the account the helper configures.
-func login(t *testing.T, server *testServer) *sftp.Client {
+func login(t testing.TB, server *testServer) *sftp.Client {
 	t.Helper()
 	return connect(t, server, "john", "doe")
 }

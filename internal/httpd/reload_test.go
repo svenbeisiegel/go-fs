@@ -23,7 +23,7 @@ func TestReloadAppliesAccounts(t *testing.T) {
 
 	next := server.settings().cfg
 	users := []config.User{fullUser("john", "doe"), fullUser("jane", "secret")}
-	if err := server.Reload(next, server.settings().https, users, nil); err != nil {
+	if err := server.Reload(next, server.settings().https, server.settings().ssh, users, nil); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -42,7 +42,7 @@ func TestReloadRevokesAPermission(t *testing.T) {
 	next := server.settings().cfg
 	user := fullUser("john", "doe")
 	user.AllowUserFileCreate = new(false)
-	if err := server.Reload(next, server.settings().https, []config.User{user}, nil); err != nil {
+	if err := server.Reload(next, server.settings().https, server.settings().ssh, []config.User{user}, nil); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -70,7 +70,7 @@ func TestReloadReportsWhatNeedsARestart(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg, https := server.settings().cfg, server.settings().https
 			change(&cfg, &https)
-			if err := server.Reload(cfg, https, nil, nil); err != service.ErrNeedsRestart {
+			if err := server.Reload(cfg, https, server.settings().ssh, nil, nil); err != service.ErrNeedsRestart {
 				t.Errorf("err = %v, want ErrNeedsRestart", err)
 			}
 		})
@@ -84,7 +84,7 @@ func TestReloadKeepsTheRunningConfigurationOnError(t *testing.T) {
 
 	next := server.settings().cfg
 	next.PathsRequireAuth = []string{"([unclosed"}
-	if err := server.Reload(next, server.settings().https, []config.User{fullUser("john", "doe")}, nil); err == nil {
+	if err := server.Reload(next, server.settings().https, server.settings().ssh, []config.User{fullUser("john", "doe")}, nil); err == nil {
 		t.Fatal("a broken pattern has to be refused")
 	}
 
@@ -105,7 +105,7 @@ func TestTheTokenLifetimeIsSwappedWithoutARestart(t *testing.T) {
 
 	next := server.settings().cfg
 	next.SessionTokenLifetime = 60
-	if err := server.Reload(next, server.settings().https, []config.User{fullUser("john", "doe")}, nil); err != nil {
+	if err := server.Reload(next, server.settings().https, server.settings().ssh, []config.User{fullUser("john", "doe")}, nil); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	if session := login(t, server, "/", "john", "doe"); session.MaxAge != 60 {
@@ -126,7 +126,7 @@ func TestChangingTheSigningKeyNeedsARestart(t *testing.T) {
 
 	next := server.settings().cfg
 	next.SessionTokenSecret = secret
-	if err := server.Reload(next, server.settings().https, nil, nil); !errors.Is(err, service.ErrNeedsRestart) {
+	if err := server.Reload(next, server.settings().https, server.settings().ssh, nil, nil); !errors.Is(err, service.ErrNeedsRestart) {
 		t.Errorf("Reload = %v, want ErrNeedsRestart", err)
 	}
 }

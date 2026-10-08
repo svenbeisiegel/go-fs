@@ -15,6 +15,9 @@ let summaries = {};
 // the tab that is open, kept across a reload so that Apply does not send the
 // reader back to the first one
 let selected = 0;
+// the subtab open in each section that has a row of them, by section key,
+// kept across a reload the same way
+const selectedSub = {};
 // the records that are unfolded, remembered by the record object itself: the
 // list is redrawn on every add and remove, and the objects survive that, while
 // a fresh read of the file replaces them all and so folds everything up again
@@ -126,11 +129,15 @@ function render() {
 }
 
 function tab(section, index) {
+  return tabButton(section.label, () => select(index));
+}
+
+function tabButton(label, open) {
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = section.label;
+  button.textContent = label;
   button.setAttribute("role", "tab");
-  button.addEventListener("click", () => select(index));
+  button.addEventListener("click", open);
   return button;
 }
 
@@ -144,20 +151,58 @@ function select(index) {
 function panel(section, index) {
   const element = document.createElement("section");
   element.hidden = index !== selected;
+  if (!section.subsections || section.subsections.length === 0) {
+    element.append(...sectionBody(section, values[section.key], section.key));
+    return element;
+  }
+
+  // a section with tables nested in it, [general.ssh] and the like, gets a
+  // row of tabs of its own: main for the keys of the section itself, then
+  // one per nested table, each with its own description
+  const parts = [{ key: "main", body: sectionBody(section, values[section.key], section.key) }]
+    .concat(section.subsections.map((sub) => ({
+      key: sub.key,
+      body: sectionBody(sub, values[section.key][sub.key], section.key + "." + sub.key),
+    })));
+  const row = document.createElement("nav");
+  row.className = "subtabs";
+  row.setAttribute("role", "tablist");
+  row.setAttribute("aria-label", section.label);
+  const bodies = parts.map((part) => {
+    const body = document.createElement("div");
+    body.append(...part.body);
+    return body;
+  });
+  const show = (i) => {
+    selectedSub[section.key] = parts[i].key;
+    Array.from(row.children).forEach((button, j) =>
+      button.setAttribute("aria-selected", String(j === i)));
+    bodies.forEach((body, j) => (body.hidden = j !== i));
+  };
+  parts.forEach((part, i) => row.append(tabButton(part.key, () => show(i))));
+  element.append(row, ...bodies);
+  show(Math.max(0, parts.findIndex((part) => part.key === selectedSub[section.key])));
+  return element;
+}
+
+// sectionBody is what one table of the file is shown as: its description,
+// its keys, and the lists that repeat in it. path is its name in the file,
+// "ftp" or "general.ssh", which the lists and the key material are found by.
+function sectionBody(section, holder, path) {
+  const parts = [];
   if (section.help) {
-    element.append(paragraph(section.help, "section-help"));
+    parts.push(paragraph(section.help, "section-help"));
   }
   if (section.direct) {
     // the section is the list itself, [[users]] at the top of the file
-    element.append(tableBlock(values, section.key, section.tables[0], ""));
-    return element;
+    parts.push(tableBlock(values, section.key, section.tables[0], ""));
+    return parts;
   }
-  element.append(fieldGrid(section.fields, values[section.key], section.key));
-
+  parts.push(fieldGrid(section.fields, holder, path));
   (section.tables || []).forEach((table) => {
-    element.append(tableBlock(values[section.key], table.key, table, section.key + "." + table.key));
+    parts.push(tableBlock(holder, table.key, table, path + "." + table.key));
   });
-  return element;
+  return parts;
 }
 
 // updatePanel is the tab that installs a new go-fs binary: the latest release,

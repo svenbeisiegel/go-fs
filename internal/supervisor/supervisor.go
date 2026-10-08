@@ -59,17 +59,17 @@ var services = []entry{
 		name:    "sftp",
 		enabled: func(e env) bool { return e.cfg.SFTP.Enabled },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
-			return sftp.New(e.cfg.SFTP, e.cfg.SFTPUsers(), log)
+			return sftp.New(e.cfg.SFTP, e.cfg.General.SSH, e.cfg.SFTPUsers(), log)
 		},
 		reload: func(s service.Server, e env) error {
-			return s.(*sftp.Server).Reload(e.cfg.SFTP, e.cfg.SFTPUsers())
+			return s.(*sftp.Server).Reload(e.cfg.SFTP, e.cfg.General.SSH, e.cfg.SFTPUsers())
 		},
 	},
 	{
 		name:    "http",
 		enabled: func(e env) bool { return e.cfg.HTTP.Enabled || e.cfg.HTTPS.Enabled },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
-			server, err := httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.HTTPServerUsers(), e.cfg.Tokens, e.path, log)
+			server, err := httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.General.SSH, e.cfg.HTTPServerUsers(), e.cfg.Tokens, e.path, log)
 			if err != nil {
 				return nil, err
 			}
@@ -79,7 +79,7 @@ var services = []entry{
 			return server, nil
 		},
 		reload: func(s service.Server, e env) error {
-			return s.(*httpd.Server).Reload(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.HTTPServerUsers(), e.cfg.Tokens)
+			return s.(*httpd.Server).Reload(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.General.SSH, e.cfg.HTTPServerUsers(), e.cfg.Tokens)
 		},
 	},
 	{

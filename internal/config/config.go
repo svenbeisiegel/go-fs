@@ -66,6 +66,74 @@ type General struct {
 	LogLevel string `toml:"logLevel"`
 	// LogFormat is text or json. Changing it needs a restart.
 	LogFormat string `toml:"logFormat"`
+
+	// SSH is the SSH transport under the SFTP server and under sending a file
+	// to another host from the listing.
+	SSH SSH `toml:"ssh"`
+}
+
+// SSH configures the SSH transport: the algorithms go-fs offers, for the SFTP
+// server and for sending a file to another host, and the limits of the SFTP
+// server's connections.
+//
+// An empty algorithm list stands for every algorithm golang.org/x/crypto/ssh
+// implements and considers secure. A legacy one, such as ssh-rsa or
+// diffie-hellman-group14-sha1, is offered only when it is listed, and listing
+// one logs a warning at startup. On the server the client's order of
+// preference decides among what both offer, so a list there only narrows the
+// choice; sending a file, go-fs is the client and its order is the one that
+// counts.
+//
+// The SSH library keeps the window of a channel at 2 MB, so a single transfer
+// moves at most 2 MB per round trip: about 40 MB/s over a link with 50 ms of
+// latency, whatever the cipher.
+type SSH struct {
+	// KeyExchanges are the key exchange algorithms, empty for the secure
+	// default.
+	KeyExchanges []string `toml:"keyExchanges"`
+	// Ciphers are the ciphers, empty for the secure default. Sending a file
+	// with the list empty, chacha20-poly1305 comes first on a processor
+	// without AES instructions, where it is the faster one.
+	Ciphers []string `toml:"ciphers"`
+	// MACs are the message authentication codes, empty for the secure
+	// default. AES-GCM and chacha20-poly1305 bring their own, so these only
+	// matter with a CTR cipher.
+	MACs []string `toml:"macs"`
+	// PublicKeyAlgorithms are the kinds of key an account may log in to the
+	// SFTP server with, empty for the secure default.
+	PublicKeyAlgorithms []string `toml:"publicKeyAlgorithms"`
+	// HostKeyAlgorithms are the kinds of host key a host may show when a file
+	// is sent to it, and the signatures the SFTP server's own host key may be
+	// made with, empty for the secure default. Only an RSA key has a choice:
+	// ssh-rsa signs with SHA-1, rsa-sha2-256 and rsa-sha2-512 with SHA-2.
+	HostKeyAlgorithms []string `toml:"hostKeyAlgorithms"`
+
+	// LoginGraceTime is how many seconds a connection to the SFTP server has
+	// to finish the handshake and log in, 0 disables it. Without it a client
+	// that never logs in holds a connection slot until the idle timeout.
+	LoginGraceTime int `toml:"loginGraceTime"`
+	// MaxAuthTries is how many login attempts one connection may make. A
+	// client offers every key it has, and each one counts.
+	MaxAuthTries int `toml:"maxAuthTries"`
+	// MaxSessions is how many sessions one connection may have open at once.
+	MaxSessions int `toml:"maxSessions"`
+	// MaxConnectionsPerHost is how many connections one address may have open
+	// at once, 0 for no limit beside sftp.maxConnections.
+	MaxConnectionsPerHost int `toml:"maxConnectionsPerHost"`
+	// KeepAliveInterval is how many seconds pass between two keepalive
+	// requests to a client, 0 disables them. They find a client that went
+	// away without closing its connection, and keep a NAT mapping open.
+	KeepAliveInterval int `toml:"keepAliveInterval"`
+	// KeepAliveCountMax is how many keepalive intervals may pass without an
+	// answer before the connection is closed.
+	KeepAliveCountMax int `toml:"keepAliveCountMax"`
+	// MaxPacketSize is the most bytes the SFTP server answers one read with.
+	// The client decides how much it asks for, so a larger value only helps a
+	// client set to ask for more than the 32768 every server supports.
+	MaxPacketSize int `toml:"maxPacketSize"`
+	// Banner is the text a client shows before it logs in, one line per
+	// entry, empty for none.
+	Banner []string `toml:"banner"`
 }
 
 // FTPS configures the TLS interface of the FTP server. It is a section of its
@@ -340,8 +408,9 @@ type SFTP struct {
 	HostKey string `toml:"hostkey"`
 
 	MaxConnections int `toml:"maxConnections"`
-	// IdleTimeout is the number of seconds without any traffic after which a
-	// connection is closed, 0 disables it.
+	// IdleTimeout is the number of seconds without any SFTP request after
+	// which a connection is closed, 0 disables it. Keepalives do not count:
+	// a connection they keep alive is still idle.
 	IdleTimeout int `toml:"idleTimeout"`
 	// LoginFailureDelay is the delay in seconds before a wrong password is
 	// answered, which slows down guessing.
@@ -537,6 +606,14 @@ func Default() Config {
 			ReloadInterval: 5,
 			LogLevel:       "info",
 			LogFormat:      "text",
+			SSH: SSH{
+				LoginGraceTime:    30,
+				MaxAuthTries:      6,
+				MaxSessions:       10,
+				KeepAliveInterval: 60,
+				KeepAliveCountMax: 3,
+				MaxPacketSize:     MinSFTPPacketSize,
+			},
 		},
 		FTP: FTP{
 			Enabled:             true,
@@ -797,6 +874,14 @@ func (c Config) Validate() error {
 	}
 	if c.General.ReloadInterval < 1 {
 		return errors.New("general.reloadInterval has to be at least 1")
+	}
+	if err := c.General.SSH.validate(); err != nil {
+		return err
+	}
+	if c.SFTP.Enabled && c.General.SSH.LoginGraceTime > 0 &&
+		c.General.SSH.LoginGraceTime <= c.SFTP.LoginFailureDelay {
+		return errors.New("general.ssh.loginGraceTime has to be longer than sftp.loginFailureDelay, " +
+			"or every wrong password would end the login")
 	}
 	if c.General.Basefolder != "" {
 		if !filepath.IsAbs(c.General.Basefolder) {

@@ -148,6 +148,32 @@ h1 { margin: 0; font-size: 1.15rem; letter-spacing: 0.02em; white-space: nowrap;
 
 main { padding: 1.25rem 1.5rem; }
 section[hidden] { display: none; }
+
+/* The row of tabs a section with nested tables gets, [general.ssh] and the
+   like: lighter than the row above it, so that it reads as part of the tab. */
+.subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: -0.5rem 0 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+.subtabs button {
+  margin-bottom: -1px;
+  padding: 0.35rem 0.8rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--faint);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.subtabs button:hover { color: var(--ink); }
+.subtabs button[aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--ink);
+}
 .section-help, .help {
   margin: 0 0 1rem;
   max-width: 60rem;

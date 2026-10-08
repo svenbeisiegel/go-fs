@@ -358,7 +358,7 @@ func TestReloadReachesALiveSession(t *testing.T) {
 	next := server.settings().cfg
 	user := fullUser("john", "doe")
 	user.AllowUserFileRetrieve = &no
-	if err := server.Reload(next, []config.User{user}); err != nil {
+	if err := server.Reload(next, server.settings().ssh, []config.User{user}); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	if _, err := client.Open("/hello.txt"); err == nil {
@@ -366,7 +366,7 @@ func TestReloadReachesALiveSession(t *testing.T) {
 	}
 
 	// and an account that is no longer configured can do nothing
-	if err := server.Reload(next, []config.User{fullUser("someone else", "doe")}); err != nil {
+	if err := server.Reload(next, server.settings().ssh, []config.User{fullUser("someone else", "doe")}); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	if _, err := client.ReadDir("/"); err == nil {

@@ -32,6 +32,14 @@ type Section struct {
 	// of the file: its value is the list of records rather than a map of
 	// keys, and Tables holds exactly one entry describing them.
 	Direct bool `json:"direct,omitempty"`
+	// Subsections are the tables nested in the section, [general.ssh] and the
+	// like, one level deep. The tab shows each under a tab of its own below
+	// the section's, after a first one, main, that holds the section's own
+	// keys; a section without any has no such row.
+	Subsections []Section `json:"subsections,omitempty"`
+
+	// index locates a subsection in its section, as it does for a field.
+	index int
 }
 
 // Table is a repeated table inside a section.
@@ -159,33 +167,54 @@ func build() (Schema, []string) {
 			skipped = append(skipped, field.Name)
 			continue
 		}
-		section := Section{Key: key, Label: strings.ToUpper(key), Help: help(key, "")}
-		for k := range field.Type.NumField() {
-			inner := field.Type.Field(k)
-			name := tomlName(inner)
-			if name == "" {
-				continue
-			}
-			switch kind, ok := kindOf(inner.Type); {
-			case ok:
-				made := newField(name, kind, k, key+"."+name, field.Type.Name()+"."+inner.Name)
-				made.ReadOnly = serverMade[key+"."+name]
-				section.Fields = append(section.Fields, made)
-
-			case inner.Type.Kind() == reflect.Slice && inner.Type.Elem().Kind() == reflect.Struct:
-				table, missed := buildTable(inner, key+"."+name, k)
-				section.Tables = append(section.Tables, table)
-				skipped = append(skipped, missed...)
-
-			default:
-				skipped = append(skipped, field.Name+"."+inner.Name)
-			}
-		}
-		pairUp(section.Fields)
-		section.Fields = withFixed(key, section.Fields)
+		section, missed := buildSection(field.Type, key, true)
+		section.Label = strings.ToUpper(key)
+		section.Help = help(key, "")
 		schema.Sections = append(schema.Sections, section)
+		skipped = append(skipped, missed...)
 	}
 	return schema, skipped
+}
+
+// buildSection walks the keys of one table of the file, path being its name
+// in the file, "ftp" or "general.ssh". A struct among them is a subsection
+// when nested allows one, which it does at the top level only: the tab has
+// room for one row of tabs below its own.
+func buildSection(structure reflect.Type, path string, nested bool) (Section, []string) {
+	var skipped []string
+	key := path[strings.LastIndex(path, ".")+1:]
+	section := Section{Key: key, Label: key, Fields: []Field{}}
+	for k := range structure.NumField() {
+		inner := structure.Field(k)
+		name := tomlName(inner)
+		if name == "" {
+			continue
+		}
+		switch kind, ok := kindOf(inner.Type); {
+		case ok:
+			made := newField(name, kind, k, path+"."+name, structure.Name()+"."+inner.Name)
+			made.ReadOnly = serverMade[path+"."+name]
+			section.Fields = append(section.Fields, made)
+
+		case inner.Type.Kind() == reflect.Slice && inner.Type.Elem().Kind() == reflect.Struct:
+			table, missed := buildTable(inner, path+"."+name, k)
+			section.Tables = append(section.Tables, table)
+			skipped = append(skipped, missed...)
+
+		case inner.Type.Kind() == reflect.Struct && nested:
+			sub, missed := buildSection(inner.Type, path+"."+name, false)
+			sub.Help = help(path+"."+name, structure.Name()+"."+inner.Name)
+			sub.index = k
+			section.Subsections = append(section.Subsections, sub)
+			skipped = append(skipped, missed...)
+
+		default:
+			skipped = append(skipped, structure.Name()+"."+inner.Name)
+		}
+	}
+	pairUp(section.Fields)
+	section.Fields = withFixed(path, section.Fields)
+	return section, skipped
 }
 
 func buildTable(field reflect.StructField, path string, index int) (Table, []string) {
@@ -360,25 +389,37 @@ func (s Schema) Values(cfg config.Config) map[string]any {
 func (s Schema) Summaries(values map[string]any) map[string]string {
 	summaries := make(map[string]string)
 	for _, section := range s.Sections {
-		held, ok := values[section.Key].(map[string]any)
-		if !ok {
-			continue
-		}
-		for _, field := range section.Fields {
-			if field.Upload == "" {
-				continue
-			}
-			value, _ := held[field.Key].(string)
-			if text := config.Describe(field.Upload, value); text != "" {
-				summaries[section.Key+"."+field.Key] = text
-			}
+		if held, ok := values[section.Key].(map[string]any); ok {
+			section.summaries(section.Key, held, summaries)
 		}
 	}
 	return summaries
 }
 
+// summaries adds the descriptions of the key material in one section and its
+// subsections, path being the section's name in the file.
+func (s Section) summaries(path string, held map[string]any, into map[string]string) {
+	for _, field := range s.Fields {
+		if field.Upload == "" {
+			continue
+		}
+		value, _ := held[field.Key].(string)
+		if text := config.Describe(field.Upload, value); text != "" {
+			into[path+"."+field.Key] = text
+		}
+	}
+	for _, sub := range s.Subsections {
+		if inner, ok := held[sub.Key].(map[string]any); ok {
+			sub.summaries(path+"."+sub.Key, inner, into)
+		}
+	}
+}
+
 func (s Section) values(from reflect.Value) map[string]any {
-	values := make(map[string]any, len(s.Fields)+len(s.Tables))
+	values := make(map[string]any, len(s.Fields)+len(s.Tables)+len(s.Subsections))
+	for _, sub := range s.Subsections {
+		values[sub.Key] = sub.values(from.Field(sub.index))
+	}
 	for _, field := range s.Fields {
 		if field.constant {
 			values[field.Key] = field.fixed
@@ -448,21 +489,23 @@ func (s Schema) Apply(values map[string]any) (config.Config, error) {
 		if !ok {
 			continue
 		}
-		if err := section.apply(root.Field(i), posted); err != nil {
+		if err := section.apply(root.Field(i), posted, section.Key); err != nil {
 			return cfg, err
 		}
 	}
 	return cfg, nil
 }
 
-func (s Section) apply(into reflect.Value, posted map[string]any) error {
+// apply writes what the page posted for one section into it, path being the
+// section's name in the file, which an error names the key by.
+func (s Section) apply(into reflect.Value, posted map[string]any, path string) error {
 	for _, field := range s.Fields {
 		value, ok := posted[field.Key]
 		if !ok || field.constant {
 			continue
 		}
 		if err := write(into.Field(field.index), value); err != nil {
-			return fmt.Errorf("%s.%s: %w", s.Key, field.Key, err)
+			return fmt.Errorf("%s.%s: %w", path, field.Key, err)
 		}
 	}
 
@@ -471,7 +514,21 @@ func (s Section) apply(into reflect.Value, posted map[string]any) error {
 		if !ok {
 			continue
 		}
-		if err := table.apply(into.Field(table.index), raw, s.Key+"."+table.Key); err != nil {
+		if err := table.apply(into.Field(table.index), raw, path+"."+table.Key); err != nil {
+			return err
+		}
+	}
+
+	for _, sub := range s.Subsections {
+		raw, ok := posted[sub.Key]
+		if !ok {
+			continue
+		}
+		inner, ok := raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s.%s is not a table", path, sub.Key)
+		}
+		if err := sub.apply(into.Field(sub.index), inner, path+"."+sub.Key); err != nil {
 			return err
 		}
 	}

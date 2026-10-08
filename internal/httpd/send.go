@@ -21,6 +21,7 @@ import (
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 
+	"go-fs/internal/config"
 	"go-fs/internal/vfs"
 )
 
@@ -242,11 +243,14 @@ func sshConnect(ctx context.Context, address string, config *ssh.ClientConfig) (
 }
 
 // openSFTP logs in to the host of a send, provided it shows the key that
-// was accepted, and opens its SFTP. The connection lives as long as ctx.
-func openSFTP(ctx context.Context, req sendRequest) (*ssh.Client, *sftp.Client, error) {
+// was accepted, and opens its SFTP, with the algorithms [general.ssh]
+// allows. The connection lives as long as ctx.
+func openSFTP(ctx context.Context, req sendRequest, sshCfg config.SSH) (*ssh.Client, *sftp.Client, error) {
 	password := req.password
-	config := &ssh.ClientConfig{
-		User: req.username,
+	login := &ssh.ClientConfig{
+		Config:            sshCfg.ClientTransport(),
+		HostKeyAlgorithms: sshCfg.HostKeys(),
+		User:              req.username,
 		Auth: []ssh.AuthMethod{
 			ssh.Password(password),
 			// what many hosts ask a password by instead
@@ -265,7 +269,7 @@ func openSFTP(ctx context.Context, req sendRequest) (*ssh.Client, *sftp.Client, 
 			return nil
 		},
 	}
-	conn, err := sshConnect(ctx, req.address(), config)
+	conn, err := sshConnect(ctx, req.address(), login)
 	if err != nil {
 		return nil, nil, sendFailure(req, err)
 	}
@@ -280,7 +284,11 @@ func openSFTP(ctx context.Context, req sendRequest) (*ssh.Client, *sftp.Client, 
 // sendFailure says why a host could not be reached or logged in to, in the
 // words the page shows.
 func sendFailure(req sendRequest, err error) error {
+	var negotiation *ssh.AlgorithmNegotiationError
 	switch {
+	case errors.As(err, &negotiation):
+		return fmt.Errorf("%s offers no %s that general.ssh allows; it offers %s",
+			req.shown(), negotiation.What, strings.Join(negotiation.RequestedAlgorithms, ", "))
 	case errors.Is(err, errHostKeyChanged):
 		return fmt.Errorf("the key of %s is not the one that was accepted; connect again to see the one it shows now", req.shown())
 	case strings.Contains(err.Error(), "unable to authenticate"):
@@ -302,8 +310,13 @@ func (s *Server) sendHostKey(w http.ResponseWriter, r *http.Request, req sendReq
 	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
 	defer cancel()
 	var seen ssh.PublicKey
+	// the same algorithms as the login that follows, so that the key shown
+	// is the kind the login will be shown too
+	sshCfg := s.settings().ssh
 	conn, err := sshConnect(ctx, req.address(), &ssh.ClientConfig{
-		User: "go-fs",
+		Config:            sshCfg.ClientTransport(),
+		HostKeyAlgorithms: sshCfg.HostKeys(),
+		User:              "go-fs",
 		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
 			seen = key
 			return errHostKeyShown
@@ -343,7 +356,7 @@ type sendEntryJSON struct {
 func (s *Server) sendBrowse(w http.ResponseWriter, r *http.Request, req sendRequest) {
 	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
 	defer cancel()
-	conn, client, err := openSFTP(ctx, req)
+	conn, client, err := openSFTP(ctx, req, s.settings().ssh)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -476,7 +489,7 @@ func (s *Server) sendFile(ctx context.Context, job *registryJob, req sendRequest
 	})
 	defer stop()
 
-	conn, client, err := openSFTP(connCtx, req)
+	conn, client, err := openSFTP(connCtx, req, s.settings().ssh)
 	if err != nil {
 		return "", err
 	}

@@ -155,7 +155,7 @@ func newCluster(t *testing.T, users []config.User, tune func(*config.Config)) *c
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	web, err := httpd.New(cfg.HTTP, cfg.HTTPS, cfg.HTTPServerUsers(), cfg.Tokens, "", log)
+	web, err := httpd.New(cfg.HTTP, cfg.HTTPS, cfg.General.SSH, cfg.HTTPServerUsers(), cfg.Tokens, "", log)
 	if err != nil {
 		t.Fatalf("httpd.New: %v", err)
 	}
@@ -163,7 +163,7 @@ func newCluster(t *testing.T, users []config.User, tune func(*config.Config)) *c
 	if err != nil {
 		t.Fatalf("ftp.New: %v", err)
 	}
-	secure, err := sftpd.New(cfg.SFTP, cfg.SFTPUsers(), log)
+	secure, err := sftpd.New(cfg.SFTP, cfg.General.SSH, cfg.SFTPUsers(), log)
 	if err != nil {
 		t.Fatalf("sftp.New: %v", err)
 	}
@@ -192,13 +192,13 @@ const share = "/share"
 func (c *cluster) reload(t *testing.T, users []config.User) {
 	t.Helper()
 	c.cfg.Users = users
-	if err := c.http.Reload(c.cfg.HTTP, c.cfg.HTTPS, c.cfg.HTTPServerUsers(), c.cfg.Tokens); err != nil {
+	if err := c.http.Reload(c.cfg.HTTP, c.cfg.HTTPS, c.cfg.General.SSH, c.cfg.HTTPServerUsers(), c.cfg.Tokens); err != nil {
 		t.Fatalf("http Reload: %v", err)
 	}
 	if err := c.ftp.Reload(c.cfg.FTP, c.cfg.FTPS, c.cfg.FTPUsers()); err != nil {
 		t.Fatalf("ftp Reload: %v", err)
 	}
-	if err := c.sftp.Reload(c.cfg.SFTP, c.cfg.SFTPUsers()); err != nil {
+	if err := c.sftp.Reload(c.cfg.SFTP, c.cfg.General.SSH, c.cfg.SFTPUsers()); err != nil {
 		t.Fatalf("sftp Reload: %v", err)
 	}
 }

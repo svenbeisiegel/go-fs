@@ -94,21 +94,21 @@ func TestNewRejectsBadConfiguration(t *testing.T) {
 
 	cfg := config.Default().HTTP
 	cfg.Basefolder = base + "/nope"
-	if _, err := New(cfg, config.HTTPS{}, nil, nil, "", discardLogger()); err == nil {
+	if _, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, "", discardLogger()); err == nil {
 		t.Error("a missing base folder has to be refused")
 	}
 
 	cfg = config.Default().HTTP
 	cfg.Basefolder = base
 	cfg.PathsRequireAuth = []string{"([unclosed"}
-	if _, err := New(cfg, config.HTTPS{}, nil, nil, "", discardLogger()); err == nil {
+	if _, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, "", discardLogger()); err == nil {
 		t.Error("a broken pathsRequireAuth pattern has to be refused")
 	}
 
 	cfg = config.Default().HTTP
 	cfg.Basefolder = base
 	users := []config.User{{Username: "john", Password: "doe", HTTP: true, Paths: []string{"([unclosed"}}}
-	if _, err := New(cfg, config.HTTPS{}, users, nil, "", discardLogger()); err == nil {
+	if _, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, users, nil, "", discardLogger()); err == nil {
 		t.Error("a broken user path pattern has to be refused")
 	}
 }
@@ -117,7 +117,7 @@ func TestStartNeedsAListener(t *testing.T) {
 	cfg := config.Default().HTTP
 	cfg.Enabled = false
 	cfg.Basefolder = t.TempDir()
-	server, err := New(cfg, config.HTTPS{}, nil, nil, "", discardLogger())
+	server, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, "", discardLogger())
 	if err != nil {
 		t.Fatal(err)
 	}

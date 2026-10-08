@@ -75,8 +75,9 @@ them for you, or run on high ports behind a redirect.
 
 ## Configuration
 
-One TOML file with a `[general]`, a `[[users]]` list, an `[ftp]`, an `[ftps]`,
-an `[sftp]`, an `[http]`, an `[https]` and a `[tftp]` section.
+One TOML file with a `[general]` section and its `[general.ssh]` table, a
+`[[users]]` list, an `[ftp]`, an `[ftps]`, an `[sftp]`, an `[http]`, an
+`[https]` and a `[tftp]` section.
 Every key is optional and keeps the documented default when absent, so a
 working file can be this short:
 
@@ -240,7 +241,9 @@ off, which a reload applies without a restart.
 It shows every section of the configuration as a tab, with the accounts on a
 **USERS** tab of their own between GENERAL and FTP, and every repeated table —
 `[[users]]`, `[[http.cleanup]]` — as a list of records that can be added to and
-removed from. Each record folds up to one line naming it, `john · ftp, http`,
+removed from. A table nested in a section, `[general.ssh]`, gets a row of tabs
+of its own under the section's: **main** for the section's own keys, then one
+per nested table, so GENERAL shows **main** and **ssh**. Each record folds up to one line naming it, `john · ftp, http`,
 and starts folded, so a long account list reads as a list of names and one
 opens to be edited. Each key comes with the comment that documents it in
 `go-fs.example.toml`. One **Apply** button writes
@@ -457,6 +460,51 @@ with **Generate** in the web interface, or by hand:
 ```shell
 ssh-keygen -q -t ed25519 -N "" -f hostkey && base64 < hostkey | tr -d "\n"
 ```
+
+### SSH algorithms and limits
+
+`[general.ssh]` holds the SSH transport, for the SFTP server and for sending a
+file to another host from the listing alike. Its algorithm lists start empty,
+which stands for every algorithm the SSH library implements and considers
+secure: SHA-1 key exchange, `hmac-sha1-96`, `ssh-rsa` signatures and DSA are
+not offered. A client that needs one of them is turned away with
+`sftp client has no algorithm in common` at info level, naming what it
+offered; listing the algorithm lets it in, and the server warns at startup
+that it does.
+
+```toml
+[general.ssh]
+keyExchanges = []          # empty: the secure default
+ciphers = []
+macs = []
+publicKeyAlgorithms = []   # "ssh-rsa" here admits RSA keys signed with SHA-1
+hostKeyAlgorithms = []
+loginGraceTime = 30        # seconds to finish the handshake and log in
+maxAuthTries = 6
+maxSessions = 10           # per connection
+maxConnectionsPerHost = 0  # per address, 0 for no limit beside maxConnections
+keepAliveInterval = 60     # seconds, 0 disables
+keepAliveCountMax = 3
+maxPacketSize = 32768      # largest answer to one read, up to 261120
+banner = []                # lines shown before the login
+```
+
+| Setting | Why |
+|---|---|
+| `loginGraceTime` | a client that connects and never logs in gives its slot back, instead of holding it until `sftp.idleTimeout` |
+| `keepAliveInterval`, `keepAliveCountMax` | a client that went away without closing is found; answered keepalives do not count as activity, so `sftp.idleTimeout` still closes an idle session |
+| `maxConnectionsPerHost`, `maxSessions` | one address, or one connection, cannot take every slot |
+| `maxPacketSize` | a client set to read more at a time (`sftp -B`, `rclone --sftp-chunk-size`) is answered in fewer round trips |
+
+On the server the client's order of preference picks among what both sides
+offer, so a list there only narrows the choice. Sending a file, go-fs is the
+client and its order counts; with `ciphers` empty, chacha20-poly1305 comes
+first on a processor without AES instructions, such as a Raspberry Pi 4, where
+it is several times faster than AES-GCM.
+
+The cipher matters less than the round trip: the SSH library keeps the window
+of a channel at 2 MB, so one transfer moves at most 2 MB per round trip, about
+40 MB/s at 50 ms of latency.
 
 ## HTTP
 
@@ -1368,7 +1416,7 @@ What each level holds:
 | Level | What is written |
 |---|---|
 | `error` | a server that cannot start or reload, a request handler that panicked, a file operation that failed on the server's side |
-| `warn` | a generated (temporary) certificate, host key or session secret; a certificate that has expired or expires within 30 days; a configuration key this version no longer reads; a password out of the documentation; a request from another origin; an FTP passive port that cannot be opened |
+| `warn` | a generated (temporary) certificate, host key or session secret; a certificate that has expired or expires within 30 days; a configuration key this version no longer reads; a password out of the documentation; a request from another origin; an FTP passive port that cannot be opened; an SSH algorithm with known weaknesses listed in `general.ssh` |
 | `info` | startup with the version, Go version, platform, PID and configuration path; every listener; every reload and what it changed; every login, logoff, refused login and refused connection; every download, upload, delete, mkdir, rename and chmod, with the account, the file, the byte count and how long it took; every transfer that failed and why; every TFTP request that was refused and why; shutdown with the signal that caused it |
 | `debug` | the protocol trace: every FTP command and reply (the password masked), every SFTP request, every HTTP request and response with status, size and duration, every TFTP packet exchange, every connection as it comes and goes, and the reason behind every refusal. Every debug record carries `source=file.go:line`, which says where in the program it was written |
 

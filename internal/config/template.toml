@@ -33,6 +33,67 @@ logLevel = "info"
 # text or json. Changing this needs a restart.
 logFormat = "text"
 
+# The SSH transport under the SFTP server and under sending a file to another
+# host from the listing: the algorithms offered and the limits of an SFTP
+# connection. An empty algorithm list stands for every algorithm the SSH
+# library implements and considers secure; a legacy one such as ssh-rsa is
+# offered only when it is listed, and a warning says so at startup. The
+# library keeps a channel's window at 2 MB, so one transfer moves at most 2 MB
+# per round trip, about 40 MB/s at 50 ms of latency, whatever the cipher.
+[general.ssh]
+# Key exchange algorithms, empty for the secure default.
+keyExchanges = []
+# Ciphers, empty for the secure default. On the SFTP server the client's order
+# decides, so a list only narrows the choice; sending a file, this order is
+# the one that counts, and with the list empty chacha20-poly1305 comes first
+# on a processor without AES instructions, where it is the faster one.
+ciphers = []
+# Message authentication codes, empty for the secure default. AES-GCM and
+# chacha20-poly1305 bring their own, so these only matter with a CTR cipher.
+macs = []
+# Kinds of key an account may log in to the SFTP server with, empty for the
+# secure default. ssh-rsa here admits RSA keys signed with SHA-1, which old
+# clients still use.
+publicKeyAlgorithms = []
+# Kinds of host key a host may show when a file is sent to it, and the
+# signatures the SFTP server's own host key may be made with, empty for the
+# secure default. Only an RSA key has a choice: ssh-rsa signs with SHA-1.
+hostKeyAlgorithms = []
+
+# seconds a connection has to finish the handshake and log in, 0 disables;
+# without it a client that never logs in holds a slot until idleTimeout
+loginGraceTime = 30
+# login attempts per connection; a client offers every key it has, and each
+# one counts
+maxAuthTries = 6
+# sessions one connection may have open at once
+maxSessions = 10
+# connections one address may have open at once, 0 for no limit beside
+# sftp.maxConnections
+maxConnectionsPerHost = 0
+# Seconds between two keepalive requests to a client, 0 disables them. They
+# find a client that went away without closing its connection and keep a NAT
+# mapping open; keepAliveCountMax intervals without an answer close it.
+keepAliveInterval = 60
+keepAliveCountMax = 3
+# The most bytes one SFTP read is answered with, from 32768 to 261120. The
+# client decides how much it asks for, so more only helps a client set to ask
+# for more, such as sftp -B or rclone --sftp-chunk-size.
+maxPacketSize = 32768
+# Text a client shows before it logs in, one line per entry, empty for none.
+banner = []
+
+# Examples. Only the modern algorithms, which every OpenSSH since 8.0 offers:
+# keyExchanges = ["mlkem768x25519-sha256", "curve25519-sha256"]
+# ciphers = ["aes128-gcm@openssh.com", "aes256-gcm@openssh.com", "chacha20-poly1305@openssh.com"]
+# macs = ["hmac-sha2-256-etm@openssh.com", "hmac-sha2-512-etm@openssh.com"]
+#
+# Letting in an old client as well, with an RSA key and SHA-1 key exchange:
+# keyExchanges = ["curve25519-sha256", "diffie-hellman-group14-sha256", "diffie-hellman-group14-sha1"]
+# publicKeyAlgorithms = ["ssh-ed25519", "rsa-sha2-256", "rsa-sha2-512", "ssh-rsa"]
+#
+# banner = ["Authorized use only.", "Every login is logged."]
+
 # The examples below are commented out on purpose — uncomment one and put a
 # name and a password of your own in, rather than starting with the ones
 # printed in the documentation.

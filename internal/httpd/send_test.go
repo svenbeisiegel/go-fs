@@ -39,6 +39,13 @@ type sftpHost struct {
 
 func newSFTPHost(t *testing.T, username, password string) *sftpHost {
 	t.Helper()
+	return newSFTPHostWith(t, username, password, nil)
+}
+
+// newSFTPHostWith is newSFTPHost with the host's SSH configuration tuned, to
+// offer only some algorithms.
+func newSFTPHostWith(t *testing.T, username, password string, tune func(*ssh.ServerConfig)) *sftpHost {
+	t.Helper()
 	_, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +65,9 @@ func newSFTPHost(t *testing.T, username, password string) *sftpHost {
 		},
 	}
 	serverConfig.AddHostKey(signer)
+	if tune != nil {
+		tune(serverConfig)
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -540,5 +550,35 @@ func TestSendsAreTransfersOfTheListing(t *testing.T) {
 	}
 	if _, err := server.startJob(jobSend, "both", "a send", block); !errors.Is(err, errTooManyJobs) {
 		t.Errorf("a send past the limit started: %v", err)
+	}
+}
+
+func TestSendOffersOnlyTheAlgorithmsOfGeneralSSH(t *testing.T) {
+	old := func(c *ssh.ServerConfig) { c.KeyExchanges = []string{ssh.InsecureKeyExchangeDH14SHA1} }
+	remote := newSFTPHostWith(t, "alice", "secret", old)
+	server := newServer(t, nil)
+	server.write(t, "report.txt", "x")
+	session := login(t, server, "/", "john", "doe")
+
+	keyOf := sendBody{Host: remote.host, Port: remote.port}
+	res, data := transferRequest(t, server, http.MethodPost, "/report.txt?go-fs=send-hostkey", session, keyOf)
+	if res.StatusCode != http.StatusBadGateway ||
+		!strings.Contains(string(data), "offers no key exchange that general.ssh allows") ||
+		!strings.Contains(string(data), ssh.InsecureKeyExchangeDH14SHA1) {
+		t.Errorf("a host with only SHA-1 key exchange answered %d: %s", res.StatusCode, data)
+	}
+
+	server = newServer(t, func(c *httpConfig) {
+		c.SSH.KeyExchanges = []string{ssh.KeyExchangeCurve25519, ssh.InsecureKeyExchangeDH14SHA1}
+	})
+	server.write(t, "report.txt", "x")
+	session = login(t, server, "/", "john", "doe")
+	res, data = transferRequest(t, server, http.MethodPost, "/report.txt?go-fs=send-hostkey", session, keyOf)
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("listed in general.ssh, the host has to be reached: %d %s", res.StatusCode, data)
+	}
+	res, data = transferRequest(t, server, http.MethodPost, "/report.txt?go-fs=send-browse", session, remote.body(""))
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("and logged in to: %d %s", res.StatusCode, data)
 	}
 }

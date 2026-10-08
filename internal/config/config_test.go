@@ -334,6 +334,29 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		{"tftp type", func(c *Config) { c.TFTP.Type = "sctp" }, "tftp.type"},
 		{"tftp block size", func(c *Config) { c.TFTP.MaxBlockSize = 4 }, "tftp.maxBlockSize"},
 		{"tftp maxTimeout below timeout", func(c *Config) { c.TFTP.Timeout = 30; c.TFTP.MaxTimeout = 10 }, "maxTimeout"},
+		{"unknown cipher", func(c *Config) { c.General.SSH.Ciphers = []string{"aes128-gmc"} },
+			`general.ssh.ciphers: "aes128-gmc" is not one of`},
+		{"cipher listed twice", func(c *Config) {
+			c.General.SSH.Ciphers = []string{"aes128-ctr", "aes128-ctr"}
+		}, `general.ssh.ciphers lists "aes128-ctr" twice`},
+		{"cipher in the key exchanges", func(c *Config) {
+			c.General.SSH.KeyExchanges = []string{"aes128-ctr"}
+		}, "general.ssh.keyExchanges"},
+		{"unknown public key algorithm", func(c *Config) {
+			c.General.SSH.PublicKeyAlgorithms = []string{"ssh-dss2"}
+		}, "general.ssh.publicKeyAlgorithms"},
+		{"no sessions", func(c *Config) { c.General.SSH.MaxSessions = 0 }, "general.ssh.maxSessions"},
+		{"no auth tries", func(c *Config) { c.General.SSH.MaxAuthTries = 0 }, "general.ssh.maxAuthTries"},
+		{"negative grace time", func(c *Config) { c.General.SSH.LoginGraceTime = -1 }, "general.ssh.loginGraceTime"},
+		{"no keepalive count", func(c *Config) { c.General.SSH.KeepAliveCountMax = 0 }, "general.ssh.keepAliveCountMax"},
+		{"small packet size", func(c *Config) { c.General.SSH.MaxPacketSize = 1024 }, "general.ssh.maxPacketSize"},
+		{"large packet size", func(c *Config) { c.General.SSH.MaxPacketSize = 1 << 20 }, "general.ssh.maxPacketSize"},
+		{"grace time within the failure delay", func(c *Config) {
+			c.SFTP.Enabled = true
+			c.SFTP.Basefolder = folder
+			c.SFTP.LoginFailureDelay = 5
+			c.General.SSH.LoginGraceTime = 5
+		}, "general.ssh.loginGraceTime has to be longer than sftp.loginFailureDelay"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

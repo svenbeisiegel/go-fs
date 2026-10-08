@@ -265,7 +265,7 @@ func TestRegistryAnonymousTokenStopsPullingWhenAnonymousReadIsSwitchedOff(t *tes
 	set := server.settings()
 	cfg := set.cfg
 	cfg.RegistryAnonymousRead = false
-	if err := server.Reload(cfg, set.https, []config.User{fullUser("john", "doe"),
+	if err := server.Reload(cfg, set.https, set.ssh, []config.User{fullUser("john", "doe"),
 		registryUser(pusher, pusherPassword)}, nil); err != nil {
 		t.Fatal(err)
 	}

@@ -136,6 +136,8 @@ type settings struct {
 	// proxies are http.trustedProxies compiled, the addresses whose
 	// X-Forwarded-For and X-Forwarded-Proto are believed.
 	proxies []netip.Prefix
+	// ssh is [general.ssh], the algorithms a send to another host may use.
+	ssh config.SSH
 }
 
 func (s *Server) settings() *settings {
@@ -147,7 +149,7 @@ func (s *Server) settings() *settings {
 // already filtered. root is the served folder: where it ignores case the path
 // patterns have to as well, and it is the folder a token without its own is
 // served.
-func newSettings(cfg config.HTTP, https config.HTTPS, users []config.User, tokens []config.Token, root *vfs.Root) (*settings, error) {
+func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.User, tokens []config.Token, root *vfs.Root) (*settings, error) {
 	fold := root.CaseInsensitive()
 	var web, s3, registry []config.User
 	for _, user := range users {
@@ -204,13 +206,13 @@ func newSettings(cfg config.HTTP, https config.HTTPS, users []config.User, token
 	}
 	return &settings{cfg: cfg, https: https, accounts: accounts, tokens: bearers,
 		s3accounts: s3accounts, registryAccounts: registryAccounts, registry: store,
-		protectedPaths: protected, proxies: proxies}, nil
+		protectedPaths: protected, proxies: proxies, ssh: sshCfg}, nil
 }
 
 // Reload swaps the accounts, the tokens, the paths and the limits that are read
 // per request. The ports, the folder, the certificate and the settings baked into
 // the http.Server and its listener at Start report ErrNeedsRestart.
-func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, users []config.User, tokens []config.Token) error {
+func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.User, tokens []config.Token) error {
 	current := s.settings()
 	if cfg.Enabled != current.cfg.Enabled || cfg.Port != current.cfg.Port ||
 		cfg.Address != current.cfg.Address ||
@@ -224,7 +226,7 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, users []config.User
 		https.Cert != current.https.Cert || https.Key != current.https.Key {
 		return service.ErrNeedsRestart
 	}
-	next, err := newSettings(cfg, https, users, tokens, s.root)
+	next, err := newSettings(cfg, https, sshCfg, users, tokens, s.root)
 	if err != nil {
 		// a broken account or pattern leaves the running one in place
 		return err
@@ -239,16 +241,17 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, users []config.User
 	return nil
 }
 
-// New prepares a server. bearers are the bearer tokens, which only this server
+// New prepares a server. sshCfg is [general.ssh], which sending a file to
+// another host goes by. bearers are the bearer tokens, which only this server
 // reads. configPath is the file the admin interface edits; empty leaves the
 // interface out.
-func New(cfg config.HTTP, https config.HTTPS, users []config.User, bearers []config.Token, configPath string, logger *slog.Logger) (*Server, error) {
+func New(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.User, bearers []config.Token, configPath string, logger *slog.Logger) (*Server, error) {
 	root, err := vfs.New(cfg.Basefolder)
 	if err != nil {
 		return nil, fmt.Errorf("http.basefolder: %w", err)
 	}
 
-	set, err := newSettings(cfg, https, users, bearers, root)
+	set, err := newSettings(cfg, https, sshCfg, users, bearers, root)
 	if err != nil {
 		return nil, err
 	}

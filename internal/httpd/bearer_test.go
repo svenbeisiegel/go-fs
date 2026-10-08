@@ -192,13 +192,13 @@ func TestReloadAddsAndRevokesTokens(t *testing.T) {
 	}
 	set := server.settings()
 	users := []config.User{fullUser("john", "doe")}
-	if err := server.Reload(set.cfg, set.https, users, []config.Token{token}); err != nil {
+	if err := server.Reload(set.cfg, set.https, set.ssh, users, []config.Token{token}); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	if res := bearer(t, server, http.MethodGet, "/private/hello.txt", plain, nil); res.StatusCode != http.StatusOK {
 		t.Errorf("added: status %d, want 200", res.StatusCode)
 	}
-	if err := server.Reload(set.cfg, set.https, users, nil); err != nil {
+	if err := server.Reload(set.cfg, set.https, set.ssh, users, nil); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	if res := bearer(t, server, http.MethodGet, "/private/hello.txt", plain, nil); res.StatusCode != http.StatusUnauthorized {
