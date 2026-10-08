@@ -123,6 +123,8 @@ type httpConfig struct {
 	Tokens []config.Token
 	// SSH is [general.ssh], which a send to another host goes by.
 	SSH config.SSH
+	// Servers are the [[servers]] a send may name.
+	Servers []config.Server
 	// ConfigPath is the file the admin interface edits, empty for a server
 	// without one, which is what most tests want.
 	ConfigPath string
@@ -161,7 +163,7 @@ func newServerWith(t *testing.T, tune func(*httpConfig), tuneTLS func(*config.HT
 	}
 
 	logs := &logStore{}
-	server, err := New(cfg.HTTP, https, cfg.SSH, cfg.Users, cfg.Tokens, cfg.ConfigPath, slog.New(&recorder{store: logs}))
+	server, err := New(cfg.HTTP, https, cfg.SSH, cfg.Users, cfg.Tokens, cfg.Servers, cfg.ConfigPath, slog.New(&recorder{store: logs}))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

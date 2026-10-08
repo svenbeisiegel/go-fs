@@ -222,6 +222,29 @@ banner = []
 # needs http.enableSelfUpdate. False when not set.
 # allowSelfUpdate = true
 
+# Remote servers the file listing sends files to, one table per server. The
+# Send File dialog lists them by name, beside Manual, which asks for a login
+# instead; whoever sends never sees the password of a server. They are added
+# and edited in the admin interface, on the SERVERS tab, which stores a server
+# only once it has logged in to it, and fills in the key it showed.
+# [[servers]]
+# What the Send File dialog lists the server as. Unique, whatever its case.
+# name = "backup host"
+# The protocol the server is reached with: sftp.
+# type = "sftp"
+# The name or address of the server, without a scheme or a port.
+# host = "sftp.example.com"
+# Where the server listens, the default of its type (22 for sftp) when not
+# set.
+# port = 22
+# The login on the server. The password is kept as it is, so keep this file
+# private.
+# username = "backup"
+# password = "secret"
+# The SHA-256 fingerprint of the key the server showed when it was stored. A
+# server that shows another is not logged in to until it is edited.
+# hostKeyFingerprint = "SHA256:…"
+
 [ftp]
 # Serve the plain control port. The TLS listener has its own switch in [ftps];
 # everything else in this section applies to both of them.

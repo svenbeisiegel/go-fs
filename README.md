@@ -1336,16 +1336,26 @@ account's fetches and sends that have not been cleared, with `kind`, `name`, `fo
 own network, internal addresses included: give the right to create files only
 to accounts that may do that.
 
-### Sending a file over SFTP
+### Sending a file to another server
 
-**Send via SFTP…** in the row menu of a file uploads it to another host over
-SFTP. It is offered to an account that has logged in through the form and may
-read the file. The dialog takes three steps:
+**Send File…** in the row menu of a file uploads it to another host, over SFTP
+for now. It is offered to an account that has logged in through the form and
+may read the file. The dialog opens with a **Server** list: the servers an
+admin stored (see [Stored servers](#stored-servers)), and **Manual**, chosen
+at first, which asks for a login instead.
 
-1. **Connect.** The host name or address, the port (22 unless another is
-   given), a username and a password. The password is sent as SSH `password`
-   authentication, and as the answer to every prompt where the host asks by
-   `keyboard-interactive` instead.
+A stored server is picked by its name. **Connect** goes straight to its
+folders with the login and the host key the configuration file holds. The
+page never sees the password or the key; a host that shows another key than
+the stored one is not logged in to, and the dialog says that an administrator
+has to edit the server.
+
+**Manual** takes three steps, and stores nothing:
+
+1. **Connect.** The protocol (SFTP), the host name or address, the port (22
+   unless another is given), a username and a password. The password is sent
+   as SSH `password` authentication, and as the answer to every prompt where
+   the host asks by `keyboard-interactive` instead.
 2. **Host key.** Before any login is offered, the server connects to the host
    only far enough to see its key, and the dialog shows the key type and its
    SHA256 fingerprint, as `ssh` does. **Accept key** goes on; every later
@@ -1374,19 +1384,60 @@ password is never stored, and it is never logged.
 
 The endpoints are on the file, all `POST`:
 
-- `?go-fs=send-hostkey` takes `host` and `port` and answers `host`, `keyType`
-  and `fingerprint`.
+- `?go-fs=send-hostkey` takes `host` and `port`, and optionally `protocol`
+  (`sftp`), and answers `host`, `keyType` and `fingerprint`.
 - `?go-fs=send-browse` takes `host`, `port`, `username`, `password`, `hostKey`
   (the accepted fingerprint) and `path` (empty for the folder the login starts
-  in). It answers `path`, `parent` and `entries` (`name`, `dir`, `size`).
+  in), or `server` (the name of a stored server) and `path`. It answers
+  `base` (`sftp://host`), `path`, `parent` and `entries` (`name`, `dir`,
+  `size`).
 - `?go-fs=send` takes the same fields, with `path` as the folder to send into,
   and answers `202` with the job.
+
+A body that names a `server` is sent with that server's login; whatever else
+it names is ignored. `send-hostkey` refuses a stored server, whose key was
+accepted when it was stored.
 
 A send's progress is read and stopped through `?go-fs=fetch-job`, and it is
 listed by `?go-fs=fetch-jobs` with `kind` `send`. A remote that cannot be
 reached, refuses the login or has no such folder is answered `502` with the
 reason. As with Fetch, the server connects from its own network to whatever
 host is typed in, internal addresses included.
+
+#### Stored servers
+
+The servers the dialog lists are `[[servers]]` entries, managed on the
+**SERVERS** tab of the admin interface:
+
+1. **Add server…** asks for a name, the protocol, the host, the port, a
+   username and a password.
+2. **Connect** shows the key the host shows, without logging in, as the send
+   dialog does. When a server is edited, the dialog says whether the key is
+   the one the server is stored with.
+3. **Accept key and save** logs in with the login and that key. Only once that
+   worked is the entry written to the file, at once, with nothing else on the
+   page; other changes still wait for **Apply**. The file is rewritten and kept
+   as `.bak`, as Apply does.
+
+On the tab, the name of a server can be changed and the server removed, both
+written by **Apply**; everything else is read-only and changed with
+**Edit…**, which goes through the same dialog. An edit that leaves the
+password empty keeps the stored one.
+
+```toml
+[[servers]]
+name = "backup host"
+type = "sftp"
+host = "sftp.example.com"
+port = 22
+username = "backup"
+password = "secret"
+hostKeyFingerprint = "SHA256:…"
+```
+
+The name has to be unique, whatever its case, and cannot be `Manual`. The
+password is kept in plain text, as an account's is. Every account that may
+send sees every stored server, by name.
 
 ## Logging and diagnostics
 

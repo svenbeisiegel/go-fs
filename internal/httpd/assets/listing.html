@@ -86,7 +86,7 @@
 <div id="menu" class="menu" role="menu" hidden>
   <a role="menuitem" data-do="download" download><svg class="ic"><use href="#i-download"/></svg><span>Download</span></a>
   {{if .Rights.Share}}<button type="button" role="menuitem" data-do="share"><svg class="ic"><use href="#i-link"/></svg>Share&#8230;</button>{{end}}
-  {{if .Rights.Send}}<button type="button" role="menuitem" data-do="send"><svg class="ic"><use href="#i-send"/></svg>Send via SFTP&#8230;</button>{{end}}
+  {{if .Rights.Send}}<button type="button" role="menuitem" data-do="send"><svg class="ic"><use href="#i-send"/></svg>Send File&#8230;</button>{{end}}
   {{if and .Rights.Import .Session.Registry}}<a role="menuitem" data-do="import" data-registry="{{.Session.Registry}}" hidden><svg class="ic"><use href="#i-box"/></svg><span>Import into registry&#8230;</span></a>{{end}}
   {{if .Rights.Rename}}<button type="button" role="menuitem" data-do="rename"><svg class="ic"><use href="#i-pencil"/></svg>Rename&#8230;</button>{{end}}
   {{if or .Rights.DeleteFile .Rights.DeleteFolder}}<button type="button" role="menuitem" class="remove" data-do="delete"><svg class="ic"><use href="#i-trash"/></svg>Delete</button>{{end}}
@@ -152,17 +152,32 @@
 {{if .Rights.Send}}
 <dialog id="send-dialog" class="transfer" aria-labelledby="send-title">
   <form method="dialog">
-    <h2 id="send-title">Send via SFTP</h2>
+    <h2 id="send-title">Send File</h2>
     <p class="what"></p>
     <div class="fields">
-      <label for="send-host">Host</label>
-      <input id="send-host" name="host" type="text" required placeholder="sftp.example.com" autocomplete="off" spellcheck="false">
-      <label for="send-port">Port</label>
-      <input id="send-port" name="port" type="number" required min="1" max="65535" value="22">
-      <label for="send-username">Username</label>
-      <input id="send-username" name="username" type="text" required autocomplete="off" spellcheck="false">
-      <label for="send-password">Password</label>
-      <input id="send-password" name="password" type="password" autocomplete="new-password">
+      <label for="send-server">Server</label>
+      <select id="send-server" name="server">
+        <option value="" selected>{{.Send.Manual}}</option>
+        {{- range .Send.Servers}}
+        <option value="{{.}}">{{.}}</option>
+        {{- end}}
+      </select>
+      <fieldset class="manual">
+        <label for="send-protocol">Protocol</label>
+        <select id="send-protocol" name="protocol">
+          {{- range .Send.Protocols}}
+          <option value="{{.ID}}" data-port="{{.DefaultPort}}" data-hostkey="{{.HostKey}}">{{.Label}}</option>
+          {{- end}}
+        </select>
+        <label for="send-host">Host</label>
+        <input id="send-host" name="host" type="text" required placeholder="sftp.example.com" autocomplete="off" spellcheck="false">
+        <label for="send-port">Port</label>
+        <input id="send-port" name="port" type="number" required min="1" max="65535" value="22">
+        <label for="send-username">Username</label>
+        <input id="send-username" name="username" type="text" required autocomplete="off" spellcheck="false">
+        <label for="send-password">Password</label>
+        <input id="send-password" name="password" type="password" autocomplete="new-password">
+      </fieldset>
     </div>
     <p class="connected" hidden>Connected to <span class="login"></span><button type="button" class="change">Change</button></p>
     <div class="hostkey" hidden>

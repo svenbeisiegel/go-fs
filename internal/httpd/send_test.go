@@ -2,8 +2,6 @@ package httpd
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"net"
@@ -12,195 +10,20 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 
 	"go-fs/internal/config"
+	"go-fs/internal/remote/remotetest"
 )
 
-// sftpHost is an SFTP server a test sends to. It serves dir, which is also
-// where a login starts, and takes one login.
-type sftpHost struct {
-	host        string
-	port        int
-	dir         string
-	fingerprint string
-	// logins counts the logins offered to it, right or wrong.
-	logins atomic.Int32
-	// slow is how long every read of what a client sent waits, which holds a
-	// send up for a test that stops it.
-	slow atomic.Int64
-}
-
-func newSFTPHost(t *testing.T, username, password string) *sftpHost {
-	t.Helper()
-	return newSFTPHostWith(t, username, password, nil)
-}
-
-// newSFTPHostWith is newSFTPHost with the host's SSH configuration tuned, to
-// offer only some algorithms.
-func newSFTPHostWith(t *testing.T, username, password string, tune func(*ssh.ServerConfig)) *sftpHost {
-	t.Helper()
-	_, private, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signer, err := ssh.NewSignerFromKey(private)
-	if err != nil {
-		t.Fatal(err)
-	}
-	remote := &sftpHost{dir: t.TempDir(), fingerprint: ssh.FingerprintSHA256(signer.PublicKey())}
-	serverConfig := &ssh.ServerConfig{
-		PasswordCallback: func(meta ssh.ConnMetadata, given []byte) (*ssh.Permissions, error) {
-			remote.logins.Add(1)
-			if meta.User() == username && string(given) == password {
-				return nil, nil
-			}
-			return nil, errors.New("wrong login")
-		},
-	}
-	serverConfig.AddHostKey(signer)
-	if tune != nil {
-		tune(serverConfig)
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := listener.Addr().(*net.TCPAddr)
-	remote.host, remote.port = addr.IP.String(), addr.Port
-
-	var mu sync.Mutex
-	var conns []net.Conn
-	var wg sync.WaitGroup
-	t.Cleanup(func() {
-		_ = listener.Close()
-		mu.Lock()
-		for _, conn := range conns {
-			_ = conn.Close()
-		}
-		mu.Unlock()
-		wg.Wait()
-	})
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			mu.Lock()
-			conns = append(conns, conn)
-			mu.Unlock()
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				remote.serve(conn, serverConfig)
-			}()
-		}
-	}()
-	return remote
-}
-
-func (h *sftpHost) serve(conn net.Conn, serverConfig *ssh.ServerConfig) {
-	defer func() { _ = conn.Close() }()
-	_, chans, reqs, err := ssh.NewServerConn(conn, serverConfig)
-	if err != nil {
-		return
-	}
-	go ssh.DiscardRequests(reqs)
-	for incoming := range chans {
-		if incoming.ChannelType() != "session" {
-			_ = incoming.Reject(ssh.UnknownChannelType, "sessions only")
-			continue
-		}
-		channel, requests, err := incoming.Accept()
-		if err != nil {
-			return
-		}
-		go func() {
-			for req := range requests {
-				ok := req.Type == "subsystem" && len(req.Payload) > 4 && string(req.Payload[4:]) == "sftp"
-				_ = req.Reply(ok, nil)
-				if !ok {
-					continue
-				}
-				go func() {
-					defer func() { _ = channel.Close() }()
-					server, err := sftp.NewServer(slowChannel{channel, h}, sftp.WithServerWorkingDirectory(h.dir))
-					if err != nil {
-						return
-					}
-					_ = server.Serve()
-				}()
-			}
-		}()
-	}
-}
-
-// slowChannel is the channel of an SFTP session, which reads as slowly as the
-// host is told to.
-type slowChannel struct {
-	ssh.Channel
-	host *sftpHost
-}
-
-func (c slowChannel) Read(b []byte) (int, error) {
-	if wait := time.Duration(c.host.slow.Load()); wait > 0 {
-		time.Sleep(wait)
-	}
-	return c.Channel.Read(b)
-}
-
-// sftpPath is a local path as an SFTP server names it: with slashes, and on
-// Windows with a slash before the drive letter.
-func sftpPath(p string) string {
-	p = filepath.ToSlash(p)
-	if len(p) > 1 && p[1] == ':' {
-		p = "/" + p
-	}
-	return p
-}
-
-// body is a send to the host, as the dialog asks for one once the key was
+// sendTo is a send to the host, as the dialog asks for one once the key was
 // accepted.
-func (h *sftpHost) body(path string) sendBody {
-	return sendBody{Host: h.host, Port: h.port, Username: "alice", Password: "secret",
-		HostKey: h.fingerprint, Path: path}
-}
-
-func (h *sftpHost) write(t *testing.T, name, content string) {
-	t.Helper()
-	full := filepath.Join(h.dir, filepath.FromSlash(name))
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// leftovers are the files of a folder of the host a send writes under a
-// name of its own.
-func (h *sftpHost) leftovers(t *testing.T, name string) []string {
-	t.Helper()
-	entries, err := os.ReadDir(filepath.Join(h.dir, filepath.FromSlash(name)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var found []string
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".part") {
-			found = append(found, entry.Name())
-		}
-	}
-	return found
+func sendTo(h *remotetest.SFTPHost, path string) sendBody {
+	return sendBody{Host: h.Host, Port: h.Port, Username: "alice", Password: "secret",
+		HostKey: h.Fingerprint, Path: path}
 }
 
 // startSend starts sending a file and returns the job it started.
@@ -221,13 +44,13 @@ func startSend(t *testing.T, server *testServer, file string, session *http.Cook
 }
 
 func TestSendShowsTheHostKeyWithoutLoggingIn(t *testing.T) {
-	remote := newSFTPHost(t, "alice", "secret")
+	remote := remotetest.NewSFTPHost(t, "alice", "secret")
 	server := newServer(t, nil)
 	server.write(t, "report.txt", "x")
 	session := login(t, server, "/", "john", "doe")
 
 	res, data := transferRequest(t, server, http.MethodPost, "/report.txt?go-fs=send-hostkey", session,
-		sendBody{Host: remote.host, Port: remote.port})
+		sendBody{Host: remote.Host, Port: remote.Port})
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("the host key answered %d: %s", res.StatusCode, data)
 	}
@@ -235,13 +58,13 @@ func TestSendShowsTheHostKeyWithoutLoggingIn(t *testing.T) {
 	if err := json.Unmarshal(data, &view); err != nil {
 		t.Fatal(err)
 	}
-	if view.Fingerprint != remote.fingerprint || view.KeyType != ssh.KeyAlgoED25519 {
-		t.Errorf("the key is %+v, want %s", view, remote.fingerprint)
+	if view.Fingerprint != remote.Fingerprint || view.KeyType != ssh.KeyAlgoED25519 {
+		t.Errorf("the key is %+v, want %s", view, remote.Fingerprint)
 	}
-	if view.Host != net.JoinHostPort(remote.host, strconv.Itoa(remote.port)) {
+	if view.Host != net.JoinHostPort(remote.Host, strconv.Itoa(remote.Port)) {
 		t.Errorf("the host is shown as %q", view.Host)
 	}
-	if n := remote.logins.Load(); n != 0 {
+	if n := remote.Logins.Load(); n != 0 {
 		t.Errorf("%d logins were offered for the key alone", n)
 	}
 
@@ -260,22 +83,22 @@ func TestSendShowsTheHostKeyWithoutLoggingIn(t *testing.T) {
 }
 
 func TestSendLogsInOnlyWithTheAcceptedKey(t *testing.T) {
-	remote := newSFTPHost(t, "alice", "secret")
+	remote := remotetest.NewSFTPHost(t, "alice", "secret")
 	server := newServer(t, nil)
 	server.write(t, "report.txt", "x")
 	session := login(t, server, "/", "john", "doe")
 
-	body := remote.body("")
+	body := sendTo(remote, "")
 	body.HostKey = "SHA256:somebodyElse"
 	res, data := transferRequest(t, server, http.MethodPost, "/report.txt?go-fs=send-browse", session, body)
 	if res.StatusCode != http.StatusBadGateway || !strings.Contains(string(data), "not the one that was accepted") {
 		t.Errorf("another key answered %d: %s", res.StatusCode, data)
 	}
-	if n := remote.logins.Load(); n != 0 {
+	if n := remote.Logins.Load(); n != 0 {
 		t.Errorf("%d logins were offered to a host with another key", n)
 	}
 
-	body = remote.body("")
+	body = sendTo(remote, "")
 	body.Password = "wrong"
 	res, data = transferRequest(t, server, http.MethodPost, "/report.txt?go-fs=send-browse", session, body)
 	if res.StatusCode != http.StatusBadGateway || !strings.Contains(string(data), "refused the login") {
@@ -284,17 +107,17 @@ func TestSendLogsInOnlyWithTheAcceptedKey(t *testing.T) {
 }
 
 func TestSendListsTheFoldersOfTheHost(t *testing.T) {
-	remote := newSFTPHost(t, "alice", "secret")
-	remote.write(t, "zeta.txt", "z")
-	remote.write(t, "Beta/inside.txt", "in")
-	remote.write(t, "alpha/deeper/x.txt", "x")
+	remote := remotetest.NewSFTPHost(t, "alice", "secret")
+	remote.Write(t, "zeta.txt", "z")
+	remote.Write(t, "Beta/inside.txt", "in")
+	remote.Write(t, "alpha/deeper/x.txt", "x")
 	server := newServer(t, nil)
 	server.write(t, "report.txt", "x")
 	session := login(t, server, "/", "john", "doe")
 
 	browse := func(path string) sendFolderJSON {
 		t.Helper()
-		res, data := transferRequest(t, server, http.MethodPost, "/report.txt?go-fs=send-browse", session, remote.body(path))
+		res, data := transferRequest(t, server, http.MethodPost, "/report.txt?go-fs=send-browse", session, sendTo(remote, path))
 		if res.StatusCode != http.StatusOK {
 			t.Fatalf("the folder %q answered %d: %s", path, res.StatusCode, data)
 		}
@@ -305,8 +128,8 @@ func TestSendListsTheFoldersOfTheHost(t *testing.T) {
 		return view
 	}
 	home := browse("")
-	if home.Path != sftpPath(remote.dir) {
-		t.Errorf("the login starts in %q, want %q", home.Path, remote.dir)
+	if home.Path != remotetest.Path(remote.Dir) {
+		t.Errorf("the login starts in %q, want %q", home.Path, remote.Dir)
 	}
 	var names []string
 	for _, entry := range home.Entries {
@@ -318,7 +141,7 @@ func TestSendListsTheFoldersOfTheHost(t *testing.T) {
 	if !home.Entries[0].Dir || home.Entries[2].Dir || home.Entries[2].Size != 1 {
 		t.Errorf("the entries are %+v", home.Entries)
 	}
-	if home.Parent != sftpPath(filepath.Dir(remote.dir)) {
+	if home.Parent != remotetest.Path(filepath.Dir(remote.Dir)) {
 		t.Errorf("the parent is %q", home.Parent)
 	}
 
@@ -327,26 +150,26 @@ func TestSendListsTheFoldersOfTheHost(t *testing.T) {
 		t.Errorf("the subfolder is %+v", inner)
 	}
 	res, data := transferRequest(t, server, http.MethodPost, "/report.txt?go-fs=send-browse", session,
-		remote.body(home.Path+"/missing"))
+		sendTo(remote, home.Path+"/missing"))
 	if res.StatusCode != http.StatusBadGateway || !strings.Contains(string(data), "there is no folder") {
 		t.Errorf("a missing folder answered %d: %s", res.StatusCode, data)
 	}
 }
 
 func TestSendUploadsTheFile(t *testing.T) {
-	remote := newSFTPHost(t, "alice", "secret")
-	remote.write(t, "inbox/.keep", "")
+	remote := remotetest.NewSFTPHost(t, "alice", "secret")
+	remote.Write(t, "inbox/.keep", "")
 	server := newServer(t, nil)
 	content := strings.Repeat("the report\n", 50000)
 	server.mkdir(t, "docs")
 	server.write(t, "docs/report.txt", content)
 	session := login(t, server, "/", "john", "doe")
 
-	folder := sftpPath(filepath.Join(remote.dir, "inbox"))
-	job := startSend(t, server, "/docs/report.txt", session, remote.body(folder))
+	folder := remotetest.Path(filepath.Join(remote.Dir, "inbox"))
+	job := startSend(t, server, "/docs/report.txt", session, sendTo(remote, folder))
 	ended := waitForFetch(t, server, "/", job.ID, session)
 	expectDone(t, ended)
-	stored, err := os.ReadFile(filepath.Join(remote.dir, "inbox", "report.txt"))
+	stored, err := os.ReadFile(filepath.Join(remote.Dir, "inbox", "report.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +185,7 @@ func TestSendUploadsTheFile(t *testing.T) {
 	if strings.Contains(ended.What, "secret") || strings.Contains(ended.Message, "secret") {
 		t.Errorf("the job shows the password: %q, %q", ended.What, ended.Message)
 	}
-	if left := remote.leftovers(t, "inbox"); len(left) != 0 {
+	if left := remote.Leftovers(t, "inbox"); len(left) != 0 {
 		t.Errorf("the send left %v behind", left)
 	}
 
@@ -383,15 +206,15 @@ func TestSendUploadsTheFile(t *testing.T) {
 }
 
 func TestSendReplacesAFileThatIsThere(t *testing.T) {
-	remote := newSFTPHost(t, "alice", "secret")
-	remote.write(t, "report.txt", "the old one, which was longer")
+	remote := remotetest.NewSFTPHost(t, "alice", "secret")
+	remote.Write(t, "report.txt", "the old one, which was longer")
 	server := newServer(t, nil)
 	server.write(t, "report.txt", "the new one")
 	session := login(t, server, "/", "john", "doe")
 
-	job := startSend(t, server, "/report.txt", session, remote.body(sftpPath(remote.dir)))
+	job := startSend(t, server, "/report.txt", session, sendTo(remote, remotetest.Path(remote.Dir)))
 	expectDone(t, waitForFetch(t, server, "/", job.ID, session))
-	stored, err := os.ReadFile(filepath.Join(remote.dir, "report.txt"))
+	stored, err := os.ReadFile(filepath.Join(remote.Dir, "report.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,32 +223,32 @@ func TestSendReplacesAFileThatIsThere(t *testing.T) {
 	}
 
 	// a folder of that name is not replaced
-	remote.write(t, "taken/report.txt/inside", "x")
-	job = startSend(t, server, "/report.txt", session, remote.body(sftpPath(filepath.Join(remote.dir, "taken"))))
+	remote.Write(t, "taken/report.txt/inside", "x")
+	job = startSend(t, server, "/report.txt", session, sendTo(remote, remotetest.Path(filepath.Join(remote.Dir, "taken"))))
 	expectFailed(t, waitForFetch(t, server, "/", job.ID, session), "is a folder")
 }
 
 func TestSendCanBeStopped(t *testing.T) {
-	remote := newSFTPHost(t, "alice", "secret")
+	remote := remotetest.NewSFTPHost(t, "alice", "secret")
 	server := newServer(t, nil)
 	server.write(t, "big.bin", strings.Repeat("x", 16<<20))
 	session := login(t, server, "/", "john", "doe")
 
-	remote.slow.Store(int64(20 * time.Millisecond))
-	job := startSend(t, server, "/big.bin", session, remote.body(sftpPath(remote.dir)))
+	remote.Slow.Store(int64(20 * time.Millisecond))
+	job := startSend(t, server, "/big.bin", session, sendTo(remote, remotetest.Path(remote.Dir)))
 	waitForDownload(t, server, "/", job.ID, session)
 	res, data := transferRequest(t, server, http.MethodDelete, "/?go-fs=fetch-job&id="+job.ID, session, nil)
 	if res.StatusCode != http.StatusNoContent {
 		t.Fatalf("the stop answered %d: %s", res.StatusCode, data)
 	}
-	remote.slow.Store(0)
+	remote.Slow.Store(0)
 	if ended := waitForFetch(t, server, "/", job.ID, session); ended.State != jobCancelled {
 		t.Errorf("the send ended %s: %s", ended.State, ended.Message)
 	}
-	if _, err := os.Stat(filepath.Join(remote.dir, "big.bin")); err == nil {
+	if _, err := os.Stat(filepath.Join(remote.Dir, "big.bin")); err == nil {
 		t.Error("a stopped send stored its file")
 	}
-	if left := remote.leftovers(t, "."); len(left) != 0 {
+	if left := remote.Leftovers(t, "."); len(left) != 0 {
 		t.Errorf("a stopped send left %v behind", left)
 	}
 }
@@ -555,12 +378,12 @@ func TestSendsAreTransfersOfTheListing(t *testing.T) {
 
 func TestSendOffersOnlyTheAlgorithmsOfGeneralSSH(t *testing.T) {
 	old := func(c *ssh.ServerConfig) { c.KeyExchanges = []string{ssh.InsecureKeyExchangeDH14SHA1} }
-	remote := newSFTPHostWith(t, "alice", "secret", old)
+	remote := remotetest.NewSFTPHostWith(t, "alice", "secret", old)
 	server := newServer(t, nil)
 	server.write(t, "report.txt", "x")
 	session := login(t, server, "/", "john", "doe")
 
-	keyOf := sendBody{Host: remote.host, Port: remote.port}
+	keyOf := sendBody{Host: remote.Host, Port: remote.Port}
 	res, data := transferRequest(t, server, http.MethodPost, "/report.txt?go-fs=send-hostkey", session, keyOf)
 	if res.StatusCode != http.StatusBadGateway ||
 		!strings.Contains(string(data), "offers no key exchange that general.ssh allows") ||
@@ -577,8 +400,156 @@ func TestSendOffersOnlyTheAlgorithmsOfGeneralSSH(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Errorf("listed in general.ssh, the host has to be reached: %d %s", res.StatusCode, data)
 	}
-	res, data = transferRequest(t, server, http.MethodPost, "/report.txt?go-fs=send-browse", session, remote.body(""))
+	res, data = transferRequest(t, server, http.MethodPost, "/report.txt?go-fs=send-browse", session, sendTo(remote, ""))
 	if res.StatusCode != http.StatusOK {
 		t.Errorf("and logged in to: %d %s", res.StatusCode, data)
+	}
+}
+
+// listingOf is the listing of the top folder, as a session sees it.
+func listingOf(t *testing.T, server *testServer, session *http.Cookie) string {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, server.url("/"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(session)
+	return bodyOf(t, do(t, req))
+}
+
+// storedServer is a server the admin interface stored for the host.
+func storedServer(h *remotetest.SFTPHost, name string) config.Server {
+	return config.Server{Name: name, Type: config.ServerTypeSFTP, Host: h.Host, Port: h.Port,
+		Username: "alice", Password: "secret", HostKeyFingerprint: h.Fingerprint}
+}
+
+func TestSendToAStoredServer(t *testing.T) {
+	const password = "hunter2-of-the-backup"
+	remote := remotetest.NewSFTPHost(t, "alice", password)
+	remote.Write(t, "inbox/.keep", "")
+	server := newServer(t, func(cfg *httpConfig) {
+		backup := storedServer(remote, "Backup")
+		backup.Password = password
+		cfg.Servers = []config.Server{backup}
+	})
+	server.write(t, "report.txt", "the report")
+	session := login(t, server, "/", "john", "doe")
+
+	// the listing names the server, and nothing of its login
+	listing := listingOf(t, server, session)
+	if !strings.Contains(listing, `<option value="Backup">Backup</option>`) {
+		t.Error("the listing does not offer the stored server")
+	}
+	if strings.Contains(listing, password) || strings.Contains(listing, remote.Fingerprint) {
+		t.Error("the listing shows the login of the stored server")
+	}
+
+	// the name alone, in whatever case, is enough to browse the server
+	res, data := transferRequest(t, server, http.MethodPost, "/report.txt?go-fs=send-browse", session,
+		sendBody{Server: "backup"})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("browsing the stored server answered %d: %s", res.StatusCode, data)
+	}
+	var home sendFolderJSON
+	if err := json.Unmarshal(data, &home); err != nil {
+		t.Fatal(err)
+	}
+	if home.Path != remotetest.Path(remote.Dir) || !strings.HasPrefix(home.Base, "sftp://") {
+		t.Errorf("the stored server starts in %q at %q", home.Path, home.Base)
+	}
+
+	// what the body says beside the name is not used: the login is the
+	// server's
+	folder := remotetest.Path(filepath.Join(remote.Dir, "inbox"))
+	job := startSend(t, server, "/report.txt", session,
+		sendBody{Server: "Backup", Host: "elsewhere.example", Username: "mallory", Password: "x", Path: folder})
+	ended := waitForFetch(t, server, "/", job.ID, session)
+	expectDone(t, ended)
+	stored, err := os.ReadFile(filepath.Join(remote.Dir, "inbox", "report.txt"))
+	if err != nil || string(stored) != "the report" {
+		t.Errorf("the host stored %q, %v", stored, err)
+	}
+	if strings.Contains(ended.What, password) || strings.Contains(ended.Message, password) {
+		t.Errorf("the job shows the password: %q, %q", ended.What, ended.Message)
+	}
+	record := server.logs.find("http send")
+	if record == nil {
+		t.Fatal("the send was not logged")
+	}
+	if logged, _ := json.Marshal(record); strings.Contains(string(logged), password) ||
+		!strings.Contains(string(logged), "Backup") {
+		t.Errorf("the log of the send is %s", logged)
+	}
+}
+
+func TestSendRefusesWhatAStoredServerIsNot(t *testing.T) {
+	remote := remotetest.NewSFTPHost(t, "alice", "secret")
+	moved := storedServer(remote, "Moved")
+	moved.HostKeyFingerprint = "SHA256:theOneBefore"
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Servers = []config.Server{storedServer(remote, "Backup"), moved}
+	})
+	server.write(t, "report.txt", "x")
+	session := login(t, server, "/", "john", "doe")
+
+	for _, tc := range []struct {
+		action string
+		body   sendBody
+	}{
+		{actionSendBrowse, sendBody{Server: "nobody"}},
+		// a stored server's key was accepted when it was stored
+		{actionSendHostKey, sendBody{Server: "Backup"}},
+		{actionSend, sendBody{Server: "Backup"}},
+		// a login typed in by a protocol go-fs does not know
+		{actionSendHostKey, sendBody{Protocol: "gopher", Host: remote.Host, Port: remote.Port}},
+	} {
+		res, data := transferRequest(t, server, http.MethodPost, "/report.txt?go-fs="+tc.action, session, tc.body)
+		if res.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s %+v answered %d: %s", tc.action, tc.body, res.StatusCode, data)
+		}
+	}
+
+	// a server that shows another key than the one stored is not logged in
+	// to, and the user is told who can change that
+	res, data := transferRequest(t, server, http.MethodPost, "/report.txt?go-fs=send-browse", session,
+		sendBody{Server: "Moved"})
+	if res.StatusCode != http.StatusBadGateway || !strings.Contains(string(data), "an administrator has to edit the server") {
+		t.Errorf("a changed key answered %d: %s", res.StatusCode, data)
+	}
+	if n := remote.Logins.Load(); n != 0 {
+		t.Errorf("%d logins were offered to a host with another key", n)
+	}
+
+	// the login typed in names its protocol, or none
+	res, data = transferRequest(t, server, http.MethodPost, "/report.txt?go-fs=send-hostkey", session,
+		sendBody{Protocol: config.ServerTypeSFTP, Host: remote.Host, Port: remote.Port})
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("a login typed in for sftp answered %d: %s", res.StatusCode, data)
+	}
+}
+
+func TestSendDialogFollowsTheStoredServers(t *testing.T) {
+	remote := remotetest.NewSFTPHost(t, "alice", "secret")
+	server := newServer(t, nil)
+	server.write(t, "report.txt", "x")
+	session := login(t, server, "/", "john", "doe")
+	listing := listingOf(t, server, session)
+	if !strings.Contains(listing, `<option value="" selected>Manual</option>`) || strings.Contains(listing, `<option value="Backup"`) {
+		t.Error("without stored servers, the dialog offers Manual alone")
+	}
+
+	set := server.settings()
+	if err := server.Reload(set.cfg, set.https, set.ssh, []config.User{fullUser("john", "doe")}, nil,
+		[]config.Server{storedServer(remote, "Backup")}); err != nil {
+		t.Fatal(err)
+	}
+	listing = listingOf(t, server, session)
+	if !strings.Contains(listing, `<option value="Backup">Backup</option>`) {
+		t.Error("a reload does not offer the server it adds")
+	}
+	res, data := transferRequest(t, server, http.MethodPost, "/report.txt?go-fs=send-browse", session,
+		sendBody{Server: "Backup"})
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("the server a reload added answered %d: %s", res.StatusCode, data)
 	}
 }

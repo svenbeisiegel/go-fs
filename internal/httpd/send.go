@@ -7,36 +7,39 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/pkg/sftp"
-	"golang.org/x/crypto/ssh"
 
 	"go-fs/internal/config"
+	"go-fs/internal/remote"
 	"go-fs/internal/vfs"
 )
 
-// The listing can send a file to another host over SFTP, the way it fetches
-// one from a URL: the dialog starts a job on the server, which uploads the
-// file while the page asks how far it has got, and the job is one of the
-// transfers the header follows, beside the fetches.
+// The listing can send a file to another host, the way it fetches one from a
+// URL: the dialog starts a job on the server, which uploads the file while the
+// page asks how far it has got, and the job is one of the transfers the header
+// follows, beside the fetches.
 //
-// Before the dialog sends a login anywhere, it asks for the key of the host
-// alone, which a handshake shows before any login is offered, and the user
-// accepts it; every request after that names the key that was accepted, and
-// a host that shows another is not logged in to. The page, not the server,
-// remembers which keys were accepted. With the key and the login the dialog
-// lists the folders of the remote, for the user to choose where the file
-// goes, and the send starts.
+// The host is either a server the admin interface stored, which the dialog
+// names and nothing more, or one the user types the login of in, Manual. A
+// stored server is logged in to with the login and the key the file holds;
+// its password and its key never reach the page.
+//
+// Before the dialog sends a login typed in anywhere, it asks for the key of
+// the host alone, which a handshake shows before any login is offered, and
+// the user accepts it; every request after that names the key that was
+// accepted, and a host that shows another is not logged in to. The page, not
+// the server, remembers which keys were accepted. With the key and the login
+// the dialog lists the folders of the remote, for the user to choose where the
+// file goes, and the send starts.
 //
 // The file is written under a hidden name beside where it goes and renamed
 // once all of it is there, so that a send that is stopped or fails never
@@ -70,23 +73,12 @@ func maySend(cred credential, virtual string) bool {
 }
 
 const (
-	// sendHandshakeTimeout bounds the connection and the handshake of a send,
-	// and of its questions, which a host that does not answer would hold.
-	sendHandshakeTimeout = 30 * time.Second
 	// sendGrace is how long a send that was stopped has to take its half
 	// written file away before its connection is cut.
 	sendGrace = 10 * time.Second
 	// maxSendEntries bounds what a listing of a remote folder shows.
 	maxSendEntries = 2000
-	// defaultSFTPPort is where a host is reached when no port is named.
-	defaultSFTPPort = 22
 )
-
-// errHostKeyShown ends the handshake that only asks for the key of a host.
-var errHostKeyShown = errors.New("host key shown")
-
-// errHostKeyChanged is a host that shows a key other than the one accepted.
-var errHostKeyChanged = errors.New("the host key is not the one that was accepted")
 
 // handleSend answers the send endpoints, on a file.
 func (s *Server) handleSend(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, cred credential, action string) {
@@ -114,7 +106,7 @@ func (s *Server) handleSend(set *settings, w http.ResponseWriter, r *http.Reques
 		http.Error(w, "The request could not be read.", http.StatusBadRequest)
 		return
 	}
-	req, err := body.request(action)
+	req, err := body.request(action, set.servers)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -129,9 +121,15 @@ func (s *Server) handleSend(set *settings, w http.ResponseWriter, r *http.Reques
 	}
 }
 
-// sendBody is the body of every send endpoint. The host key asks only for
-// the host and the port.
+// sendBody is the body of every send endpoint. A stored server is named by
+// Server alone; a login typed in names the rest, and the host key asks only
+// for the host and the port of one.
 type sendBody struct {
+	// Server is the name of a stored server, "" for the login typed in.
+	Server string `json:"server,omitempty"`
+	// Protocol is what the login typed in reaches the host with, SFTP when
+	// not named.
+	Protocol string `json:"protocol,omitempty"`
 	Host     string `json:"host"`
 	Port     int    `json:"port"`
 	Username string `json:"username"`
@@ -145,49 +143,41 @@ type sendBody struct {
 
 // sendRequest is a send that was read and found sound.
 type sendRequest struct {
-	host               string
-	port               int
-	username, password string
-	hostKey            string
-	path               string
+	remote.Login
+	path string
 }
 
-// request reads what a send endpoint asks for.
-func (b sendBody) request(action string) (sendRequest, error) {
-	host := strings.TrimSpace(b.Host)
-	// an address of IPv6 may come in the brackets of a URL
-	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-		host = host[1 : len(host)-1]
+// request reads what a send endpoint asks for. servers are the stored ones a
+// body may name.
+func (b sendBody) request(action string, servers []config.Server) (sendRequest, error) {
+	var req sendRequest
+	if name := strings.TrimSpace(b.Server); name != "" {
+		if action == actionSendHostKey {
+			return sendRequest{}, errors.New("the key of a stored server was accepted when it was stored")
+		}
+		server, ok := config.FindServer(servers, name)
+		if !ok {
+			return sendRequest{}, fmt.Errorf("there is no server named %q", name)
+		}
+		login, err := remote.FromServer(server).Checked(false)
+		if err != nil {
+			return sendRequest{}, fmt.Errorf("the server %s: %w", server.Name, err)
+		}
+		req.Login = login
+	} else {
+		login, err := remote.Login{Type: strings.TrimSpace(b.Protocol), Host: b.Host, Port: b.Port,
+			Username: b.Username, Password: b.Password, HostKey: b.HostKey}.Checked(action == actionSendHostKey)
+		if err != nil {
+			return sendRequest{}, err
+		}
+		req.Login = login
 	}
-	switch {
-	case host == "":
-		return sendRequest{}, errors.New("name the host to send to")
-	case strings.Contains(host, "://"):
-		return sendRequest{}, errors.New("name the host alone, without a scheme")
-	case strings.Contains(host, "@"):
-		return sendRequest{}, errors.New("put the username into its own field rather than the host")
-	case strings.ContainsAny(host, "/ \t\r\n"):
-		return sendRequest{}, fmt.Errorf("%q is not a host name", host)
+	// only SFTP sends so far; another protocol is reached from here
+	if req.Type != config.ServerTypeSFTP {
+		return sendRequest{}, fmt.Errorf("go-fs cannot send by %s yet", req.Type)
 	}
-	port := b.Port
-	if port == 0 {
-		port = defaultSFTPPort
-	}
-	if port < 1 || port > 65535 {
-		return sendRequest{}, fmt.Errorf("%d is not a port", b.Port)
-	}
-	req := sendRequest{host: host, port: port}
 	if action == actionSendHostKey {
 		return req, nil
-	}
-	req.username = strings.TrimSpace(b.Username)
-	if req.username == "" {
-		return sendRequest{}, errors.New("name the user to log in as")
-	}
-	req.password = b.Password
-	req.hostKey = strings.TrimSpace(b.HostKey)
-	if !strings.HasPrefix(req.hostKey, "SHA256:") {
-		return sendRequest{}, errors.New("accept the key of the host first")
 	}
 	if p := strings.TrimSpace(b.Path); p != "" {
 		req.path = path.Clean(p)
@@ -198,103 +188,14 @@ func (b sendBody) request(action string) (sendRequest, error) {
 	return req, nil
 }
 
-// address is where the host is dialled.
-func (r sendRequest) address() string {
-	return net.JoinHostPort(r.host, strconv.Itoa(r.port))
-}
-
-// shown is the host as the page and the log show it, without the port it
-// has when none is named.
-func (r sendRequest) shown() string {
-	if r.port == defaultSFTPPort {
-		if strings.Contains(r.host, ":") {
-			return "[" + r.host + "]"
-		}
-		return r.host
+// logged is a path of the host as the log and the job show it: with the user
+// that logs in, and the stored server that login is, if any.
+func (r sendRequest) logged(p string) string {
+	shown := r.Type + "://" + r.Username + "@" + r.Shown() + p
+	if r.Server != "" {
+		shown += " (server " + r.Server + ")"
 	}
-	return r.address()
-}
-
-// where is a remote path as the page shows it.
-func (r sendRequest) where(p string) string {
-	return "sftp://" + r.shown() + p
-}
-
-// sshConnect dials a host and runs the handshake, within
-// sendHandshakeTimeout. The connection is cut as soon as ctx ends, which is
-// what stops whatever waits on it.
-func sshConnect(ctx context.Context, address string, config *ssh.ClientConfig) (*ssh.Client, error) {
-	dialCtx, cancel := context.WithTimeout(ctx, sendHandshakeTimeout)
-	defer cancel()
-	var dialer net.Dialer
-	conn, err := dialer.DialContext(dialCtx, "tcp", address)
-	if err != nil {
-		return nil, err
-	}
-	context.AfterFunc(ctx, func() { _ = conn.Close() })
-	_ = conn.SetDeadline(time.Now().Add(sendHandshakeTimeout))
-	c, chans, reqs, err := ssh.NewClientConn(conn, address, config)
-	if err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-	_ = conn.SetDeadline(time.Time{})
-	return ssh.NewClient(c, chans, reqs), nil
-}
-
-// openSFTP logs in to the host of a send, provided it shows the key that
-// was accepted, and opens its SFTP, with the algorithms [general.ssh]
-// allows. The connection lives as long as ctx.
-func openSFTP(ctx context.Context, req sendRequest, sshCfg config.SSH) (*ssh.Client, *sftp.Client, error) {
-	password := req.password
-	login := &ssh.ClientConfig{
-		Config:            sshCfg.ClientTransport(),
-		HostKeyAlgorithms: sshCfg.HostKeys(),
-		User:              req.username,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(password),
-			// what many hosts ask a password by instead
-			ssh.KeyboardInteractive(func(_, _ string, questions []string, _ []bool) ([]string, error) {
-				answers := make([]string, len(questions))
-				for i := range answers {
-					answers[i] = password
-				}
-				return answers, nil
-			}),
-		},
-		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
-			if ssh.FingerprintSHA256(key) != req.hostKey {
-				return errHostKeyChanged
-			}
-			return nil
-		},
-	}
-	conn, err := sshConnect(ctx, req.address(), login)
-	if err != nil {
-		return nil, nil, sendFailure(req, err)
-	}
-	client, err := sftp.NewClient(conn)
-	if err != nil {
-		_ = conn.Close()
-		return nil, nil, fmt.Errorf("%s offers no SFTP: %w", req.shown(), err)
-	}
-	return conn, client, nil
-}
-
-// sendFailure says why a host could not be reached or logged in to, in the
-// words the page shows.
-func sendFailure(req sendRequest, err error) error {
-	var negotiation *ssh.AlgorithmNegotiationError
-	switch {
-	case errors.As(err, &negotiation):
-		return fmt.Errorf("%s offers no %s that general.ssh allows; it offers %s",
-			req.shown(), negotiation.What, strings.Join(negotiation.RequestedAlgorithms, ", "))
-	case errors.Is(err, errHostKeyChanged):
-		return fmt.Errorf("the key of %s is not the one that was accepted; connect again to see the one it shows now", req.shown())
-	case strings.Contains(err.Error(), "unable to authenticate"):
-		return fmt.Errorf("%s refused the login of %s", req.shown(), req.username)
-	}
-	return fmt.Errorf("%s: %w", req.shown(), err)
+	return shown
 }
 
 // sendHostKeyJSON is the key a host shows.
@@ -309,35 +210,18 @@ type sendHostKeyJSON struct {
 func (s *Server) sendHostKey(w http.ResponseWriter, r *http.Request, req sendRequest) {
 	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
 	defer cancel()
-	var seen ssh.PublicKey
-	// the same algorithms as the login that follows, so that the key shown
-	// is the kind the login will be shown too
-	sshCfg := s.settings().ssh
-	conn, err := sshConnect(ctx, req.address(), &ssh.ClientConfig{
-		Config:            sshCfg.ClientTransport(),
-		HostKeyAlgorithms: sshCfg.HostKeys(),
-		User:              "go-fs",
-		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
-			seen = key
-			return errHostKeyShown
-		},
-	})
-	if conn != nil {
-		_ = conn.Close()
-	}
-	if seen == nil {
-		if err == nil {
-			err = errors.New("no host key was shown")
-		}
-		http.Error(w, sendFailure(req, err).Error(), http.StatusBadGateway)
+	keyType, fingerprint, err := remote.HostKey(ctx, req.Login, s.settings().ssh)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	writeJSON(w, http.StatusOK, sendHostKeyJSON{Host: req.shown(), KeyType: seen.Type(),
-		Fingerprint: ssh.FingerprintSHA256(seen)})
+	writeJSON(w, http.StatusOK, sendHostKeyJSON{Host: req.Shown(), KeyType: keyType, Fingerprint: fingerprint})
 }
 
 // sendFolderJSON is a folder of the remote.
 type sendFolderJSON struct {
+	// Base is the host as the page names a path of it, sftp://host.
+	Base string `json:"base"`
 	Path string `json:"path"`
 	// Parent is the folder above, "" at the top.
 	Parent  string          `json:"parent,omitempty"`
@@ -356,7 +240,7 @@ type sendEntryJSON struct {
 func (s *Server) sendBrowse(w http.ResponseWriter, r *http.Request, req sendRequest) {
 	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
 	defer cancel()
-	conn, client, err := openSFTP(ctx, req, s.settings().ssh)
+	conn, client, err := remote.OpenSFTP(ctx, req.Login, s.settings().ssh)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -379,7 +263,7 @@ func (s *Server) sendBrowse(w http.ResponseWriter, r *http.Request, req sendRequ
 		http.Error(w, remoteFolderFailure(req, folder, err).Error(), http.StatusBadGateway)
 		return
 	}
-	view := sendFolderJSON{Path: folder, Entries: []sendEntryJSON{}}
+	view := sendFolderJSON{Base: req.Where(""), Path: folder, Entries: []sendEntryJSON{}}
 	if folder != "/" {
 		view.Parent = path.Dir(folder)
 	}
@@ -423,20 +307,20 @@ func (s *Server) sendBrowse(w http.ResponseWriter, r *http.Request, req sendRequ
 func remoteFolderFailure(req sendRequest, folder string, err error) error {
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return fmt.Errorf("there is no folder %s on %s", folder, req.shown())
+		return fmt.Errorf("there is no folder %s on %s", folder, req.Shown())
 	case errors.Is(err, fs.ErrPermission):
-		return fmt.Errorf("%s may not read %s on %s", req.username, folder, req.shown())
+		return fmt.Errorf("%s may not read %s on %s", req.Username, folder, req.Shown())
 	}
-	return fmt.Errorf("%s on %s: %w", folder, req.shown(), err)
+	return fmt.Errorf("%s on %s: %w", folder, req.Shown(), err)
 }
 
 // sendStart starts sending a file.
 func (s *Server) sendStart(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account, req sendRequest) {
 	address := clientAddress(set, r)
 	name := filepath.Base(target.Path)
-	shown := "sftp://" + req.username + "@" + req.shown() + req.path
+	shown := req.logged(req.path)
 	job, err := s.startJob(jobSend, user.name, target.Virtual+" → "+shown, func(ctx context.Context, job *registryJob) (string, error) {
-		job.named(name, req.where(req.path))
+		job.named(name, req.Where(req.path))
 		message, err := s.sendFile(ctx, job, req, target, user, address)
 		if err != nil && ctx.Err() == nil {
 			s.log.Warn("http send failed", "file", target.Virtual, "to", shown, "user", user.name,
@@ -489,7 +373,7 @@ func (s *Server) sendFile(ctx context.Context, job *registryJob, req sendRequest
 	})
 	defer stop()
 
-	conn, client, err := openSFTP(connCtx, req, s.settings().ssh)
+	conn, client, err := remote.OpenSFTP(connCtx, req.Login, s.settings().ssh)
 	if err != nil {
 		return "", err
 	}
@@ -500,24 +384,24 @@ func (s *Server) sendFile(ctx context.Context, job *registryJob, req sendRequest
 	if st, err := client.Stat(folder); err != nil {
 		return "", remoteFolderFailure(req, folder, err)
 	} else if !st.IsDir() {
-		return "", fmt.Errorf("%s on %s is not a folder", folder, req.shown())
+		return "", fmt.Errorf("%s on %s is not a folder", folder, req.Shown())
 	}
 	final := path.Join(folder, name)
 	replaced := false
 	if st, err := client.Stat(final); err == nil {
 		if st.IsDir() {
-			return "", fmt.Errorf("%s is a folder on %s", final, req.shown())
+			return "", fmt.Errorf("%s is a folder on %s", final, req.Shown())
 		}
 		replaced = true
 	}
 	part := path.Join(folder, "."+name+".go-fs-"+job.id[:8]+".part")
 	writing.Store(true)
-	remote, err := client.OpenFile(part, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	out, err := client.OpenFile(part, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 	if err != nil {
 		if errors.Is(err, fs.ErrPermission) {
-			return "", fmt.Errorf("%s may not write into %s on %s", req.username, folder, req.shown())
+			return "", fmt.Errorf("%s may not write into %s on %s", req.Username, folder, req.Shown())
 		}
-		return "", fmt.Errorf("%s on %s: %w", folder, req.shown(), err)
+		return "", fmt.Errorf("%s on %s: %w", folder, req.Shown(), err)
 	}
 	stored := false
 	defer func() {
@@ -528,9 +412,9 @@ func (s *Server) sendFile(ctx context.Context, job *registryJob, req sendRequest
 
 	job.downloading()
 	reader := watch(stoppable{r: file, ctx: sendCtx}, job, cancel)
-	written, err := remote.ReadFromWithConcurrency(reader, 0)
+	written, err := out.ReadFromWithConcurrency(reader, 0)
 	reader.done()
-	if closeErr := remote.Close(); err == nil {
+	if closeErr := out.Close(); err == nil {
 		err = closeErr
 	}
 	if err == nil && written != info.Size() {
@@ -538,18 +422,18 @@ func (s *Server) sendFile(ctx context.Context, job *registryJob, req sendRequest
 	}
 	if err != nil {
 		if errors.Is(context.Cause(sendCtx), errStalled) {
-			return "", fmt.Errorf("%s to %s: %w", name, req.shown(), errStalled)
+			return "", fmt.Errorf("%s to %s: %w", name, req.Shown(), errStalled)
 		}
-		return "", fmt.Errorf("%s to %s: %w", name, req.shown(), err)
+		return "", fmt.Errorf("%s to %s: %w", name, req.Shown(), err)
 	}
 	if err := renameRemote(client, part, final); err != nil {
-		return "", fmt.Errorf("%s cannot be put in place on %s: %w", final, req.shown(), err)
+		return "", fmt.Errorf("%s cannot be put in place on %s: %w", final, req.Shown(), err)
 	}
 	stored = true
 	s.log.Info("http send", "user", user.name, "file", target.Virtual,
-		"to", "sftp://"+req.username+"@"+req.shown()+final, "bytes", written, "replaced", replaced,
+		"to", req.logged(final), "bytes", written, "replaced", replaced,
 		"address", address, "took", time.Since(started).Round(time.Millisecond))
-	return fmt.Sprintf("Sent %s (%s) to %s.", name, readableSize(written), req.where(final)), nil
+	return fmt.Sprintf("Sent %s (%s) to %s.", name, readableSize(written), req.Where(final)), nil
 }
 
 // renameRemote puts a file that was written in place, replacing whatever is

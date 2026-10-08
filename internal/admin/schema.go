@@ -50,7 +50,9 @@ type Table struct {
 	Fields []Field `json:"fields"`
 	// Create is what a new record is made from, empty for a record that
 	// starts blank. "token" makes the page ask the server for a new bearer
-	// token, which it shows once and keeps only the hash of.
+	// token, which it shows once and keeps only the hash of. "server" makes
+	// it open the dialog that logs in to a remote server before storing it,
+	// and edits one the same way.
 	Create string `json:"create,omitempty"`
 
 	// index locates the slice in its section, as it does for a field.
@@ -78,7 +80,8 @@ type Field struct {
 	// their shape.
 	Summary bool `json:"summary,omitempty"`
 	// ReadOnly is a value the page shows and sends back but does not let
-	// anyone type into, because it is made by the server: a token's hash.
+	// anyone type into, because it is made by the server, a token's hash, or
+	// changed in a dialog of its own, the login of a remote server.
 	ReadOnly bool `json:"readOnly,omitempty"`
 
 	// index locates the field in its struct, so that reading and writing a
@@ -233,6 +236,12 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 	if isToken {
 		table.Create = config.KindToken
 	}
+	// nor is a server: the page edits one in a dialog of its own, which logs
+	// in to it before the server stores it, so only the name is typed in here
+	isServer := element == reflect.TypeOf(config.Server{})
+	if isServer {
+		table.Create = KindServer
+	}
 	hasText := false
 	for i := range element.NumField() {
 		inner := element.Field(i)
@@ -258,6 +267,9 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 				// a folded token says until when it works
 				field.Summary = true
 			}
+		}
+		if isServer && inner.Name != "Name" {
+			field.ReadOnly = true
 		}
 		if kind == kindText {
 			hasText = true

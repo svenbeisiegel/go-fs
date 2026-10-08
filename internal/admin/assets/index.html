@@ -35,6 +35,39 @@
 <nav id="tabs" class="tabs" role="tablist"></nav>
 <main id="panels"></main>
 
+<dialog id="server-dialog" aria-labelledby="server-title">
+  <form method="dialog">
+    <h2 id="server-title">Add server</h2>
+    <p class="intro">go-fs logs in to the server before it stores it, and stores it only once that worked.
+      The server is written to the file at once; nothing else on this page is.</p>
+    <div class="dialog-fields">
+      <label for="server-name">name</label>
+      <input id="server-name" name="name" type="text" required spellcheck="false" autocomplete="off" placeholder="how Send File lists it">
+      <label for="server-type">protocol</label>
+      <select id="server-type" name="type"></select>
+      <label for="server-host">host</label>
+      <input id="server-host" name="host" type="text" required spellcheck="false" autocomplete="off" placeholder="sftp.example.com">
+      <label for="server-port">port</label>
+      <input id="server-port" name="port" type="number" required min="1" max="65535">
+      <label for="server-username">username</label>
+      <input id="server-username" name="username" type="text" required spellcheck="false" autocomplete="off">
+      <label for="server-password">password</label>
+      <input id="server-password" name="password" type="password" autocomplete="new-password">
+    </div>
+    <div class="hostkey" hidden>
+      <p class="note"></p>
+      <p>The host shows this key. Accept it only if it is the one you expect of <span class="host"></span>:</p>
+      <p class="fingerprint"><span class="type"></span><code></code></p>
+    </div>
+    <p class="progress" role="status" aria-live="polite" hidden></p>
+    <div class="row">
+      <button class="primary" type="submit" value="connect">Connect</button>
+      <button class="primary" type="submit" value="save" hidden>Accept key and save</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <footer id="footer" hidden>
   <span id="status" class="status"></span>
   <button id="apply" type="button">Apply</button>

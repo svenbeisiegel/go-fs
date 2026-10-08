@@ -125,3 +125,63 @@ func TestAFileIsSentToAnSFTPServer(t *testing.T) {
 		t.Errorf("the folder holds %s", strings.Join(names, ", "))
 	}
 }
+
+// TestAFileIsSentToAStoredServer stores the SFTP server of the cluster as a
+// server, the way the admin interface does once it has logged in to it, and
+// sends a file there by its name alone.
+func TestAFileIsSentToAStoredServer(t *testing.T) {
+	c := newCluster(t, []config.User{account("alice", "pw", allRights...)}, nil)
+	c.write(t, share+"/report.txt", []byte("the report"))
+	c.mkdir(t, share+"/inbox")
+	web, err := loginHTTPSession(t, c, "alice", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, port, _ := net.SplitHostPort(c.sftp.Addr().String())
+	portNumber, _ := strconv.Atoi(port)
+	file := share + "/report.txt"
+
+	var key struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	if status := web.ask(t, http.MethodPost, file+"?go-fs=send-hostkey",
+		map[string]any{"host": host, "port": portNumber}, &key); status != http.StatusOK {
+		t.Fatalf("the host key answered %d", status)
+	}
+	c.cfg.Servers = []config.Server{{Name: "Cluster", Type: config.ServerTypeSFTP, Host: host, Port: portNumber,
+		Username: "alice", Password: "pw", HostKeyFingerprint: key.Fingerprint}}
+	c.reload(t, c.cfg.Users)
+
+	send := map[string]any{"server": "Cluster", "path": share + "/inbox"}
+	var folder struct {
+		Path string `json:"path"`
+	}
+	if status := web.ask(t, http.MethodPost, file+"?go-fs=send-browse", send, &folder); status != http.StatusOK {
+		t.Fatalf("the folder answered %d", status)
+	}
+	if folder.Path != share+"/inbox" {
+		t.Errorf("the folder is %+v", folder)
+	}
+	var job struct {
+		ID      string `json:"id"`
+		State   string `json:"state"`
+		Message string `json:"message"`
+	}
+	if status := web.ask(t, http.MethodPost, file+"?go-fs=send", send, &job); status != http.StatusAccepted {
+		t.Fatalf("the send answered %d", status)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for job.State == "" || job.State == "running" {
+		if time.Now().After(deadline) {
+			t.Fatalf("the send is still running: %+v", job)
+		}
+		time.Sleep(20 * time.Millisecond)
+		web.ask(t, http.MethodGet, "/?go-fs=fetch-job&id="+job.ID, nil, &job)
+	}
+	if job.State != "done" {
+		t.Fatalf("the send ended %s: %s", job.State, job.Message)
+	}
+	if got := string(c.read(t, share+"/inbox/report.txt")); got != "the report" {
+		t.Errorf("the SFTP server holds %q", got)
+	}
+}

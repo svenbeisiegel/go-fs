@@ -725,6 +725,63 @@ func TestTokens(t *testing.T) {
 	}
 }
 
+func TestServers(t *testing.T) {
+	valid := Server{Name: "backup", Type: ServerTypeSFTP, Host: "sftp.example.com", Port: 2222,
+		Username: "alice", Password: "secret", HostKeyFingerprint: "SHA256:abc"}
+	check := func(servers ...Server) error {
+		cfg := Default()
+		cfg.FTP.Basefolder = t.TempDir()
+		cfg.TFTP.Basefolder = cfg.FTP.Basefolder
+		cfg.Servers = servers
+		return cfg.Validate()
+	}
+	if err := check(valid); err != nil {
+		t.Errorf("a valid server was refused: %v", err)
+	}
+	v6 := valid
+	v6.Host, v6.Port = "2001:db8::1", 0
+	if err := check(v6); err != nil {
+		t.Errorf("an IPv6 server on the default port was refused: %v", err)
+	}
+	for name, change := range map[string]func(*Server){
+		"no name":            func(s *Server) { s.Name = "" },
+		"a name with spaces": func(s *Server) { s.Name = " backup" },
+		"the name Manual":    func(s *Server) { s.Name = "manual" },
+		"no type":            func(s *Server) { s.Type = "" },
+		"an unknown type":    func(s *Server) { s.Type = "gopher" },
+		"no host":            func(s *Server) { s.Host = "" },
+		"a URL for a host":   func(s *Server) { s.Host = "sftp://sftp.example.com" },
+		"a login in a host":  func(s *Server) { s.Host = "alice@sftp.example.com" },
+		"a host in brackets": func(s *Server) { s.Host = "[2001:db8::1]" },
+		"a port out of range": func(s *Server) {
+			s.Port = 70000
+		},
+		"no username":    func(s *Server) { s.Username = "" },
+		"no fingerprint": func(s *Server) { s.HostKeyFingerprint = "" },
+	} {
+		server := valid
+		change(&server)
+		if err := check(server); err == nil {
+			t.Errorf("a server with %s was accepted", name)
+		}
+	}
+	other := valid
+	other.Name = "BACKUP"
+	if err := check(valid, other); err == nil {
+		t.Error("two servers of one name, in another case, were accepted")
+	}
+
+	if got, ok := FindServer([]Server{valid}, "Backup"); !ok || got != valid {
+		t.Errorf("FindServer found %+v, %v", got, ok)
+	}
+	if _, ok := FindServer([]Server{valid}, "other"); ok {
+		t.Error("FindServer found a server that is not there")
+	}
+	if host, err := RemoteHost(" [::1] "); err != nil || host != "::1" {
+		t.Errorf("RemoteHost read %q, %v", host, err)
+	}
+}
+
 // go-fs.example.toml in the repository root is the same file the binary embeds
 // and -init writes, which is what the README says it is. Nothing copies one to
 // the other, so this is what stops them drifting apart — an example that still

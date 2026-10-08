@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"go-fs/internal/config"
 )
 
 // entry is one line of a directory listing.
@@ -247,9 +249,27 @@ type rights struct {
 	// Share is Share on a file, which hands out a link that downloads it
 	// without an account; it is offered to anyone signed in.
 	Share bool
-	// Send is Send via SFTP on a file, which uploads it to another host. It
-	// is offered to a session that may read the files here; see maySend.
+	// Send is Send File on a file, which uploads it to another host. It is
+	// offered to a session that may read the files here; see maySend.
 	Send bool
+}
+
+// sendView is what the Send File dialog offers: the stored servers, by name
+// alone, and the protocols a login typed in may use.
+type sendView struct {
+	Servers   []string
+	Protocols []config.ServerType
+	// Manual is the name of the login typed in, the first choice.
+	Manual string
+}
+
+// sendViewOf is the dialog for the stored servers.
+func sendViewOf(servers []config.Server) sendView {
+	view := sendView{Protocols: config.ServerTypes, Manual: config.ManualServer}
+	for _, server := range servers {
+		view.Servers = append(view.Servers, server.Name)
+	}
+	return view
 }
 
 type crumb struct {
@@ -335,6 +355,8 @@ type listingData struct {
 	Sort    string
 	Dir     string
 	Rights  rights
+	// Send is the Send File dialog, when Rights.Send offers it.
+	Send    sendView
 	Session sessionView
 	Nonce   string
 	Style   template.CSS
@@ -346,7 +368,7 @@ type listingData struct {
 }
 
 // listingPage renders the browsable directory page.
-func listingPage(virtual string, entries []entry, order sortOrder, allowed rights, who sessionView, nonce string, maxChunkSize int64) ([]byte, error) {
+func listingPage(virtual string, entries []entry, order sortOrder, allowed rights, send sendView, who sessionView, nonce string, maxChunkSize int64) ([]byte, error) {
 	who.Page = "Files"
 	rows := make([]listingRow, 0, len(entries))
 	for _, item := range sortEntries(entries, order) {
@@ -382,6 +404,7 @@ func listingPage(virtual string, entries []entry, order sortOrder, allowed right
 		Sort:    order.key,
 		Dir:     order.direction(),
 		Rights:  allowed,
+		Send:    send,
 		Nonce:   nonce,
 		Style:   listingStyle,
 		Script:  listingScript,

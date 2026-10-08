@@ -21,7 +21,7 @@ func TestSchemaCoversTheWholeFile(t *testing.T) {
 	for _, section := range schema.Sections {
 		sections[section.Key] = section
 	}
-	for _, name := range []string{"general", "users", "tokens", "ftp", "ftps", "sftp", "http", "https", "tftp"} {
+	for _, name := range []string{"general", "users", "tokens", "ftp", "ftps", "sftp", "http", "https", "tftp", "servers"} {
 		if _, ok := sections[name]; !ok {
 			t.Errorf("the schema has no %s section", name)
 		}
@@ -31,7 +31,7 @@ func TestSchemaCoversTheWholeFile(t *testing.T) {
 			len(sections), reflect.TypeOf(config.Config{}).NumField())
 	}
 
-	tables := map[string]int{"ftp": 0, "sftp": 0, "http": 1, "general": 0, "users": 1, "tokens": 1}
+	tables := map[string]int{"ftp": 0, "sftp": 0, "http": 1, "general": 0, "users": 1, "tokens": 1, "servers": 1}
 	for name, want := range tables {
 		if got := len(sections[name].Tables); got != want {
 			t.Errorf("%s has %d repeated tables, want %d", name, got, want)
@@ -40,7 +40,7 @@ func TestSchemaCoversTheWholeFile(t *testing.T) {
 
 	// the accounts and the tokens are lists at the top of the file, and their
 	// tabs sit where the file has them: between general and the first server
-	for _, name := range []string{"users", "tokens"} {
+	for _, name := range []string{"users", "tokens", "servers"} {
 		if !sections[name].Direct {
 			t.Errorf("%s is not a direct section", name)
 		}
@@ -253,7 +253,7 @@ func TestTokenTable(t *testing.T) {
 			table = section.Tables[0]
 		}
 		for _, other := range section.Tables {
-			if other.Create != "" && section.Key != "tokens" {
+			if other.Create != "" && section.Key != "tokens" && section.Key != "servers" {
 				t.Errorf("%s.%s is created by the server", section.Key, other.Key)
 			}
 		}
@@ -269,6 +269,40 @@ func TestTokenTable(t *testing.T) {
 		if field.Summary != wantSummary {
 			t.Errorf("tokens.%s summary is %v, want %v", field.Key, field.Summary, wantSummary)
 		}
+	}
+}
+
+// A remote server is added and edited in a dialog that logs in to it first, so
+// the list has no blank record to add, and only the name is typed into it. A
+// folded server is named by its name.
+func TestServerTable(t *testing.T) {
+	schema, _ := build()
+	var table Table
+	for _, section := range schema.Sections {
+		if section.Key == "servers" {
+			table = section.Tables[0]
+		}
+	}
+	if table.Create != KindServer {
+		t.Errorf("servers are created as %q, want %q", table.Create, KindServer)
+	}
+	kinds := map[string]string{}
+	for _, field := range table.Fields {
+		kinds[field.Key] = field.Kind
+		if field.ReadOnly != (field.Key != "name") {
+			t.Errorf("servers.%s read-only is %v", field.Key, field.ReadOnly)
+		}
+		if field.Summary != (field.Key == "name") {
+			t.Errorf("servers.%s summary is %v", field.Key, field.Summary)
+		}
+		if field.Upload != "" {
+			t.Errorf("servers.%s offers %s material", field.Key, field.Upload)
+		}
+	}
+	want := map[string]string{"name": kindText, "type": kindText, "host": kindText, "port": kindInt,
+		"username": kindText, "password": kindSecret, "hostKeyFingerprint": kindText}
+	if !reflect.DeepEqual(kinds, want) {
+		t.Errorf("the server fields are %v, want %v", kinds, want)
 	}
 }
 

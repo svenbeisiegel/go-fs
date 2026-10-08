@@ -29,6 +29,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sync"
+
+	"go-fs/internal/config"
 )
 
 //go:embed assets
@@ -36,18 +39,22 @@ var assets embed.FS
 
 // The interface lives under the file server's go-fs query marker, the way its
 // login and logout do, so that no name in the served folder is shadowed: the
-// page is /?go-fs=admin, and its three endpoints are the other values.
+// page is /?go-fs=admin, and its endpoints are the other values.
 const (
 	ActionPage     = "admin"
 	ActionConfig   = "admin-config"
 	ActionUpload   = "admin-upload"
 	ActionGenerate = "admin-generate"
+	// ActionServerHostKey and ActionServerSave are the dialog that adds and
+	// edits a remote server; see servers.go.
+	ActionServerHostKey = "admin-server-hostkey"
+	ActionServerSave    = "admin-server-save"
 )
 
 // IsAction reports whether a marker value is one of this interface's.
 func IsAction(value string) bool {
 	switch value {
-	case ActionPage, ActionConfig, ActionUpload, ActionGenerate:
+	case ActionPage, ActionConfig, ActionUpload, ActionGenerate, ActionServerHostKey, ActionServerSave:
 		return true
 	}
 	return false
@@ -65,6 +72,9 @@ type Handler struct {
 	path   string
 	schema Schema
 	log    *slog.Logger
+	// saving is held while a server is stored, which reads the file, logs in
+	// and writes the file again.
+	saving sync.Mutex
 }
 
 // New prepares the interface. path is the configuration file it edits.
@@ -96,6 +106,8 @@ type state struct {
 	// Summaries describes the values that hold key material, keyed
 	// "ftps.cert", so the page shows what a base64 blob actually is.
 	Summaries map[string]string `json:"summaries,omitempty"`
+	// Protocols are what the dialog of a remote server offers.
+	Protocols []config.ServerType `json:"protocols"`
 }
 
 // ServeHTTP dispatches on the marker. The caller has already decided that the
@@ -121,6 +133,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleUpload(w, r)
 	case action == ActionGenerate && post:
 		h.handleGenerate(w, r)
+	case action == ActionServerHostKey && post:
+		h.handleServerHostKey(w, r)
+	case action == ActionServerSave && post:
+		h.handleServerSave(w, r)
 	default:
 		switch action {
 		case ActionPage:
@@ -260,6 +276,7 @@ func (h *Handler) handleState(w http.ResponseWriter) {
 		Path:      h.path,
 		Reload:    cfg.General.ReloadConfig,
 		Summaries: h.schema.Summaries(values),
+		Protocols: config.ServerTypes,
 	}
 	if err := h.writable(); err != nil {
 		body.WriteError = err.Error()

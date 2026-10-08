@@ -26,6 +26,12 @@ const openRecords = new WeakSet();
 // shown only here and only until the file is read again: the record, and so
 // the file, holds nothing but its hash
 const newTokens = new WeakMap();
+// the name each remote server has in the file, keyed by its record: the name
+// can be changed on the page before Apply, and the dialog that edits the
+// server has to tell the server which entry of the file it was
+const storedServers = new WeakMap();
+// the protocols a remote server may be reached with
+let protocols = [];
 // what the update endpoint says about the running binary, or null where it
 // does not answer this session: switched off, or not an admin. It is the one
 // tab the schema does not describe, since it edits no key of the file
@@ -60,6 +66,12 @@ async function load() {
   schema = state.schema;
   values = state.values;
   summaries = state.summaries || {};
+  protocols = state.protocols || [];
+  schema.sections.forEach((section) => {
+    if (section.direct && section.tables[0].create === "server") {
+      (values[section.key] || []).forEach((record) => storedServers.set(record, record.name));
+    }
+  });
 
   document.getElementById("path").textContent = state.path;
   if (!state.writable) {
@@ -470,6 +482,21 @@ function tableBlock(holder, key, table, heading) {
       const title = span(describe(table, record), "title");
       summary.append(title);
 
+      if (table.create === "server") {
+        // the login of a server is changed in the dialog, which logs in
+        // with it before storing it
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.className = "plain edit";
+        edit.textContent = "Edit…";
+        edit.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          serverDialog.open(table, record, () => draw());
+        });
+        summary.append(edit);
+      }
+
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "plain remove";
@@ -512,6 +539,15 @@ function tableBlock(holder, key, table, heading) {
       append(record);
       list.lastElementChild.scrollIntoView({ block: "nearest" });
     }));
+    return block;
+  }
+
+  if (table.create === "server") {
+    block.append(plainButton("Add server…", () =>
+      serverDialog.open(table, null, (record) => {
+        append(record);
+        list.lastElementChild.scrollIntoView({ block: "nearest" });
+      })));
     return block;
   }
 
@@ -598,6 +634,211 @@ function tokenCreator(table, done) {
   form.append(row, problem);
   return form;
 }
+
+// serverDialog adds and edits a remote server. It asks the server for the key
+// the host shows, the admin accepts it, and the server logs in with the login
+// and that key before it writes the entry into the file, at once and with
+// nothing else of the page. The record on the page is then what the file
+// holds.
+const serverDialog = (() => {
+  const dialog = document.getElementById("server-dialog");
+  const form = dialog.querySelector("form");
+  const title = dialog.querySelector("#server-title");
+  const keyBox = dialog.querySelector(".hostkey");
+  const note = keyBox.querySelector(".note");
+  const keyHost = keyBox.querySelector(".host");
+  const keyType = keyBox.querySelector(".fingerprint .type");
+  const keyPrint = keyBox.querySelector(".fingerprint code");
+  const progress = dialog.querySelector(".progress");
+  const connect = form.querySelector("button[value='connect']");
+  const save = form.querySelector("button[value='save']");
+  const field = (name) => form.elements[name];
+
+  // record is the server edited, null for a new one; done is told the
+  // record once it is stored; key is the fingerprint the host showed
+  let record = null;
+  let done = null;
+  let key = "";
+  let step = "connect";
+  // asked counts the questions put to the server, so that the answer to one
+  // that was overtaken is dropped
+  let asked = 0;
+
+  const protocol = () => protocols.find((p) => p.id === field("type").value) || null;
+
+  function tell(text, bad) {
+    progress.textContent = text;
+    progress.classList.toggle("bad", bad === true);
+    progress.hidden = text === "";
+  }
+
+  function show(next) {
+    step = next;
+    keyBox.hidden = next !== "hostkey";
+    connect.hidden = next !== "connect";
+    save.hidden = next !== "hostkey";
+  }
+
+  function working(on) {
+    Array.from(form.elements).forEach((element) => {
+      if (element.value !== "cancel") element.disabled = on;
+    });
+  }
+
+  // what the dialog knows of the host is forgotten once the login changes
+  function forget() {
+    asked++;
+    key = "";
+    tell("");
+    show("connect");
+  }
+
+  function login() {
+    return {
+      name: field("name").value.trim(),
+      type: field("type").value,
+      host: field("host").value.trim(),
+      port: Number(field("port").value) || 0,
+      username: field("username").value.trim(),
+      password: field("password").value,
+    };
+  }
+
+  // a host the key of which is accepted as stored is the one the record has
+  function sameHost() {
+    const now = login();
+    const port = (p) => Number(p) || (protocol() ? protocol().defaultPort : 0);
+    return record !== null && now.type === record.type && now.host === record.host &&
+      port(now.port) === port(record.port);
+  }
+
+  async function connectHost() {
+    const ticket = ++asked;
+    working(true);
+    tell("Connecting…");
+    try {
+      if (protocol() && !protocol().hostKey) {
+        // a host that shows no key is logged in to at once
+        await store(ticket);
+        return;
+      }
+      const view = await post("?go-fs=admin-server-hostkey", { server: login() });
+      if (ticket !== asked) return;
+      working(false);
+      tell("");
+      key = view.fingerprint;
+      const before = sameHost() ? record.hostKeyFingerprint : "";
+      if (before && before === key) {
+        note.textContent = "This is the key the server is stored with.";
+        note.classList.remove("bad");
+      } else if (before) {
+        note.textContent = "This is not the key the server is stored with. That happens when the host "
+          + "was set up anew, and when someone stands between it and go-fs. Do not accept it unless you "
+          + "know why it changed.";
+        note.classList.add("bad");
+      } else {
+        note.textContent = "";
+      }
+      note.hidden = note.textContent === "";
+      keyHost.textContent = view.host;
+      keyType.textContent = view.keyType;
+      keyPrint.textContent = view.fingerprint;
+      show("hostkey");
+      save.focus();
+    } catch (error) {
+      if (ticket !== asked) return;
+      working(false);
+      tell(String(error.message || error), true);
+      show("connect");
+    }
+  }
+
+  async function store(ticket) {
+    working(true);
+    tell("Logging in…");
+    try {
+      const result = await post("?go-fs=admin-server-save", {
+        was: record ? storedServers.get(record) || "" : "",
+        server: login(),
+        hostKey: key,
+      });
+      if (ticket !== asked) return;
+      working(false);
+      const stored = record || {};
+      Object.assign(stored, result.record);
+      storedServers.set(stored, stored.name);
+      dialog.close();
+      say("The server " + stored.name + " was logged in to and written to " + result.path
+        + (result.reload ? ", and is offered from the next reload of the file on." : "; it is offered once go-fs is restarted."), true);
+      done(stored);
+    } catch (error) {
+      if (ticket !== asked) return;
+      working(false);
+      tell(String(error.message || error), true);
+      show(key ? "hostkey" : "connect");
+    }
+  }
+
+  form.addEventListener("input", (event) => {
+    // the name is not the login: the key that was shown still holds
+    if (event.target !== field("name") && (step !== "connect" || key)) {
+      forget();
+    }
+  });
+
+  field("type").addEventListener("change", () => {
+    const chosen = protocol();
+    if (chosen) field("port").value = String(chosen.defaultPort);
+  });
+
+  // Enter presses whichever button acts first in the form, so what is done
+  // is decided by the step rather than by the button.
+  form.addEventListener("submit", (event) => {
+    const pressed = event.submitter ? event.submitter.value : "";
+    if (pressed === "cancel") {
+      return;
+    }
+    event.preventDefault();
+    if (step === "connect") {
+      connectHost();
+    } else {
+      store(++asked);
+    }
+  });
+
+  dialog.addEventListener("close", () => {
+    asked++;
+    working(false);
+  });
+
+  function open(table, edited, then) {
+    record = edited;
+    done = then;
+    title.textContent = edited ? "Edit server " + edited.name : "Add server";
+    const select = field("type");
+    select.replaceChildren(...protocols.map((p) => {
+      const option = document.createElement("option");
+      option.value = p.id;
+      option.textContent = p.label;
+      return option;
+    }));
+    const from = edited || {};
+    select.value = from.type || (protocols[0] ? protocols[0].id : "");
+    field("name").value = from.name || "";
+    field("host").value = from.host || "";
+    field("port").value = String(from.port || (protocol() ? protocol().defaultPort : ""));
+    field("username").value = from.username || "";
+    field("password").value = "";
+    // an edit keeps the password stored unless another is typed in
+    field("password").placeholder = edited ? "unchanged unless typed in" : "";
+    forget();
+    working(false);
+    dialog.showModal();
+    field(edited ? "host" : "name").focus();
+  }
+
+  return { open };
+})();
 
 // tokenNotice shows a token that was just created, the one time it is shown.
 function tokenNotice(token) {
@@ -705,6 +946,10 @@ function editor(field, holder) {
     input.value = String(holder[field.key] ?? 0);
     // kept as text: an empty box is not a number, and the server reads "" as 0
     input.addEventListener("input", () => set(input.value));
+    if (field.readOnly) {
+      input.readOnly = true;
+      input.className = "readonly";
+    }
     return { element: input, id };
   }
 

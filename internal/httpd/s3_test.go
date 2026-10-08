@@ -670,7 +670,7 @@ func TestS3CanBeSwitchedOff(t *testing.T) {
 	// and on again by a reload
 	next := server.settings().cfg
 	next.EnableS3 = true
-	if err := server.Reload(next, server.settings().https, server.settings().ssh, []config.User{s3User("john", "doe")}, nil); err != nil {
+	if err := server.Reload(next, server.settings().https, server.settings().ssh, []config.User{s3User("john", "doe")}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := server.s3Client("john", "doe").ListBuckets(context.Background(), &s3.ListBucketsInput{}); err != nil {

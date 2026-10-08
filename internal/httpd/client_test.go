@@ -135,7 +135,7 @@ func TestBadTrustedProxiesAreRefused(t *testing.T) {
 	cfg.Enabled = true
 	cfg.Basefolder = t.TempDir()
 	cfg.TrustedProxies = []string{"not-an-address"}
-	if _, err := New(cfg, config.Default().HTTPS, config.Default().General.SSH, nil, nil, "", discardLogger()); err == nil {
+	if _, err := New(cfg, config.Default().HTTPS, config.Default().General.SSH, nil, nil, nil, "", discardLogger()); err == nil {
 		t.Error("New accepted a proxy that is not an address")
 	} else if !strings.Contains(err.Error(), "http.trustedProxies[0]") {
 		t.Errorf("the error does not name the entry: %v", err)
@@ -144,7 +144,7 @@ func TestBadTrustedProxiesAreRefused(t *testing.T) {
 	server := proxiedServer(t, nil, nil)
 	next := server.settings().cfg
 	next.TrustedProxies = []string{"10.0.0.0/33"}
-	if err := server.Reload(next, server.settings().https, server.settings().ssh, []config.User{fullUser("john", "doe")}, nil); err == nil {
+	if err := server.Reload(next, server.settings().https, server.settings().ssh, []config.User{fullUser("john", "doe")}, nil, nil); err == nil {
 		t.Fatal("Reload accepted a range that does not parse")
 	}
 	res := basic(t, server, http.MethodGet, "/private/secret.txt", "john", "doe", nil)

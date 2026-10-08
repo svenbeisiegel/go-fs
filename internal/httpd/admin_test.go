@@ -158,7 +158,7 @@ func TestAdminInterfaceCanBeSwitchedOff(t *testing.T) {
 	set := server.settings()
 	cfg := set.cfg
 	cfg.EnableAdminInterface = true
-	if err := server.Reload(cfg, set.https, set.ssh, []config.User{adminUser("root", "secret"), fullUser("john", "doe")}, nil); err != nil {
+	if err := server.Reload(cfg, set.https, set.ssh, []config.User{adminUser("root", "secret"), fullUser("john", "doe")}, nil, nil); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	if res := withSession(t, server, http.MethodGet, "/?go-fs=admin", root); res.StatusCode != http.StatusOK {

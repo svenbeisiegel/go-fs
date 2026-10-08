@@ -245,7 +245,7 @@ section[hidden] { display: none; }
   .fields > .help-text:empty { display: none; }
 }
 
-input[type="text"], input[type="password"], input[type="number"], textarea {
+input[type="text"], input[type="password"], input[type="number"], textarea, select {
   width: 100%;
   padding: 0.35rem 0.5rem;
   border: 1px solid var(--line);
@@ -449,3 +449,35 @@ button.primary {
   letter-spacing: 0;
   vertical-align: 1px;
 }
+
+/* The dialog that adds and edits a remote server: its login, then the key
+   its host shows, which is accepted before the server is stored. */
+dialog {
+  width: min(36rem, calc(100vw - 2rem));
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--ground);
+  color: var(--ink);
+}
+dialog::backdrop { background: rgb(0 0 0 / 0.35); }
+dialog form { display: flex; flex-direction: column; gap: 0.75rem; padding: 1.1rem 1.25rem; }
+dialog h2 { margin: 0; font-size: 1rem; }
+dialog p { margin: 0; color: var(--faint); font-size: 0.85rem; overflow-wrap: anywhere; }
+dialog .dialog-fields { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: 0.45rem 0.75rem; }
+dialog .dialog-fields label { color: var(--faint); font-size: 0.85rem; }
+dialog .dialog-fields input[type="number"] { width: 7rem; }
+dialog .dialog-fields select { width: auto; justify-self: start; font-family: inherit; }
+dialog input:disabled, dialog select:disabled { opacity: 0.6; }
+dialog .hostkey { display: flex; flex-direction: column; gap: 0.35rem; }
+dialog .hostkey .note.bad { color: var(--bad); }
+dialog .hostkey .host { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+dialog .fingerprint { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.6rem; color: var(--ink); }
+dialog .fingerprint .type { color: var(--faint); font-size: 0.8rem; }
+dialog .fingerprint code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; overflow-wrap: anywhere; }
+dialog .progress.bad { color: var(--bad); }
+/* the button that acts comes first in the markup, so Enter picks it */
+dialog .row { display: flex; flex-direction: row-reverse; justify-content: flex-start; gap: 0.5rem; }
+dialog .row button:disabled { opacity: 0.5; cursor: default; }
+.record .edit { margin-left: auto; }
+.record .edit + .remove { margin-left: 0; }

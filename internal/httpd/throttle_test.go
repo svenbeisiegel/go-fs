@@ -211,7 +211,7 @@ func TestTheLockSettingsAreSwappedWithoutARestart(t *testing.T) {
 
 	next := server.settings().cfg
 	next.LoginAttempts = 1
-	if err := server.Reload(next, server.settings().https, server.settings().ssh, []config.User{fullUser("john", "doe")}, nil); err != nil {
+	if err := server.Reload(next, server.settings().https, server.settings().ssh, []config.User{fullUser("john", "doe")}, nil, nil); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	basic(t, server, http.MethodGet, "/private/secret.txt", "john", "wrong", nil)

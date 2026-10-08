@@ -44,6 +44,8 @@ type Config struct {
 	HTTP    HTTP    `toml:"http"`
 	HTTPS   HTTPS   `toml:"https"`
 	TFTP    TFTP    `toml:"tftp"`
+	// Servers are the remote hosts the file listing sends files to by name.
+	Servers []Server `toml:"servers"`
 }
 
 // General holds what every server shares.
@@ -308,6 +310,96 @@ func (t Token) ExpiresAt() (time.Time, bool) {
 		return time.Time{}, true
 	}
 	return at, true
+}
+
+// Server is a remote host the file listing can send a file to under a name,
+// without whoever sends it typing the login or ever seeing the password. The
+// admin interface adds and edits servers, and stores one only once it has
+// logged in to it; the listing offers every server to every session that may
+// send.
+type Server struct {
+	// Name is what the Send File dialog lists the server as. It has to be
+	// unique, whatever its case, and "Manual" is taken by the entry that
+	// asks for a login instead.
+	Name string `toml:"name"`
+	// Type is the protocol the server is reached with: sftp.
+	Type string `toml:"type"`
+	// Host is the name or address of the server, without a scheme or a port.
+	Host string `toml:"host"`
+	// Port is where the server listens, the default of its type when not set.
+	Port int `toml:"port,omitempty"`
+	// Username and Password are the login on the server. The password is
+	// kept as it is, the way an account's is, so the file has to be kept as
+	// private as it is for those.
+	Username string `toml:"username"`
+	Password string `toml:"password"`
+	// HostKeyFingerprint is the SHA-256 fingerprint of the key the server
+	// showed when it was stored. A server that shows another is not logged in
+	// to until it is edited and its new key accepted.
+	HostKeyFingerprint string `toml:"hostKeyFingerprint"`
+}
+
+// ServerType is a protocol a server may be reached with.
+type ServerType struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	// DefaultPort is where a server of the type is reached when none is named.
+	DefaultPort int `json:"defaultPort"`
+	// HostKey says the server shows a key that is accepted before a login.
+	HostKey bool `json:"hostKey"`
+}
+
+// ServerTypeSFTP is SFTP, over SSH with a password.
+const ServerTypeSFTP = "sftp"
+
+// ManualServer is the name the Send File dialog gives the login typed in, which
+// no server may have.
+const ManualServer = "Manual"
+
+// ServerTypes are the protocols a server may name. Another one is added here
+// and given an implementation in internal/remote.
+var ServerTypes = []ServerType{
+	{ID: ServerTypeSFTP, Label: "SFTP", DefaultPort: 22, HostKey: true},
+}
+
+// ServerTypeOf looks a protocol up by its ID.
+func ServerTypeOf(id string) (ServerType, bool) {
+	for _, t := range ServerTypes {
+		if t.ID == id {
+			return t, true
+		}
+	}
+	return ServerType{}, false
+}
+
+// RemoteHost reads the host of a remote server: trimmed, and out of the
+// brackets an IPv6 address may come in. A URL, a login or a path is refused.
+func RemoteHost(host string) (string, error) {
+	host = strings.TrimSpace(host)
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
+	switch {
+	case host == "":
+		return "", errors.New("name the host")
+	case strings.Contains(host, "://"):
+		return "", errors.New("name the host alone, without a scheme")
+	case strings.Contains(host, "@"):
+		return "", errors.New("put the username into its own field rather than the host")
+	case strings.ContainsAny(host, "/ \t\r\n"):
+		return "", fmt.Errorf("%q is not a host name", host)
+	}
+	return host, nil
+}
+
+// FindServer finds a server of a list by its name, whatever its case.
+func FindServer(servers []Server, name string) (Server, bool) {
+	for _, server := range servers {
+		if strings.EqualFold(server.Name, name) {
+			return server, true
+		}
+	}
+	return Server{}, false
 }
 
 // FTPUsers, SFTPUsers, HTTPUsers and S3Users are the entries a server serves:
@@ -902,6 +994,9 @@ func (c Config) Validate() error {
 	if err := c.validateTokens(); err != nil {
 		return err
 	}
+	if err := c.validateServers(); err != nil {
+		return err
+	}
 	if c.FTP.Enabled || c.FTPS.Enabled {
 		if err := c.validateFTP(); err != nil {
 			return err
@@ -1039,6 +1134,55 @@ func (c Config) validateTokens() error {
 			if _, err := regexp.Compile(pattern); err != nil {
 				return fmt.Errorf("%s.paths[%d]: %w", where, k, err)
 			}
+		}
+	}
+	return nil
+}
+
+// validateServers checks the remote servers. Like validateUsers it runs
+// whether or not the HTTP server is enabled.
+func (c Config) validateServers() error {
+	names := map[string]bool{}
+	for i, server := range c.Servers {
+		where := fmt.Sprintf("servers[%d]", i)
+		name := strings.TrimSpace(server.Name)
+		if name == "" {
+			return fmt.Errorf("%s has no name", where)
+		}
+		if name != server.Name {
+			return fmt.Errorf("%s %q: the name cannot begin or end with a space", where, server.Name)
+		}
+		// the dialog lists the servers by name, and offers the login typed in
+		// under this one
+		if strings.EqualFold(name, ManualServer) {
+			return fmt.Errorf("%s: %q is the name of the login typed in, and cannot be a server's", where, server.Name)
+		}
+		if names[strings.ToLower(name)] {
+			return fmt.Errorf("%s: %q is configured twice", where, server.Name)
+		}
+		names[strings.ToLower(name)] = true
+		kind, ok := ServerTypeOf(server.Type)
+		if !ok {
+			known := make([]string, len(ServerTypes))
+			for k, t := range ServerTypes {
+				known[k] = t.ID
+			}
+			return fmt.Errorf("%s %q: type %q is not one of %s", where, server.Name, server.Type, strings.Join(known, ", "))
+		}
+		if host, err := RemoteHost(server.Host); err != nil {
+			return fmt.Errorf("%s %q: %w", where, server.Name, err)
+		} else if host != server.Host {
+			return fmt.Errorf("%s %q: host %q has to be %q", where, server.Name, server.Host, host)
+		}
+		if server.Port < 0 || server.Port > 65535 {
+			return fmt.Errorf("%s %q: %d is not a port", where, server.Name, server.Port)
+		}
+		if server.Username == "" {
+			return fmt.Errorf("%s %q has no username", where, server.Name)
+		}
+		if kind.HostKey && !strings.HasPrefix(server.HostKeyFingerprint, "SHA256:") {
+			return fmt.Errorf("%s %q: hostKeyFingerprint has to be the SHA256: fingerprint of the key "+
+				"the server shows; the admin interface fills it in", where, server.Name)
 		}
 	}
 	return nil

@@ -309,6 +309,8 @@ func TestEndpointsTakeOnlyTheirMethod(t *testing.T) {
 		{http.MethodDelete, ActionConfig, http.StatusMethodNotAllowed},
 		{http.MethodGet, ActionUpload, http.StatusMethodNotAllowed},
 		{http.MethodGet, ActionGenerate, http.StatusMethodNotAllowed},
+		{http.MethodGet, ActionServerHostKey, http.StatusMethodNotAllowed},
+		{http.MethodGet, ActionServerSave, http.StatusMethodNotAllowed},
 		{http.MethodHead, ActionPage, http.StatusOK},
 	} {
 		request, _ := http.NewRequest(tc.method, front.URL+"/?go-fs="+tc.marker, nil)

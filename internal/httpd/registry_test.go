@@ -571,7 +571,7 @@ func TestRegistryReloadSwitchesAnonymousRead(t *testing.T) {
 	cfg := set.cfg
 	cfg.RegistryAnonymousRead = false
 	users := []config.User{fullUser("john", "doe"), registryUser(pusher, pusherPassword)}
-	if err := server.Reload(cfg, set.https, set.ssh, users, nil); err != nil {
+	if err := server.Reload(cfg, set.https, set.ssh, users, nil, nil); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	res, body = server.reg(t, http.MethodGet, "/v2/_catalog", nil)
@@ -581,7 +581,7 @@ func TestRegistryReloadSwitchesAnonymousRead(t *testing.T) {
 
 	// switching the registry off gives /v2 back to the served folder
 	cfg.RegistryBaseFolder = ""
-	if err := server.Reload(cfg, set.https, set.ssh, users, nil); err != nil {
+	if err := server.Reload(cfg, set.https, set.ssh, users, nil, nil); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	res, _ = server.reg(t, http.MethodGet, "/v2/_catalog", nil, asPusher)
@@ -595,7 +595,7 @@ func TestRegistryWarnsAboutTheFolderItHides(t *testing.T) {
 	server.mkdir(t, "v2")
 	set := server.settings()
 	users := []config.User{fullUser("john", "doe"), registryUser(pusher, pusherPassword)}
-	if err := server.Reload(set.cfg, set.https, set.ssh, users, nil); err != nil {
+	if err := server.Reload(set.cfg, set.https, set.ssh, users, nil, nil); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	if server.logs.findLike("the container registry answers /v2") == nil {

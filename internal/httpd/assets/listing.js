@@ -452,7 +452,7 @@
   var removal = menu.querySelector("[data-do='delete']");
   // Share is there for a file only: a link names one file as it is now
   var sharing = menu.querySelector("[data-do='share']");
-  // and so is Send via SFTP, which uploads one file
+  // and so is Send File, which uploads one file
   var sendItem = menu.querySelector("[data-do='send']");
   // Import into registry is there for a file whose name an image archive has;
   // it opens the registry page's Import dialog with that file
@@ -997,6 +997,36 @@
       return form.elements[name];
     }
 
+    // stored is the name of the server chosen, "" for the login typed in
+    function stored() {
+      return field("server").value;
+    }
+
+    // the protocol chosen for the login typed in
+    function protocol() {
+      var select = field("protocol");
+      return select.options[select.selectedIndex] || null;
+    }
+
+    function defaultPort() {
+      var chosen = protocol();
+      return chosen ? parseInt(chosen.dataset.port, 10) || 0 : 22;
+    }
+
+    // whether the host of the login typed in shows a key to accept first
+    function showsKey() {
+      var chosen = protocol();
+      return !chosen || chosen.dataset.hostkey === "true";
+    }
+
+    // The fields of the login typed in are left out, not only hidden, for a
+    // stored server, so that the form does not ask for them.
+    function choose() {
+      var server = stored() !== "";
+      manual.hidden = server;
+      manual.disabled = server;
+    }
+
     function busy(on) {
       Array.prototype.forEach.call(form.querySelectorAll("input, textarea"), function (input) {
         input.disabled = on;
@@ -1136,6 +1166,11 @@
   // there goes straight to the folders, and a key that changed since is
   // asked about again, with a warning. Once the send is under way it is one
   // of the transfers the button in the header follows.
+  //
+  // A server the administrator stored is chosen by its name instead, and
+  // goes straight to its folders: the server holds its login and its key,
+  // which this page never sees. Manual, the first choice, is the login typed
+  // in, which is not stored anywhere but in the fields.
   var sending = (function () {
     var dialog = document.getElementById("send-dialog");
     if (!dialog) {
@@ -1144,6 +1179,7 @@
     var form = dialog.querySelector("form");
     var what = dialog.querySelector("p.what");
     var fields = dialog.querySelector(".fields");
+    var manual = fields.querySelector("fieldset.manual");
     var connected = dialog.querySelector(".connected");
     var loginText = connected.querySelector(".login");
     var change = connected.querySelector(".change");
@@ -1184,8 +1220,40 @@
       return form.elements[name];
     }
 
+    // stored is the name of the server chosen, "" for the login typed in
+    function stored() {
+      return field("server").value;
+    }
+
+    // the protocol chosen for the login typed in
+    function protocol() {
+      var select = field("protocol");
+      return select.options[select.selectedIndex] || null;
+    }
+
+    function defaultPort() {
+      var chosen = protocol();
+      return chosen ? parseInt(chosen.dataset.port, 10) || 0 : 22;
+    }
+
+    // whether the host of the login typed in shows a key to accept first
+    function showsKey() {
+      var chosen = protocol();
+      return !chosen || chosen.dataset.hostkey === "true";
+    }
+
+    // The fields of the login typed in are left out, not only hidden, for a
+    // stored server, so that the form does not ask for them.
+    function choose() {
+      var server = stored() !== "";
+      manual.hidden = server;
+      manual.disabled = server;
+    }
+
     function hostId() {
-      return field("host").value.trim().toLowerCase() + ":" + (parseInt(field("port").value, 10) || 22);
+      var id = field("host").value.trim().toLowerCase() + ":" + (parseInt(field("port").value, 10) || defaultPort());
+      // the keys of SFTP hosts were remembered before there was another
+      return protocol().value === "sftp" ? id : protocol().value + "://" + id;
     }
 
     function known() {
@@ -1208,7 +1276,11 @@
     }
 
     function login(path) {
+      if (stored()) {
+        return { server: stored(), path: path };
+      }
       return {
+        protocol: protocol().value,
         host: field("host").value.trim(),
         port: parseInt(field("port").value, 10) || 0,
         username: field("username").value.trim(),
@@ -1229,9 +1301,13 @@
     function show(next) {
       step = next;
       if (next === "folder") {
-        var host = login().host;
-        loginText.textContent = login().username + "@" +
-          (host.indexOf(":") >= 0 ? "[" + host + "]" : host) + ":" + login().port;
+        if (stored()) {
+          loginText.textContent = stored();
+        } else {
+          var host = login().host;
+          loginText.textContent = login().username + "@" +
+            (host.indexOf(":") >= 0 ? "[" + host + "]" : host) + ":" + login().port;
+        }
       }
       fields.hidden = next === "folder";
       connected.hidden = next !== "folder";
@@ -1258,7 +1334,7 @@
     // fields and the buttons that act are locked, Cancel is not
     function working(on) {
       form.classList.toggle("working", on);
-      Array.prototype.forEach.call(form.querySelectorAll("input, .remote button"), function (input) {
+      Array.prototype.forEach.call(form.querySelectorAll("input, select, .remote button"), function (input) {
         input.disabled = on;
       });
       [connect, accept, go, change].forEach(function (button) {
@@ -1281,12 +1357,14 @@
     }
 
     // what the dialog knows of the host is forgotten once the host or the
-    // login is changed, and it starts over at the first step
+    // login is changed, and it starts over at the first step; a question
+    // still open is dropped, so the form no longer waits on it
     function forget() {
       asked++;
       shown = null;
       key = null;
       at = null;
+      working(false);
       quiet();
       show("connect");
     }
@@ -1305,10 +1383,15 @@
     }
 
     function connectHost() {
+      // a stored server, and a host that shows no key, are logged in to at once
+      if (stored() || !showsKey()) {
+        browse("");
+        return;
+      }
       var ticket = ++asked;
       working(true);
       tell("Connecting…");
-      ask("send-hostkey", { host: login().host, port: login().port }).then(function (view) {
+      ask("send-hostkey", { protocol: login().protocol, host: login().host, port: login().port }).then(function (view) {
         if (ticket !== asked) {
           return;
         }
@@ -1463,8 +1546,7 @@
         empty.textContent = "This folder is empty.";
         list.appendChild(empty);
       }
-      var host = shown ? shown.host : login().host;
-      where.textContent = "Sends " + name + " to sftp://" + host + joined(view.path, name) +
+      where.textContent = "Sends " + name + " to " + view.base + joined(view.path, name) +
         (clash ? " · replaces the file there" : "");
     }
 
@@ -1531,7 +1613,23 @@
 
     change.addEventListener("click", function () {
       forget();
-      field("password").focus();
+      (stored() ? field("server") : field("password")).focus();
+    });
+
+    field("server").addEventListener("change", function () {
+      choose();
+      forget();
+    });
+
+    // a port left at the default of one protocol follows to the next
+    var lastDefault = defaultPort();
+    field("protocol").addEventListener("change", function () {
+      var port = field("port");
+      if (!port.value || parseInt(port.value, 10) === lastDefault) {
+        port.value = defaultPort();
+      }
+      lastDefault = defaultPort();
+      forget();
     });
 
     fields.addEventListener("input", function () {
@@ -1583,15 +1681,20 @@
     function open(row) {
       clear();
       name = row.dataset.name;
-      what.textContent = "Uploads " + decodeURI(folder) + name + " to another host over SFTP.";
+      what.textContent = "Uploads " + decodeURI(folder) + name + " to another host.";
       quiet();
+      choose();
       dialog.showModal();
-      if (key && at) {
+      if ((stored() || key) && at) {
         browse(at.path);
         return;
       }
       forget();
-      (field("host").value ? field("password") : field("host")).focus();
+      if (stored()) {
+        field("server").focus();
+      } else {
+        (field("host").value ? field("password") : field("host")).focus();
+      }
     }
 
     return { open: open };

@@ -68,8 +68,12 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		allowed.Import = s.registrySession(set, r) != nil
 		allowed.Share = cred.user != nil
 		allowed.Send = maySend(cred, target.Virtual)
+		var send sendView
+		if allowed.Send {
+			send = sendViewOf(set.servers)
+		}
 		page, err := listingPage(vfs.AsFolder(target.Virtual), entries,
-			parseSort(r.URL.Query()), allowed,
+			parseSort(r.URL.Query()), allowed, send,
 			s.sessionViewFor(set, r, cred), nonce, set.cfg.MaxChunkSize)
 		if err != nil {
 			s.log.Error("http cannot render the listing", "path", target.Virtual, "error", err)
