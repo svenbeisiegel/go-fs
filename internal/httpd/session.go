@@ -56,8 +56,9 @@ func cleanURL(u *url.URL) string {
 	stripped := *u
 	query := stripped.Query()
 	query.Del(sessionParam)
-	if query.Get(returnParam) == actionRegistry {
-		query.Set(sessionParam, actionRegistry)
+	switch then := query.Get(returnParam); then {
+	case actionRegistry, actionRemote:
+		query.Set(sessionParam, then)
 	}
 	query.Del(returnParam)
 	stripped.RawQuery = query.Encode()
@@ -75,8 +76,15 @@ func loginURL(u *url.URL) string {
 func markedURL(u *url.URL, action string) string {
 	marked := *u
 	query := marked.Query()
-	if query.Get(sessionParam) == actionRegistry {
+	switch query.Get(sessionParam) {
+	case actionRegistry:
 		query.Set(returnParam, actionRegistry)
+	case actionRemote:
+		// a stored server is only shown to a session, so the page is
+		// returned to after a login and left after a logout
+		if action == actionLogin {
+			query.Set(returnParam, actionRemote)
+		}
 	}
 	query.Set(sessionParam, action)
 	marked.RawQuery = query.Encode()
@@ -261,6 +269,11 @@ func (s *Server) sessionViewFor(set *settings, r *http.Request, cred credential)
 	}
 	if cred.token && cred.user != nil {
 		who.User = cred.user.name
+		if mayBrowseRemote(cred) {
+			for _, server := range set.servers {
+				who.Servers = append(who.Servers, serverLink{Name: server.Name, Link: remoteURL(server.Name, "")})
+			}
+		}
 		if s.admits(set, cred) {
 			who.Admin = adminURL(r.URL)
 		}

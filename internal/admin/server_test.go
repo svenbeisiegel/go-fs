@@ -286,15 +286,17 @@ func TestPageMenuTakesTheNav(t *testing.T) {
 		t.Error("the menu offers no way out")
 	}
 
-	full := page(&Nav{Registry: "/sub/?go-fs=registry", User: "root"})
+	full := page(&Nav{Registry: "/sub/?go-fs=registry", User: "root",
+		Servers: []NavLink{{Name: "Backup", Link: "/?go-fs=remote&server=Backup&path="}}})
 	files := strings.Index(full, `</svg>Files</a>`)
 	registry := strings.Index(full, `<a href="/sub/?go-fs=registry">`)
+	server := strings.Index(full, `<a href="/?go-fs=remote&amp;server=Backup&amp;path="><svg class="ic"><use href="#i-server"/></svg>Backup</a>`)
 	logout := strings.Index(full, `</svg>Log out root</button>`)
-	if files < 0 || registry < 0 || logout < 0 {
-		t.Fatalf("the menu lacks an item: files %d, registry %d, logout %d", files, registry, logout)
+	if files < 0 || registry < 0 || server < 0 || logout < 0 {
+		t.Fatalf("the menu lacks an item: files %d, registry %d, server %d, logout %d", files, registry, server, logout)
 	}
-	if !(files < registry && registry < logout) {
-		t.Errorf("the items are out of order: files %d, registry %d, logout %d", files, registry, logout)
+	if !(files < registry && registry < server && server < logout) {
+		t.Errorf("the items are out of order: files %d, registry %d, server %d, logout %d", files, registry, server, logout)
 	}
 }
 

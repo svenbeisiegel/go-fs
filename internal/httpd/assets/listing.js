@@ -52,6 +52,14 @@
   // folder is the path this page lists, always with a trailing slash and
   // already escaped: every request below appends one escaped segment to it.
   var folder = table.dataset.folder;
+  // remote is set on the listing of a stored server: the link of this folder
+  // of it, ending in the escaped path an escaped name is appended to, while
+  // folder stays the root of the served tree the transfers are asked after
+  // under. baseQuery is the part of the query its links keep before the order.
+  var remote = table.dataset.remote || "";
+  var baseQuery = table.dataset.query || "";
+  // shown is this folder as the dialogs name it
+  var shown = table.dataset.path || decodeURI(folder);
   var banner = document.getElementById("banner");
   // maxChunkSize is the largest piece an upload is split into; 0 means
   // chunked upload is off and a large file is sent as one request, as before.
@@ -64,7 +72,7 @@
   }
 
   function segment(name) {
-    return folder + encodeURIComponent(name);
+    return (remote || folder) + encodeURIComponent(name);
   }
 
   var bannerText = banner.querySelector(".text");
@@ -282,16 +290,16 @@
 
   function query(state) {
     if (state.key === "") {
-      return "?";
+      return "?" + baseQuery;
     }
-    return "?sort=" + state.key + "&dir=" + state.dir;
+    return "?" + (baseQuery ? baseQuery + "&" : "") + "sort=" + state.key + "&dir=" + state.dir;
   }
 
   // show writes the order into the address bar, so that a reload, a copied link
   // and what is on screen all say the same thing.
   function show() {
     var url = window.location.pathname;
-    if (order.key !== "") {
+    if (order.key !== "" || baseQuery) {
       url += query(order);
     }
     window.history.replaceState(null, "", url);
@@ -433,7 +441,7 @@
   if (makeFolder) {
     makeFolder.addEventListener("click", function () {
       clear();
-      ask("New folder", "It is created in " + decodeURI(folder) + ".", "", "Create", function (name) {
+      ask("New folder", "It is created in " + shown + ".", "", "Create", function (name) {
         send("create", "MKCOL", segment(name) + "/").then(done).catch(failed);
       });
     });
@@ -469,7 +477,8 @@
   function openMenu(button) {
     var row = button.closest("tr");
     var isFolder = row.dataset.dir === "1";
-    download.href = isFolder ? segment(row.dataset.name) + "/?go-fs=archive" : segment(row.dataset.name);
+    download.href = !isFolder ? segment(row.dataset.name)
+      : remote ? segment(row.dataset.name) + "&archive=1" : segment(row.dataset.name) + "/?go-fs=archive";
     download.querySelector("span").textContent = isFolder ? "Download as .tar.xz" : "Download";
     if (removal) {
       removal.hidden = row.dataset.delete !== "1";
@@ -588,7 +597,7 @@
 
   function renameEntry(row) {
     var name = row.dataset.name;
-    ask("Rename", decodeURI(folder) + name, name, "Rename", function (typed) {
+    ask("Rename", shown + name, name, "Rename", function (typed) {
       send("rename", "MOVE", segment(name), { Destination: segment(typed) }).then(done).catch(failed);
     });
   }
@@ -598,8 +607,8 @@
     var isFolder = row.dataset.dir === "1";
     checking.querySelector("h2").textContent = isFolder ? "Delete folder" : "Delete file";
     checking.querySelector("p").textContent = isFolder
-      ? "Delete " + decodeURI(folder) + name + "? Only an empty folder can be removed."
-      : "Delete " + decodeURI(folder) + name + "? This cannot be undone.";
+      ? "Delete " + shown + name + "? Only an empty folder can be removed."
+      : "Delete " + shown + name + "? This cannot be undone.";
     onAgree = function () {
       send(isFolder ? "folder" : "file", "DELETE", segment(name)).then(done).catch(failed);
     };
@@ -740,6 +749,10 @@
   // here is this folder as the server names it, unescaped, which is how a
   // fetch says where it stores
   var here = (function () {
+    if (remote) {
+      // no fetch ends up on a stored server
+      return null;
+    }
     try {
       return folder.split("/").map(decodeURIComponent).join("/");
     } catch (ignored) {

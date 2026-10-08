@@ -1439,6 +1439,51 @@ The name has to be unique, whatever its case, and cannot be `Manual`. The
 password is kept in plain text, as an account's is. Every account that may
 send sees every stored server, by name.
 
+#### Browsing a stored server
+
+The menu in the corner of the header lists the stored servers by name, after
+**Files** and **Registry** and before **Admin** and **Log out**. It lists them
+to an account that has logged in through the form and may read files
+(`allowUserFileRetrieve`), the same accounts that may send.
+
+Picking a server logs in with its stored login and key, and shows the folder
+the login starts in. The page is the file listing: crumbs, sortable columns,
+the filter, **Upload or Drop file**, **New folder**, the **Transfers** button,
+and the row menu with **Download**, **Rename…** and **Delete**. Download on a
+folder packs it as a `.tar.xz`, as it does for a folder of the served tree.
+**Share** and **Send File** are left out, because they hand out files that
+go-fs serves itself. Fetch and Import into registry are left out as well.
+
+Everything goes through go-fs, which logs in anew for every request, so the
+page never sees the password or the key. A server that cannot be reached,
+refuses the login or shows a different key is shown as an empty listing, with
+the reason in the banner.
+
+What an account may change on the server follows its permissions, as in the
+served folder: `allowUserFileCreate` to upload, `allowUserFileOverwrite` to
+replace, `allowUserFolderCreate` for New folder, `allowUserFileCreate` and
+`allowUserFileDelete` to rename, and `allowUserFileDelete` and
+`allowUserFolderDelete` to delete. The account's `paths` apply to the served
+folder only. On the server, the stored login decides what can be reached.
+
+An upload is written under a hidden name, `.<name>.go-fs-<id>.part`, and
+renamed into place once all of it is there, as a send is. A chunked upload
+(`maxChunkSize`) is staged in `uploadStagingFolder` and goes to the server
+with its last chunk.
+
+All requests go to the root, with the server and the path in the query:
+
+```
+/?go-fs=remote&server=<name>&path=<path on the server>
+```
+
+`GET` lists a folder or downloads a file, with ranges, and `GET` with
+`&archive=1` packs a folder. `PUT` uploads (`application/octet-stream`, whole
+or in `Content-Range` chunks), `MKCOL` creates a folder, `MOVE` renames to the
+`path` of the `Destination` link on the same server, and `DELETE` removes a
+file or an empty folder. Each one is logged as `http remote …` with the
+account, the server and the path.
+
 ## Logging and diagnostics
 
 Everything the program has to say goes to **standard output**, one record per

@@ -576,6 +576,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleSend(set, w, r, target, cred, action)
 		return
 	}
+	// and so does browsing a stored server
+	if remoteAction(r) {
+		s.handleRemote(set, w, r, cred)
+		return
+	}
 	user := cred.user
 	act := actionOf(r.Method, target)
 	if !s.permits(set, user, method, target.Virtual, act) {

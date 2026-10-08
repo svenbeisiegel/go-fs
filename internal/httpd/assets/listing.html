@@ -36,10 +36,10 @@
   </div>
 </header>
 
-<div id="banner" class="banner" hidden><span class="text"></span><button type="button" class="close" title="Dismiss" aria-label="Dismiss"><svg class="ic"><use href="#i-close"/></svg></button></div>
+<div id="banner" class="banner"{{if not .Error}} hidden{{end}}><span class="text">{{.Error}}</span><button type="button" class="close" title="Dismiss" aria-label="Dismiss"><svg class="ic"><use href="#i-close"/></svg></button></div>
 
 <main>
-<table id="listing" data-folder="{{.Folder}}" data-sort="{{.Sort}}" data-dir="{{.Dir}}" data-max-chunk-size="{{.MaxChunkSize}}">
+<table id="listing" data-folder="{{.Folder}}" data-sort="{{.Sort}}" data-dir="{{.Dir}}" data-max-chunk-size="{{.MaxChunkSize}}"{{if .Remote}} data-remote="{{.Remote}}" data-query="{{.Query}}" data-path="{{.Path}}"{{end}}>
   <thead>
     <tr>
       {{range .Columns}}
@@ -69,7 +69,7 @@
     {{end}}
   </tbody>
 </table>
-{{if not .Entries}}<p class="empty">This folder is empty.</p>{{end}}
+{{if and (not .Entries) (not .Error)}}<p class="empty">This folder is empty.</p>{{end}}
 
 {{if .Rights.Upload}}
 <div id="drop" class="drop" hidden>

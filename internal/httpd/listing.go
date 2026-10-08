@@ -325,6 +325,17 @@ type sessionView struct {
 	// that is not it.
 	Page  string
 	Files string
+	// Servers are the stored servers the menu opens, between the registry and
+	// the admin interface, for a session that may browse them; see
+	// mayBrowseRemote. Remote says the page is one of them.
+	Servers []serverLink
+	Remote  bool
+}
+
+// serverLink is a stored server in the menu.
+type serverLink struct {
+	Name string
+	Link string
 }
 
 // loginData is the login page.
@@ -358,24 +369,70 @@ type listingData struct {
 	// Send is the Send File dialog, when Rights.Send offers it.
 	Send    sendView
 	Session sessionView
-	Nonce   string
-	Style   template.CSS
-	Script  template.JS
+	// Remote and Query are what a listing of a stored server carries for the
+	// script; see listingPlace.
+	Remote string
+	Query  string
+	// Error is a problem the page opens with in its banner: a stored server
+	// that could not be reached shows its listing empty, and why.
+	Error  string
+	Nonce  string
+	Style  template.CSS
+	Script template.JS
 	// MaxChunkSize is what the client splits a large upload into pieces of; 0
 	// means chunked upload is off and a large file is sent as one request, as
 	// before.
 	MaxChunkSize int64
 }
 
+// listingPlace is what a listing is of: a folder of the served tree, or one
+// of a stored server. Everything else about the page is the same for both.
+type listingPlace struct {
+	// Path is the folder as the page shows it, with a trailing slash.
+	Path string
+	// Folder is the folder of the served tree the page is on, escaped, which
+	// the script appends a name to and asks after the transfers under.
+	Folder string
+	Crumbs []crumb
+	Parent string
+	// Remote is the link to the folder of a stored server, ending in the
+	// escaped path the script appends an escaped name to; "" for the served
+	// tree.
+	Remote string
+	// Query is the part of the query string every link of the page keeps,
+	// before the order: "" for the served tree, whose links are relative.
+	Query string
+	// Error is why the folder could not be read, which the page shows over
+	// an empty listing.
+	Error string
+	// link is where a row leads.
+	link func(item entry) string
+}
+
+// localPlace is a folder of the served tree, whose rows are relative links.
+func localPlace(virtual string) listingPlace {
+	return listingPlace{
+		Path:   virtual,
+		Folder: (&url.URL{Path: virtual}).String(),
+		Crumbs: crumbsOf(virtual),
+		Parent: parentOf(virtual),
+		link: func(item entry) string {
+			return (&url.URL{Path: item.Name}).String()
+		},
+	}
+}
+
 // listingPage renders the browsable directory page.
-func listingPage(virtual string, entries []entry, order sortOrder, allowed rights, send sendView, who sessionView, nonce string, maxChunkSize int64) ([]byte, error) {
-	who.Page = "Files"
+func listingPage(place listingPlace, entries []entry, order sortOrder, allowed rights, send sendView, who sessionView, nonce string, maxChunkSize int64) ([]byte, error) {
+	if who.Page == "" {
+		who.Page = "Files"
+	}
 	rows := make([]listingRow, 0, len(entries))
 	for _, item := range sortEntries(entries, order) {
 		row := listingRow{
 			Name:     item.bare(),
 			Label:    item.Name,
-			Link:     (&url.URL{Path: item.Name}).String(),
+			Link:     place.link(item),
 			IsDir:    item.isFolder(),
 			Group:    "0",
 			Bytes:    sizeOf(item),
@@ -394,24 +451,26 @@ func listingPage(virtual string, entries []entry, order sortOrder, allowed right
 	}
 
 	data := listingData{
-		Path:    virtual,
-		Folder:  (&url.URL{Path: virtual}).String(),
-		Crumbs:  crumbsOf(virtual),
-		Parent:  parentOf(virtual),
-		Columns: columnsOf(order),
+		Path:    place.Path,
+		Folder:  place.Folder,
+		Crumbs:  place.Crumbs,
+		Parent:  place.Parent,
+		Columns: columnsOf(order, place.Query),
 		Session: who,
 		Entries: rows,
 		Sort:    order.key,
 		Dir:     order.direction(),
 		Rights:  allowed,
 		Send:    send,
+		Remote:  place.Remote,
+		Query:   place.Query,
+		Error:   place.Error,
 		Nonce:   nonce,
 		Style:   listingStyle,
 		Script:  listingScript,
 
 		MaxChunkSize: maxChunkSize,
 	}
-
 	var page bytes.Buffer
 	if err := listingTemplate.Execute(&page, data); err != nil {
 		return nil, err
@@ -419,7 +478,9 @@ func listingPage(virtual string, entries []entry, order sortOrder, allowed right
 	return page.Bytes(), nil
 }
 
-func columnsOf(order sortOrder) []column {
+// columnsOf are the headers of the listing. kept is the query the links
+// keep before the order, "" for none.
+func columnsOf(order sortOrder, kept string) []column {
 	defined := []column{
 		{Key: sortName, Label: "Name", Class: "c-name"},
 		{Key: sortDate, Label: "Modified", Class: "c-mod"},
@@ -427,7 +488,7 @@ func columnsOf(order sortOrder) []column {
 		{Key: sortSize, Label: "Size", Class: "c-size num"},
 	}
 	for i := range defined {
-		defined[i].Link = nextOrder(order, defined[i].Key).query()
+		defined[i].Link = keepQuery(nextOrder(order, defined[i].Key).query(), kept)
 		if defined[i].Key != order.key || order.key == "" {
 			continue
 		}
@@ -439,6 +500,17 @@ func columnsOf(order sortOrder) []column {
 		}
 	}
 	return defined
+}
+
+// keepQuery puts the query a page keeps in front of an order's.
+func keepQuery(query, kept string) string {
+	switch {
+	case kept == "":
+		return query
+	case query == "?":
+		return "?" + kept
+	}
+	return "?" + kept + "&" + strings.TrimPrefix(query, "?")
 }
 
 // crumbsOf breaks the path into the links above it. The first one is the root,

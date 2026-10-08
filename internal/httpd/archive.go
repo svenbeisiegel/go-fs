@@ -107,14 +107,33 @@ func (s *Server) handleArchive(set *settings, w http.ResponseWriter, r *http.Req
 // link that points back up from packing the tree forever. Anything else —
 // a socket, a device — is not something a download has to carry.
 func (s *Server) writeArchive(ctx context.Context, set *settings, user *account, target vfs.Target, name string, out io.Writer) (int, error) {
+	return packArchive(out, func(archive *tar.Writer) (int, error) {
+		return s.walkArchive(ctx, set, user, target, name, archive)
+	})
+}
+
+// packArchive writes a tar.xz into out, of what fill puts into the tar, and
+// reports how many files fill said went in.
+func packArchive(out io.Writer, fill func(archive *tar.Writer) (int, error)) (int, error) {
 	compressed, err := archiveCompression.NewWriter(out)
 	if err != nil {
 		return 0, err
 	}
 	archive := tar.NewWriter(compressed)
+	files, err := fill(archive)
+	if err != nil {
+		return files, err
+	}
+	if err := archive.Close(); err != nil {
+		return files, err
+	}
+	return files, compressed.Close()
+}
 
+// walkArchive puts the entries of a folder of the served tree into archive.
+func (s *Server) walkArchive(ctx context.Context, set *settings, user *account, target vfs.Target, name string, archive *tar.Writer) (int, error) {
 	files := 0
-	err = filepath.WalkDir(target.Path, func(osPath string, entry fs.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(target.Path, func(osPath string, entry fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -168,13 +187,7 @@ func (s *Server) writeArchive(ctx context.Context, set *settings, user *account,
 			return nil
 		}
 	})
-	if err != nil {
-		return files, err
-	}
-	if err := archive.Close(); err != nil {
-		return files, err
-	}
-	return files, compressed.Close()
+	return files, err
 }
 
 // addFile writes one file into the archive. A file that cannot be opened is

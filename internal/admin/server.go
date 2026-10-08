@@ -181,9 +181,11 @@ type pageData struct {
 	// signed in.
 	Registry string
 	User     string
-	Nonce    string
-	Style    template.CSS
-	Script   template.JS
+	// Servers are the stored servers the menu opens, from the Nav.
+	Servers []NavLink
+	Nonce   string
+	Style   template.CSS
+	Script  template.JS
 }
 
 // handlePage serves the interface itself, with its style and script inlined
@@ -202,6 +204,7 @@ func (h *Handler) handlePage(w http.ResponseWriter, r *http.Request) {
 		Logout:   markedURL(r.URL, "logout"),
 		Registry: nav.Registry,
 		User:     nav.User,
+		Servers:  nav.Servers,
 		Nonce:    nonce,
 		Style:    pageStyle,
 		Script:   pageScript,
@@ -389,11 +392,18 @@ func WithClient(ctx context.Context, address string) context.Context {
 
 // Nav is what the page's menu offers beside the way back to the files and
 // out of the session, which the interface cannot know on its own: the link to
-// the registry page, empty where the file server offers none, and the account
-// that is signed in.
+// the registry page, empty where the file server offers none, the stored
+// servers the session may browse, and the account that is signed in.
 type Nav struct {
 	Registry string
+	Servers  []NavLink
 	User     string
+}
+
+// NavLink is a page of the file server the menu names.
+type NavLink struct {
+	Name string
+	Link string
 }
 
 // navKey is where the file server puts the Nav of a request.
