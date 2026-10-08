@@ -355,6 +355,10 @@ dialog input[name="port"] { width: 7rem; }
    stay in the column of the fields around them */
 dialog .fields fieldset.manual { display: contents; }
 dialog .fields fieldset.manual[hidden] { display: none; }
+/* the fields of the login the protocol chosen asks for, by host or by token */
+dialog .fields fieldset.login { display: contents; }
+dialog .fields fieldset.login[hidden] { display: none; }
+dialog .fields fieldset.login > label:first-child { margin-top: 0.35rem; }
 dialog select { align-self: flex-start; min-width: 14rem; font-family: inherit; }
 dialog select:disabled { opacity: 0.6; }
 dialog .hostkey { display: flex; flex-direction: column; gap: 0.35rem; }

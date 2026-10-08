@@ -3,8 +3,6 @@ package httpd
 import (
 	"archive/tar"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -15,8 +13,6 @@ import (
 	"path"
 	"strings"
 	"time"
-
-	"github.com/pkg/sftp"
 
 	"go-fs/internal/config"
 	"go-fs/internal/remote"
@@ -92,7 +88,7 @@ func remotePath(query url.Values) string {
 type remoteRequest struct {
 	server config.Server
 	login  remote.Login
-	client *sftp.Client
+	fs     remote.FS
 	user   *account
 	// path is the path asked for, "" for where the login starts.
 	path    string
@@ -158,22 +154,16 @@ func (s *Server) handleRemote(set *settings, w http.ResponseWriter, r *http.Requ
 		fail(http.StatusBadGateway, fmt.Errorf("the server %s: %w", server.Name, err))
 		return
 	}
-	// only SFTP is browsed so far; another protocol is reached from here
-	if login.Type != config.ServerTypeSFTP {
-		fail(http.StatusBadGateway, fmt.Errorf("go-fs cannot browse a server reached by %s yet", login.Type))
-		return
-	}
 	q.login = login
-	conn, client, err := remote.OpenSFTP(r.Context(), login, set.ssh)
+	fsys, err := remote.Open(r.Context(), login, set.ssh)
 	if err != nil {
 		s.log.Warn("http remote cannot log in", "server", server.Name, "user", cred.user.name,
 			"address", q.address, "error", err)
 		fail(http.StatusBadGateway, err)
 		return
 	}
-	defer func() { _ = conn.Close() }()
-	defer func() { _ = client.Close() }()
-	q.client = client
+	defer func() { _ = fsys.Close() }()
+	q.fs = fsys
 
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
@@ -191,16 +181,10 @@ func (s *Server) handleRemote(set *settings, w http.ResponseWriter, r *http.Requ
 
 // remoteGet lists a folder, packs it, or downloads a file.
 func (s *Server) remoteGet(set *settings, w http.ResponseWriter, r *http.Request, cred credential, q *remoteRequest, page bool) {
-	p := q.path
-	var err error
-	if p == "" {
-		p, err = q.client.Getwd()
-	} else {
-		p, err = q.client.RealPath(p)
-	}
+	p, err := q.fs.Resolve(q.path)
 	var info fs.FileInfo
 	if err == nil {
-		info, err = q.client.Stat(p)
+		info, err = q.fs.Stat(p)
 	}
 	if err != nil {
 		missing := errors.Is(err, fs.ErrNotExist)
@@ -220,7 +204,7 @@ func (s *Server) remoteGet(set *settings, w http.ResponseWriter, r *http.Request
 	case info.IsDir() && r.URL.Query().Get(remoteArchiveParam) != "":
 		s.remoteArchive(w, r, q)
 	case info.IsDir():
-		entries, err := readRemoteDirectory(q.client, p)
+		entries, err := readRemoteDirectory(q.fs, p)
 		if err != nil {
 			err = remoteFolderFailure(sendRequest{Login: q.login}, p, err)
 		}
@@ -234,22 +218,14 @@ func (s *Server) remoteGet(set *settings, w http.ResponseWriter, r *http.Request
 
 // readRemoteDirectory lists a folder of a server as readDirectory lists one
 // of the served tree. A link is what it leads to.
-func readRemoteDirectory(client *sftp.Client, folder string) ([]entry, error) {
-	infos, err := client.ReadDir(folder)
+func readRemoteDirectory(fsys remote.FS, folder string) ([]entry, error) {
+	infos, err := fsys.ReadDir(folder)
 	if err != nil {
 		return nil, err
 	}
 	entries := make([]entry, 0, len(infos))
 	for _, info := range infos {
 		name := info.Name()
-		if name == "." || name == ".." {
-			continue
-		}
-		if info.Mode()&fs.ModeSymlink != 0 {
-			if target, err := client.Stat(path.Join(folder, name)); err == nil {
-				info = target
-			}
-		}
 		found := entry{
 			Name:    name,
 			IsFile:  info.Mode().IsRegular(),
@@ -373,7 +349,7 @@ func (s *Server) remotePage(set *settings, w http.ResponseWriter, r *http.Reques
 
 // remoteDownload sends a file of a server, a range of it where one is asked.
 func (s *Server) remoteDownload(set *settings, w http.ResponseWriter, r *http.Request, q *remoteRequest, info fs.FileInfo) {
-	file, err := q.client.Open(q.path)
+	file, err := q.fs.Open(q.path)
 	if err != nil {
 		http.Error(w, remoteFolderFailure(sendRequest{Login: q.login}, q.path, err).Error(), http.StatusBadGateway)
 		return
@@ -415,7 +391,7 @@ func (s *Server) remoteArchive(w http.ResponseWriter, r *http.Request, q *remote
 	}
 	started := time.Now()
 	files, err := packArchive(w, func(archive *tar.Writer) (int, error) {
-		return s.walkRemoteArchive(r.Context(), q.client, q.path, name, archive)
+		return s.walkRemoteArchive(r.Context(), q.fs, q.path, name, archive)
 	})
 	if err != nil {
 		s.log.Warn("http remote archive ended early", "user", q.user.name, "folder", q.logged(q.path),
@@ -429,49 +405,57 @@ func (s *Server) remoteArchive(w http.ResponseWriter, r *http.Request, q *remote
 // walkRemoteArchive packs a folder of a server under name/, as writeArchive
 // packs one of the served tree: folders so that an empty one survives, files
 // with what is in them, a link as the file it leads to and never as a folder.
-func (s *Server) walkRemoteArchive(ctx context.Context, client *sftp.Client, folder, name string, archive *tar.Writer) (int, error) {
+// A folder below the one packed that cannot be read is left out.
+func (s *Server) walkRemoteArchive(ctx context.Context, fsys remote.FS, folder, name string, archive *tar.Writer) (int, error) {
 	files := 0
-	walker := client.Walk(folder)
-	for walker.Step() {
-		if err := ctx.Err(); err != nil {
+	var walk func(dir, inside string, top bool) error
+	walk = func(dir, inside string, top bool) error {
+		infos, err := fsys.ReadDir(dir)
+		if err != nil {
+			if top {
+				return err
+			}
+			s.log.Debug("http remote archive skips a folder it cannot read", "path", dir, "error", err)
+			return nil
+		}
+		for _, info := range infos {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			p, in := path.Join(dir, info.Name()), path.Join(inside, info.Name())
+			switch {
+			case info.IsDir() && remote.IsLink(info):
+			case info.IsDir():
+				if err := archive.WriteHeader(archiveHeader(info, in+"/")); err != nil {
+					return err
+				}
+				if err := walk(p, in, false); err != nil {
+					return err
+				}
+			case info.Mode().IsRegular():
+				added, err := addRemoteFile(fsys, archive, p, info, in)
+				if added {
+					files++
+				}
+				if err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if info, err := fsys.Stat(folder); err == nil {
+		if err := archive.WriteHeader(archiveHeader(info, name+"/")); err != nil {
 			return files, err
 		}
-		if err := walker.Err(); err != nil {
-			if walker.Path() == folder {
-				return files, err
-			}
-			s.log.Debug("http remote archive skips an entry it cannot read", "path", walker.Path(), "error", err)
-			continue
-		}
-		rel := strings.TrimPrefix(strings.TrimPrefix(walker.Path(), folder), "/")
-		inside := path.Join(name, rel)
-		info := walker.Stat()
-		switch {
-		case info.IsDir():
-			if err := archive.WriteHeader(archiveHeader(info, inside+"/")); err != nil {
-				return files, err
-			}
-		case info.Mode().IsRegular(), info.Mode()&fs.ModeSymlink != 0:
-			target, err := client.Stat(walker.Path())
-			if err != nil || !target.Mode().IsRegular() {
-				continue
-			}
-			added, err := addRemoteFile(client, archive, walker.Path(), target, inside)
-			if added {
-				files++
-			}
-			if err != nil {
-				return files, err
-			}
-		}
 	}
-	return files, nil
+	return files, walk(folder, name, true)
 }
 
 // addRemoteFile writes one file of a server into the archive, as addFile
 // writes one of the served tree.
-func addRemoteFile(client *sftp.Client, archive *tar.Writer, p string, info fs.FileInfo, inside string) (bool, error) {
-	file, err := client.Open(p)
+func addRemoteFile(fsys remote.FS, archive *tar.Writer, p string, info fs.FileInfo, inside string) (bool, error) {
+	file, err := fsys.Open(p)
 	if err != nil {
 		return false, nil
 	}
@@ -490,7 +474,7 @@ func addRemoteFile(client *sftp.Client, archive *tar.Writer, p string, info fs.F
 // when it may not: a folder is never written over, and a file only by an
 // account that may replace files. It reports whether the name is taken.
 func (s *Server) remoteTaken(w http.ResponseWriter, r *http.Request, q *remoteRequest) (taken, ok bool) {
-	info, err := q.client.Stat(q.path)
+	info, err := q.fs.Stat(q.path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		if !granted(q.user.perms, actCreate) {
@@ -550,10 +534,14 @@ func (s *Server) remotePut(set *settings, w http.ResponseWriter, r *http.Request
 		body = limited
 	}
 	started := time.Now()
-	written, err := putRemote(q.client, q.path, body)
+	written, err := q.fs.Put(q.path, body, r.ContentLength)
 	if err != nil {
 		if tooLarge(err) || limited.hit() {
 			s.tooLarge(set, w, label)
+			return
+		}
+		if errors.Is(err, fs.ErrPermission) {
+			s.answerRemoteFailure(w, q, "write", err)
 			return
 		}
 		s.log.Warn("http remote upload failed", "user", q.user.name, "file", label.Virtual,
@@ -632,8 +620,12 @@ func (s *Server) remotePutChunk(set *settings, w http.ResponseWriter, r *http.Re
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
-	written, err := putRemote(q.client, q.path, file)
+	written, err := q.fs.Put(q.path, file, rng.total)
 	if err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			s.answerRemoteFailure(w, q, "write", err)
+			return
+		}
 		s.log.Warn("http remote upload failed", "user", q.user.name, "file", label.Virtual,
 			"bytes", written, "address", q.address, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
@@ -647,32 +639,6 @@ func (s *Server) remotePutChunk(set *settings, w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusCreated)
 }
 
-// putRemote writes a file to a server under a hidden name beside where it
-// goes, and puts it in place once all of it is there, replacing what is
-// there. What was written is taken away again when anything fails.
-func putRemote(client *sftp.Client, final string, body io.Reader) (int64, error) {
-	suffix := make([]byte, 4)
-	if _, err := rand.Read(suffix); err != nil {
-		return 0, err
-	}
-	part := path.Join(path.Dir(final), "."+path.Base(final)+".go-fs-"+hex.EncodeToString(suffix)+".part")
-	out, err := client.OpenFile(part, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
-	if err != nil {
-		return 0, err
-	}
-	written, err := out.ReadFromWithConcurrency(body, 0)
-	if closeErr := out.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = renameRemote(client, part, final)
-	}
-	if err != nil {
-		_ = client.Remove(part)
-	}
-	return written, err
-}
-
 // remoteMkdir creates a folder on a server.
 func (s *Server) remoteMkdir(w http.ResponseWriter, r *http.Request, q *remoteRequest) {
 	if !granted(q.user.perms, actMkdir) {
@@ -683,11 +649,11 @@ func (s *Server) remoteMkdir(w http.ResponseWriter, r *http.Request, q *remoteRe
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if _, err := q.client.Lstat(q.path); err == nil {
+	if _, err := q.fs.Lstat(q.path); err == nil {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := q.client.Mkdir(q.path); err != nil {
+	if err := q.fs.Mkdir(q.path); err != nil {
 		s.answerRemoteFailure(w, q, "create the folder", err)
 		return
 	}
@@ -714,15 +680,15 @@ func (s *Server) remoteMove(set *settings, w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
-	if _, err := q.client.Lstat(q.path); err != nil {
+	if _, err := q.fs.Lstat(q.path); err != nil {
 		s.answerRemoteFailure(w, q, "rename", err)
 		return
 	}
-	if _, err := q.client.Lstat(to); err == nil {
+	if _, err := q.fs.Lstat(to); err == nil {
 		http.Error(w, "Precondition Failed", http.StatusPreconditionFailed)
 		return
 	}
-	if err := q.client.Rename(q.path, to); err != nil {
+	if err := q.fs.Rename(q.path, to); err != nil {
 		s.answerRemoteFailure(w, q, "rename", err)
 		return
 	}
@@ -737,7 +703,7 @@ func (s *Server) remoteDelete(w http.ResponseWriter, r *http.Request, q *remoteR
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	info, err := q.client.Lstat(q.path)
+	info, err := q.fs.Lstat(q.path)
 	if err != nil {
 		s.answerRemoteFailure(w, q, "delete", err)
 		return
@@ -747,16 +713,16 @@ func (s *Server) remoteDelete(w http.ResponseWriter, r *http.Request, q *remoteR
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
-		err = q.client.RemoveDirectory(q.path)
+		err = q.fs.RemoveDir(q.path)
 	} else {
 		if !granted(q.user.perms, actDeleteFile) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
-		err = q.client.Remove(q.path)
+		err = q.fs.Remove(q.path)
 	}
 	if err != nil {
-		if info.IsDir() {
+		if info.IsDir() && !errors.Is(err, fs.ErrPermission) {
 			// most likely with something still in it, which is how the page
 			// reads a 404 on a folder
 			s.log.Debug("http remote folder not removed", "folder", q.logged(q.path), "error", err)
@@ -778,7 +744,7 @@ func (s *Server) answerRemoteFailure(w http.ResponseWriter, q *remoteRequest, wh
 	case errors.Is(err, fs.ErrNotExist):
 		http.Error(w, "Not Found", http.StatusNotFound)
 	case errors.Is(err, fs.ErrPermission):
-		http.Error(w, fmt.Sprintf("%s may not %s %s on %s", q.login.Username, what, q.path, q.login.Shown()),
+		http.Error(w, fmt.Sprintf("%s may not %s %s on %s", q.login.Who(), what, q.path, q.login.Shown()),
 			http.StatusForbidden)
 	default:
 		s.log.Warn("http remote request failed", "user", q.user.name, "path", q.logged(q.path),

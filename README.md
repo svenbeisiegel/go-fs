@@ -1339,10 +1339,11 @@ to accounts that may do that.
 ### Sending a file to another server
 
 **Send File…** in the row menu of a file uploads it to another host, over SFTP
-for now. It is offered to an account that has logged in through the form and
-may read the file. The dialog opens with a **Server** list: the servers an
-admin stored (see [Stored servers](#stored-servers)), and **Manual**, chosen
-at first, which asks for a login instead.
+or to a JFrog Artifactory (see [Artifactory](#artifactory)). It is offered to
+an account that has logged in through the form and may read the file. The
+dialog opens with a **Server** list: the servers an admin stored (see
+[Stored servers](#stored-servers)), and **Manual**, chosen at first, which
+asks for a login instead.
 
 A stored server is picked by its name. **Connect** goes straight to its
 folders with the login and the host key the configuration file holds. The
@@ -1355,7 +1356,9 @@ has to edit the server.
 1. **Connect.** The protocol (SFTP), the host name or address, the port (22
    unless another is given), a username and a password. The password is sent
    as SSH `password` authentication, and as the answer to every prompt where
-   the host asks by `keyboard-interactive` instead.
+   the host asks by `keyboard-interactive` instead. For **Artifactory** the
+   dialog asks for the server address and a token instead, and goes straight
+   to the folders, since an Artifactory shows no key.
 2. **Host key.** Before any login is offered, the server connects to the host
    only far enough to see its key, and the dialog shows the key type and its
    SHA256 fingerprint, as `ssh` does. **Accept key** goes on; every later
@@ -1377,7 +1380,8 @@ written under a hidden name, `.<name>.go-fs-<id>.part`, in the chosen folder
 and renamed into place once all of it is there, with
 `posix-rename@openssh.com` where the host offers it, so that a send that fails
 or is stopped never leaves half a file under the real name. A stopped send
-takes its partial file away again. A send that moves nothing for two minutes
+takes its partial file away again. An Artifactory needs none of that: it keeps
+an upload only once all of it was taken. A send that moves nothing for two minutes
 stops with an error. The dialog keeps the host and the login until the page is
 reloaded, so the next file opens on the folder the last one went to; the
 password is never stored, and it is never logged.
@@ -1388,9 +1392,10 @@ The endpoints are on the file, all `POST`:
   (`sftp`), and answers `host`, `keyType` and `fingerprint`.
 - `?go-fs=send-browse` takes `host`, `port`, `username`, `password`, `hostKey`
   (the accepted fingerprint) and `path` (empty for the folder the login starts
-  in), or `server` (the name of a stored server) and `path`. It answers
-  `base` (`sftp://host`), `path`, `parent` and `entries` (`name`, `dir`,
-  `size`).
+  in), or `protocol` `artifactory` with `url`, `token` and `path`, or `server`
+  (the name of a stored server) and `path`. It answers `base` (`sftp://host`,
+  or the address of an Artifactory), `path`, `parent` and `entries` (`name`,
+  `dir`, `size`).
 - `?go-fs=send` takes the same fields, with `path` as the folder to send into,
   and answers `202` with the job.
 
@@ -1410,7 +1415,8 @@ The servers the dialog lists are `[[servers]]` entries, managed on the
 **SERVERS** tab of the admin interface:
 
 1. **Add server…** asks for a name, the protocol, the host, the port, a
-   username and a password.
+   username and a password; for Artifactory, for a name, the server address
+   and a token instead, and it skips to the last step.
 2. **Connect** shows the key the host shows, without logging in, as the send
    dialog does. When a server is edited, the dialog says whether the key is
    the one the server is stored with.
@@ -1422,7 +1428,7 @@ The servers the dialog lists are `[[servers]]` entries, managed on the
 On the tab, the name of a server can be changed and the server removed, both
 written by **Apply**; everything else is read-only and changed with
 **Edit…**, which goes through the same dialog. An edit that leaves the
-password empty keeps the stored one.
+password or the token empty keeps the stored one.
 
 ```toml
 [[servers]]
@@ -1439,6 +1445,42 @@ The name has to be unique, whatever its case, and cannot be `Manual`. The
 password is kept in plain text, as an account's is. Every account that may
 send sees every stored server, by name.
 
+#### Artifactory
+
+A JFrog Artifactory is a server of `type = "artifactory"`, reached by its REST
+API over HTTPS (or HTTP) with a token, sent as `Authorization: Bearer <token>`:
+an access token or an identity token of a user, made in Artifactory under
+**Edit Profile** or **Access Tokens**. It is stored with its address and the
+token, in plain text as a password is:
+
+```toml
+[[servers]]
+name = "artifacts"
+type = "artifactory"
+url = "https://acme.jfrog.io/artifactory"
+token = "…"
+```
+
+The address is where the REST API is. One without a path, such as
+`https://acme.jfrog.io`, is given `/artifactory`, where every Artifactory has
+it; one with a path, for an Artifactory behind a proxy that moved it, is kept
+as it is. The admin dialog checks the token by listing the repositories
+(`GET api/repositories`), which an Artifactory refuses a wrong token for.
+
+Its files are in repositories, so the top of the server, `/`, lists the
+repositories the token may see as folders, and `/<repository>/<path>` is a
+file or a folder in one. Files and folders go into a repository; a
+repository itself is created, renamed and removed in Artifactory. What else
+the token may do, deploying, replacing or deleting, is what Artifactory
+grants it.
+
+A folder is listed with the sizes and times of its files by the File List
+API, which is of Artifactory Pro and the JFrog cloud. An Artifactory without
+it (the OSS edition) is listed by the children of the folder, which have no
+size or time. A rename is the Move API, also of Pro; without it a rename fails
+with what Artifactory says. A folder is deleted only when there is nothing in
+it, as on an SFTP server, although Artifactory would remove all of it.
+
 #### Browsing a stored server
 
 The menu in the corner of the header lists the stored servers by name, after
@@ -1447,7 +1489,7 @@ to an account that has logged in through the form and may read files
 (`allowUserFileRetrieve`), the same accounts that may send.
 
 Picking a server logs in with its stored login and key, and shows the folder
-the login starts in. The page is the file listing: crumbs, sortable columns,
+the login starts in; for an Artifactory, the list of its repositories. The page is the file listing: crumbs, sortable columns,
 the filter, **Upload or Drop file**, **New folder**, the **Transfers** button,
 and the row menu with **Download**, **Rename…** and **Delete**. Download on a
 folder packs it as a `.tar.xz`, as it does for a folder of the served tree.
@@ -1467,9 +1509,10 @@ replace, `allowUserFolderCreate` for New folder, `allowUserFileCreate` and
 folder only. On the server, the stored login decides what can be reached.
 
 An upload is written under a hidden name, `.<name>.go-fs-<id>.part`, and
-renamed into place once all of it is there, as a send is. A chunked upload
-(`maxChunkSize`) is staged in `uploadStagingFolder` and goes to the server
-with its last chunk.
+renamed into place once all of it is there, as a send is; to an Artifactory
+it goes straight to its name, which Artifactory keeps once all of it is
+there. A chunked upload (`maxChunkSize`) is staged in `uploadStagingFolder`
+and goes to the server with its last chunk.
 
 All requests go to the root, with the server and the path in the query:
 

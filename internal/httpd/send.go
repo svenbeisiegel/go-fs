@@ -16,8 +16,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pkg/sftp"
-
 	"go-fs/internal/config"
 	"go-fs/internal/remote"
 	"go-fs/internal/vfs"
@@ -33,17 +31,22 @@ import (
 // stored server is logged in to with the login and the key the file holds;
 // its password and its key never reach the page.
 //
-// Before the dialog sends a login typed in anywhere, it asks for the key of
-// the host alone, which a handshake shows before any login is offered, and
+// A host reached by SFTP shows a key: before the dialog sends a login typed
+// in anywhere, it asks for the key of the host alone, which a handshake shows before any login is offered, and
 // the user accepts it; every request after that names the key that was
 // accepted, and a host that shows another is not logged in to. The page, not
 // the server, remembers which keys were accepted. With the key and the login
 // the dialog lists the folders of the remote, for the user to choose where the
 // file goes, and the send starts.
 //
-// The file is written under a hidden name beside where it goes and renamed
-// once all of it is there, so that a send that is stopped or fails never
-// leaves half a file under the real name; one that is there is replaced.
+// A host reached by an address and a token, an Artifactory, shows none, and
+// is listed at once.
+//
+// The file is written so that a send that is stopped or fails never leaves
+// half a file under the real name: over SFTP under a hidden name beside
+// where it goes, renamed once all of it is there, and to an Artifactory,
+// which keeps an upload once all of it was taken. One that is there is
+// replaced.
 //
 // The server reaches whatever host it is given, inside the network it is in
 // as well as outside, so a send is offered as a fetch is: to a session of an
@@ -134,6 +137,10 @@ type sendBody struct {
 	Port     int    `json:"port"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	// URL and Token are the login typed in of a protocol reached by an
+	// address and a token.
+	URL   string `json:"url,omitempty"`
+	Token string `json:"token,omitempty"`
 	// HostKey is the fingerprint of the key the user accepted.
 	HostKey string `json:"hostKey"`
 	// Path is the folder to list, the login's own for "", or the one to send
@@ -166,15 +173,12 @@ func (b sendBody) request(action string, servers []config.Server) (sendRequest, 
 		req.Login = login
 	} else {
 		login, err := remote.Login{Type: strings.TrimSpace(b.Protocol), Host: b.Host, Port: b.Port,
-			Username: b.Username, Password: b.Password, HostKey: b.HostKey}.Checked(action == actionSendHostKey)
+			Username: b.Username, Password: b.Password, HostKey: b.HostKey,
+			URL: b.URL, Token: b.Token}.Checked(action == actionSendHostKey)
 		if err != nil {
 			return sendRequest{}, err
 		}
 		req.Login = login
-	}
-	// only SFTP sends so far; another protocol is reached from here
-	if req.Type != config.ServerTypeSFTP {
-		return sendRequest{}, fmt.Errorf("go-fs cannot send by %s yet", req.Type)
 	}
 	if action == actionSendHostKey {
 		return req, nil
@@ -191,7 +195,10 @@ func (b sendBody) request(action string, servers []config.Server) (sendRequest, 
 // logged is a path of the host as the log and the job show it: with the user
 // that logs in, and the stored server that login is, if any.
 func (r sendRequest) logged(p string) string {
-	shown := r.Type + "://" + r.Username + "@" + r.Shown() + p
+	shown := r.Where(p)
+	if r.Username != "" {
+		shown = r.Type + "://" + r.Username + "@" + r.Shown() + p
+	}
 	if r.Server != "" {
 		shown += " (server " + r.Server + ")"
 	}
@@ -220,7 +227,8 @@ func (s *Server) sendHostKey(w http.ResponseWriter, r *http.Request, req sendReq
 
 // sendFolderJSON is a folder of the remote.
 type sendFolderJSON struct {
-	// Base is the host as the page names a path of it, sftp://host.
+	// Base is the host as the page names a path of it, sftp://host, or the
+	// address of an Artifactory.
 	Base string `json:"base"`
 	Path string `json:"path"`
 	// Parent is the folder above, "" at the top.
@@ -240,25 +248,19 @@ type sendEntryJSON struct {
 func (s *Server) sendBrowse(w http.ResponseWriter, r *http.Request, req sendRequest) {
 	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
 	defer cancel()
-	conn, client, err := remote.OpenSFTP(ctx, req.Login, s.settings().ssh)
+	fsys, err := remote.Open(ctx, req.Login, s.settings().ssh)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer func() { _ = conn.Close() }()
-	defer func() { _ = client.Close() }()
+	defer func() { _ = fsys.Close() }()
 
-	folder := req.path
-	if folder == "" {
-		folder, err = client.Getwd()
-	} else {
-		folder, err = client.RealPath(folder)
-	}
+	folder, err := fsys.Resolve(req.path)
 	if err != nil {
 		http.Error(w, remoteFolderFailure(req, req.path, err).Error(), http.StatusBadGateway)
 		return
 	}
-	infos, err := client.ReadDir(folder)
+	infos, err := fsys.ReadDir(folder)
 	if err != nil {
 		http.Error(w, remoteFolderFailure(req, folder, err).Error(), http.StatusBadGateway)
 		return
@@ -273,16 +275,7 @@ func (s *Server) sendBrowse(w http.ResponseWriter, r *http.Request, req sendRequ
 			break
 		}
 		name := info.Name()
-		if name == "." || name == ".." {
-			continue
-		}
 		dir := info.IsDir()
-		// a link is listed as one, and is a folder when where it leads is
-		if info.Mode()&fs.ModeSymlink != 0 {
-			if target, err := client.Stat(path.Join(folder, name)); err == nil {
-				dir = target.IsDir()
-			}
-		}
 		entry := sendEntryJSON{Name: name, Dir: dir}
 		if !dir {
 			entry.Size = info.Size()
@@ -309,7 +302,7 @@ func remoteFolderFailure(req sendRequest, folder string, err error) error {
 	case errors.Is(err, fs.ErrNotExist):
 		return fmt.Errorf("there is no folder %s on %s", folder, req.Shown())
 	case errors.Is(err, fs.ErrPermission):
-		return fmt.Errorf("%s may not read %s on %s", req.Username, folder, req.Shown())
+		return fmt.Errorf("%s may not read %s on %s", req.Who(), folder, req.Shown())
 	}
 	return fmt.Errorf("%s on %s: %w", folder, req.Shown(), err)
 }
@@ -373,84 +366,48 @@ func (s *Server) sendFile(ctx context.Context, job *registryJob, req sendRequest
 	})
 	defer stop()
 
-	conn, client, err := remote.OpenSFTP(connCtx, req.Login, s.settings().ssh)
+	fsys, err := remote.Open(connCtx, req.Login, s.settings().ssh)
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = conn.Close() }()
-	defer func() { _ = client.Close() }()
+	defer func() { _ = fsys.Close() }()
 
 	folder := req.path
-	if st, err := client.Stat(folder); err != nil {
+	if st, err := fsys.Stat(folder); err != nil {
 		return "", remoteFolderFailure(req, folder, err)
 	} else if !st.IsDir() {
 		return "", fmt.Errorf("%s on %s is not a folder", folder, req.Shown())
 	}
 	final := path.Join(folder, name)
 	replaced := false
-	if st, err := client.Stat(final); err == nil {
+	if st, err := fsys.Stat(final); err == nil {
 		if st.IsDir() {
 			return "", fmt.Errorf("%s is a folder on %s", final, req.Shown())
 		}
 		replaced = true
 	}
-	part := path.Join(folder, "."+name+".go-fs-"+job.id[:8]+".part")
-	writing.Store(true)
-	out, err := client.OpenFile(part, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
-	if err != nil {
-		if errors.Is(err, fs.ErrPermission) {
-			return "", fmt.Errorf("%s may not write into %s on %s", req.Username, folder, req.Shown())
-		}
-		return "", fmt.Errorf("%s on %s: %w", folder, req.Shown(), err)
-	}
-	stored := false
-	defer func() {
-		if !stored {
-			_ = client.Remove(part)
-		}
-	}()
 
+	writing.Store(true)
 	job.downloading()
 	reader := watch(stoppable{r: file, ctx: sendCtx}, job, cancel)
-	written, err := out.ReadFromWithConcurrency(reader, 0)
+	written, err := fsys.Put(final, reader, info.Size())
 	reader.done()
-	if closeErr := out.Close(); err == nil {
-		err = closeErr
-	}
 	if err == nil && written != info.Size() {
 		err = fmt.Errorf("%d of %d bytes were written", written, info.Size())
 	}
 	if err != nil {
-		if errors.Is(context.Cause(sendCtx), errStalled) {
+		switch {
+		case errors.Is(context.Cause(sendCtx), errStalled):
 			return "", fmt.Errorf("%s to %s: %w", name, req.Shown(), errStalled)
+		case errors.Is(err, fs.ErrPermission):
+			return "", fmt.Errorf("%s may not write into %s on %s", req.Who(), folder, req.Shown())
 		}
 		return "", fmt.Errorf("%s to %s: %w", name, req.Shown(), err)
 	}
-	if err := renameRemote(client, part, final); err != nil {
-		return "", fmt.Errorf("%s cannot be put in place on %s: %w", final, req.Shown(), err)
-	}
-	stored = true
 	s.log.Info("http send", "user", user.name, "file", target.Virtual,
 		"to", req.logged(final), "bytes", written, "replaced", replaced,
 		"address", address, "took", time.Since(started).Round(time.Millisecond))
 	return fmt.Sprintf("Sent %s (%s) to %s.", name, readableSize(written), req.Where(final)), nil
-}
-
-// renameRemote puts a file that was written in place, replacing whatever is
-// there: at once where the host can, and else by removing it first. A host
-// may offer the rename that replaces and still refuse to replace with it, as
-// a server that hands it on to a plain SFTP rename does, so a refusal is
-// tried again the other way.
-func renameRemote(client *sftp.Client, from, to string) error {
-	if _, ok := client.HasExtension("posix-rename@openssh.com"); ok {
-		if err := client.PosixRename(from, to); err == nil {
-			return nil
-		}
-	}
-	if err := client.Remove(to); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	return client.Rename(from, to)
 }
 
 // stoppable is a reader that ends once its context does.

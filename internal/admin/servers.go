@@ -16,7 +16,8 @@ import (
 // The remote servers the file listing sends to are not typed into the form
 // like the rest of the file. The page edits one in a dialog: it asks for the
 // key the host shows, the admin accepts it, and the server logs in with the
-// login and that key before it stores the entry. Only a login that works is
+// login and that key before it stores the entry. A server reached by an
+// address and a token shows no key, and is logged in to at once. Only a login that works is
 // written, and it is written at once, with nothing else of the file changed,
 // so that what the dialog said worked is what the file holds.
 
@@ -35,11 +36,13 @@ type serverJSON struct {
 	Port     int    `json:"port"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	URL      string `json:"url"`
+	Token    string `json:"token"`
 }
 
 func (s serverJSON) login() remote.Login {
 	return remote.Login{Type: strings.TrimSpace(s.Type), Host: s.Host, Port: s.Port,
-		Username: s.Username, Password: s.Password}
+		Username: s.Username, Password: s.Password, URL: s.URL, Token: s.Token}
 }
 
 // serverHostKeyBody asks for the key of the host of a server.
@@ -135,9 +138,13 @@ func (h *Handler) handleServerSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	login := body.Server.login()
-	// an edit that leaves the password empty keeps the one stored
+	// an edit that leaves the password or the token empty keeps the one
+	// stored
 	if index >= 0 && login.Password == "" {
 		login.Password = cfg.Servers[index].Password
+	}
+	if index >= 0 && strings.TrimSpace(login.Token) == "" {
+		login.Token = cfg.Servers[index].Token
 	}
 	login.HostKey = body.HostKey
 	login, err = login.Checked(false)
@@ -180,7 +187,7 @@ func (h *Handler) handleServerSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.log.Info("the admin interface stored a server", "server", name, "type", login.Type,
-		"host", login.Shown(), "username", login.Username, "path", h.path, "backup", backup,
+		"host", login.Shown(), "username", login.Who(), "path", h.path, "backup", backup,
 		"address", addressOf(r))
 
 	records, _ := h.schema.Values(cfg)["servers"].([]any)

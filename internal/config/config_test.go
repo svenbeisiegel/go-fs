@@ -780,6 +780,48 @@ func TestServers(t *testing.T) {
 	if host, err := RemoteHost(" [::1] "); err != nil || host != "::1" {
 		t.Errorf("RemoteHost read %q, %v", host, err)
 	}
+
+	artifactory := Server{Name: "artifacts", Type: ServerTypeArtifactory,
+		URL: "https://acme.jfrog.io/artifactory", Token: "secret"}
+	if err := check(valid, artifactory); err != nil {
+		t.Errorf("a valid Artifactory was refused: %v", err)
+	}
+	for name, change := range map[string]func(*Server){
+		"no url":               func(s *Server) { s.URL = "" },
+		"a url without scheme": func(s *Server) { s.URL = "acme.jfrog.io/artifactory" },
+		"a url not read":       func(s *Server) { s.URL = "https://acme.jfrog.io" },
+		"a url with a slash":   func(s *Server) { s.URL = "https://acme.jfrog.io/artifactory/" },
+		"no token":             func(s *Server) { s.Token = " " },
+	} {
+		server := artifactory
+		change(&server)
+		if err := check(server); err == nil {
+			t.Errorf("an Artifactory with %s was accepted", name)
+		}
+	}
+}
+
+func TestArtifactoryURL(t *testing.T) {
+	for raw, want := range map[string]string{
+		"https://acme.jfrog.io":                   "https://acme.jfrog.io/artifactory",
+		" https://ACME.jfrog.io/ ":                "https://acme.jfrog.io/artifactory",
+		"https://acme.jfrog.io/artifactory/":      "https://acme.jfrog.io/artifactory",
+		"http://10.0.0.5:8082/artifactory":        "http://10.0.0.5:8082/artifactory",
+		"https://proxy.example.com/repo/":         "https://proxy.example.com/repo",
+		"https://[2001:db8::1]:8443/artifactory/": "https://[2001:db8::1]:8443/artifactory",
+	} {
+		if got, err := ArtifactoryURL(raw); err != nil || got != want {
+			t.Errorf("ArtifactoryURL(%q) = %q, %v; want %q", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{
+		"", "acme.jfrog.io", "ftp://acme.jfrog.io", "https://", "https://alice:pw@acme.jfrog.io",
+		"https://acme.jfrog.io/artifactory?x=1", "https://acme.jfrog.io/#top",
+	} {
+		if got, err := ArtifactoryURL(raw); err == nil {
+			t.Errorf("ArtifactoryURL(%q) was read as %q", raw, got)
+		}
+	}
 }
 
 // go-fs.example.toml in the repository root is the same file the binary embeds

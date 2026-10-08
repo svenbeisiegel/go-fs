@@ -230,9 +230,12 @@ banner = []
 # [[servers]]
 # What the Send File dialog lists the server as. Unique, whatever its case.
 # name = "backup host"
-# The protocol the server is reached with: sftp.
+# The protocol the server is reached with: sftp, or artifactory for the REST
+# API of a JFrog Artifactory.
 # type = "sftp"
-# The name or address of the server, without a scheme or a port.
+# The name or address of the server, without a scheme or a port. An
+# artifactory server names its url and token instead of this, the port and
+# the login.
 # host = "sftp.example.com"
 # Where the server listens, the default of its type (22 for sftp) when not
 # set.
@@ -244,6 +247,16 @@ banner = []
 # The SHA-256 fingerprint of the key the server showed when it was stored. A
 # server that shows another is not logged in to until it is edited.
 # hostKeyFingerprint = "SHA256:…"
+#
+# An Artifactory is reached by its address and logged in to with a token,
+# sent as "Authorization: Bearer <token>". The address is where the REST API
+# is, /artifactory on the host when no path is given. The token is kept as it
+# is, as a password is.
+# [[servers]]
+# name = "artifacts"
+# type = "artifactory"
+# url = "https://acme.jfrog.io/artifactory"
+# token = "…"
 
 [ftp]
 # Serve the plain control port. The TLS listener has its own switch in [ftps];

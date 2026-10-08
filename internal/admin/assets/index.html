@@ -47,14 +47,18 @@
       <input id="server-name" name="name" type="text" required spellcheck="false" autocomplete="off" placeholder="how Send File lists it">
       <label for="server-type">protocol</label>
       <select id="server-type" name="type"></select>
-      <label for="server-host">host</label>
-      <input id="server-host" name="host" type="text" required spellcheck="false" autocomplete="off" placeholder="sftp.example.com">
-      <label for="server-port">port</label>
-      <input id="server-port" name="port" type="number" required min="1" max="65535">
-      <label for="server-username">username</label>
-      <input id="server-username" name="username" type="text" required spellcheck="false" autocomplete="off">
-      <label for="server-password">password</label>
-      <input id="server-password" name="password" type="password" autocomplete="new-password">
+      <label for="server-host" data-login="host">host</label>
+      <input id="server-host" name="host" type="text" required spellcheck="false" autocomplete="off" placeholder="sftp.example.com" data-login="host">
+      <label for="server-port" data-login="host">port</label>
+      <input id="server-port" name="port" type="number" required min="1" max="65535" data-login="host">
+      <label for="server-username" data-login="host">username</label>
+      <input id="server-username" name="username" type="text" required spellcheck="false" autocomplete="off" data-login="host">
+      <label for="server-password" data-login="host">password</label>
+      <input id="server-password" name="password" type="password" autocomplete="new-password" data-login="host">
+      <label for="server-url" data-login="token" hidden>server address</label>
+      <input id="server-url" name="url" type="text" required spellcheck="false" autocomplete="off" placeholder="https://acme.jfrog.io" data-login="token" hidden disabled>
+      <label for="server-token" data-login="token" hidden>token</label>
+      <input id="server-token" name="token" type="password" autocomplete="new-password" placeholder="sent as Authorization: Bearer" data-login="token" hidden disabled>
     </div>
     <div class="hostkey" hidden>
       <p class="note"></p>

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -322,21 +323,28 @@ type Server struct {
 	// unique, whatever its case, and "Manual" is taken by the entry that
 	// asks for a login instead.
 	Name string `toml:"name"`
-	// Type is the protocol the server is reached with: sftp.
+	// Type is the protocol the server is reached with: sftp or artifactory.
 	Type string `toml:"type"`
-	// Host is the name or address of the server, without a scheme or a port.
-	Host string `toml:"host"`
+	// Host is the name or address of the server, without a scheme or a port,
+	// for a type reached by a host and a login.
+	Host string `toml:"host,omitempty"`
 	// Port is where the server listens, the default of its type when not set.
 	Port int `toml:"port,omitempty"`
 	// Username and Password are the login on the server. The password is
 	// kept as it is, the way an account's is, so the file has to be kept as
 	// private as it is for those.
-	Username string `toml:"username"`
-	Password string `toml:"password"`
+	Username string `toml:"username,omitempty"`
+	Password string `toml:"password,omitempty"`
 	// HostKeyFingerprint is the SHA-256 fingerprint of the key the server
 	// showed when it was stored. A server that shows another is not logged in
 	// to until it is edited and its new key accepted.
-	HostKeyFingerprint string `toml:"hostKeyFingerprint"`
+	HostKeyFingerprint string `toml:"hostKeyFingerprint,omitempty"`
+	// URL is the address of a server of a type reached by one and a token,
+	// as ArtifactoryURL reads it: https://acme.jfrog.io/artifactory.
+	URL string `toml:"url,omitempty"`
+	// Token is what such a server is logged in to with, as a Bearer token.
+	// It is kept as it is, as the password is.
+	Token string `toml:"token,omitempty"`
 }
 
 // ServerType is a protocol a server may be reached with.
@@ -347,10 +355,18 @@ type ServerType struct {
 	DefaultPort int `json:"defaultPort"`
 	// HostKey says the server shows a key that is accepted before a login.
 	HostKey bool `json:"hostKey"`
+	// Token says the server is reached by a URL and logged in to with a
+	// Bearer token, rather than by a host, a port, a username and a password.
+	Token bool `json:"token"`
 }
 
-// ServerTypeSFTP is SFTP, over SSH with a password.
-const ServerTypeSFTP = "sftp"
+const (
+	// ServerTypeSFTP is SFTP, over SSH with a password.
+	ServerTypeSFTP = "sftp"
+	// ServerTypeArtifactory is the REST API of a JFrog Artifactory, over HTTP
+	// or HTTPS with a Bearer token.
+	ServerTypeArtifactory = "artifactory"
+)
 
 // ManualServer is the name the Send File dialog gives the login typed in, which
 // no server may have.
@@ -360,6 +376,7 @@ const ManualServer = "Manual"
 // and given an implementation in internal/remote.
 var ServerTypes = []ServerType{
 	{ID: ServerTypeSFTP, Label: "SFTP", DefaultPort: 22, HostKey: true},
+	{ID: ServerTypeArtifactory, Label: "Artifactory", Token: true},
 }
 
 // ServerTypeOf looks a protocol up by its ID.
@@ -390,6 +407,36 @@ func RemoteHost(host string) (string, error) {
 		return "", fmt.Errorf("%q is not a host name", host)
 	}
 	return host, nil
+}
+
+// ArtifactoryURL reads the address of an Artifactory: http or https, a host,
+// and the path its REST API is under, without a slash at its end. An address
+// with no path is given /artifactory, where every Artifactory has it, so that
+// https://acme.jfrog.io is enough; any other path is kept, for one behind a
+// proxy that moved it.
+func ArtifactoryURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", errors.New("name the address of the server")
+	}
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil:
+		return "", fmt.Errorf("%q is not an address", raw)
+	case u.Scheme != "http" && u.Scheme != "https":
+		return "", fmt.Errorf("%q has to begin with https:// or http://", raw)
+	case u.Host == "" || u.Hostname() == "":
+		return "", fmt.Errorf("%q names no host", raw)
+	case u.User != nil:
+		return "", errors.New("the address cannot hold a login; paste the token into its own field")
+	case u.RawQuery != "" || u.ForceQuery || u.Fragment != "":
+		return "", fmt.Errorf("%q has to be the address alone, without a query", raw)
+	}
+	p := strings.TrimRight(u.EscapedPath(), "/")
+	if p == "" {
+		p = "/artifactory"
+	}
+	return u.Scheme + "://" + strings.ToLower(u.Host) + p, nil
 }
 
 // FindServer finds a server of a list by its name, whatever its case.
@@ -1168,6 +1215,17 @@ func (c Config) validateServers() error {
 				known[k] = t.ID
 			}
 			return fmt.Errorf("%s %q: type %q is not one of %s", where, server.Name, server.Type, strings.Join(known, ", "))
+		}
+		if kind.Token {
+			if address, err := ArtifactoryURL(server.URL); err != nil {
+				return fmt.Errorf("%s %q: url: %w", where, server.Name, err)
+			} else if address != server.URL {
+				return fmt.Errorf("%s %q: url %q has to be %q", where, server.Name, server.URL, address)
+			}
+			if strings.TrimSpace(server.Token) == "" {
+				return fmt.Errorf("%s %q has no token", where, server.Name)
+			}
+			continue
 		}
 		if host, err := RemoteHost(server.Host); err != nil {
 			return fmt.Errorf("%s %q: %w", where, server.Name, err)

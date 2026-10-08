@@ -468,6 +468,7 @@ dialog .dialog-fields { display: grid; grid-template-columns: max-content minmax
 dialog .dialog-fields label { color: var(--faint); font-size: 0.85rem; }
 dialog .dialog-fields input[type="number"] { width: 7rem; }
 dialog .dialog-fields select { width: auto; justify-self: start; font-family: inherit; }
+dialog .dialog-fields [hidden] { display: none; }
 dialog input:disabled, dialog select:disabled { opacity: 0.6; }
 dialog .hostkey { display: flex; flex-direction: column; gap: 0.35rem; }
 dialog .hostkey .note.bad { color: var(--bad); }

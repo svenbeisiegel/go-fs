@@ -1255,12 +1255,23 @@
       return !chosen || chosen.dataset.hostkey === "true";
     }
 
+    // whether the login typed in is an address and a token, an Artifactory
+    function byToken() {
+      var chosen = protocol();
+      return chosen !== null && chosen.dataset.token === "true";
+    }
+
     // The fields of the login typed in are left out, not only hidden, for a
-    // stored server, so that the form does not ask for them.
+    // stored server, so that the form does not ask for them; and so are those
+    // of the login the protocol chosen does not ask for.
     function choose() {
       var server = stored() !== "";
       manual.hidden = server;
       manual.disabled = server;
+      Array.prototype.forEach.call(manual.querySelectorAll("fieldset.login"), function (set) {
+        set.hidden = (set.dataset.login === "token") !== byToken();
+        set.disabled = set.hidden;
+      });
     }
 
     function hostId() {
@@ -1298,6 +1309,8 @@
         port: parseInt(field("port").value, 10) || 0,
         username: field("username").value.trim(),
         password: field("password").value,
+        url: field("url").value.trim(),
+        token: field("token").value.trim(),
         hostKey: key,
         path: path
       };
@@ -1316,6 +1329,8 @@
       if (next === "folder") {
         if (stored()) {
           loginText.textContent = stored();
+        } else if (byToken()) {
+          loginText.textContent = login().url;
         } else {
           var host = login().host;
           loginText.textContent = login().username + "@" +
@@ -1626,7 +1641,7 @@
 
     change.addEventListener("click", function () {
       forget();
-      (stored() ? field("server") : field("password")).focus();
+      (stored() ? field("server") : field(byToken() ? "token" : "password")).focus();
     });
 
     field("server").addEventListener("change", function () {
@@ -1642,6 +1657,7 @@
         port.value = defaultPort();
       }
       lastDefault = defaultPort();
+      choose();
       forget();
     });
 
@@ -1698,13 +1714,15 @@
       quiet();
       choose();
       dialog.showModal();
-      if ((stored() || key) && at) {
+      if ((stored() || key || byToken()) && at) {
         browse(at.path);
         return;
       }
       forget();
       if (stored()) {
         field("server").focus();
+      } else if (byToken()) {
+        (field("url").value ? field("token") : field("url")).focus();
       } else {
         (field("host").value ? field("password") : field("host")).focus();
       }

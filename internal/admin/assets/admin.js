@@ -639,7 +639,8 @@ function tokenCreator(table, done) {
 // the host shows, the admin accepts it, and the server logs in with the login
 // and that key before it writes the entry into the file, at once and with
 // nothing else of the page. The record on the page is then what the file
-// holds.
+// holds. A protocol reached by an address and a token, Artifactory, asks for
+// those in place of the host and the login, and shows no key.
 const serverDialog = (() => {
   const dialog = document.getElementById("server-dialog");
   const form = dialog.querySelector("form");
@@ -679,9 +680,20 @@ const serverDialog = (() => {
     save.hidden = next !== "hostkey";
   }
 
+  // a field of the login the protocol does not use is hidden, and disabled
+  // so that the form does not ask for it
   function working(on) {
     Array.from(form.elements).forEach((element) => {
-      if (element.value !== "cancel") element.disabled = on;
+      if (element.value !== "cancel") element.disabled = on || element.hidden;
+    });
+  }
+
+  // fields shows the fields of the login the protocol chosen asks for
+  function fields() {
+    const byToken = protocol() !== null && protocol().token === true;
+    form.querySelectorAll("[data-login]").forEach((element) => {
+      element.hidden = (element.dataset.login === "token") !== byToken;
+      if (element.tagName !== "LABEL") element.disabled = element.hidden;
     });
   }
 
@@ -701,6 +713,8 @@ const serverDialog = (() => {
       port: Number(field("port").value) || 0,
       username: field("username").value.trim(),
       password: field("password").value,
+      url: field("url").value.trim(),
+      token: field("token").value.trim(),
     };
   }
 
@@ -788,7 +802,8 @@ const serverDialog = (() => {
 
   field("type").addEventListener("change", () => {
     const chosen = protocol();
-    if (chosen) field("port").value = String(chosen.defaultPort);
+    if (chosen && chosen.defaultPort) field("port").value = String(chosen.defaultPort);
+    fields();
   });
 
   // Enter presses whichever button acts first in the form, so what is done
@@ -829,12 +844,18 @@ const serverDialog = (() => {
     field("port").value = String(from.port || (protocol() ? protocol().defaultPort : ""));
     field("username").value = from.username || "";
     field("password").value = "";
-    // an edit keeps the password stored unless another is typed in
+    field("url").value = from.url || "";
+    field("token").value = "";
+    // an edit keeps the password and the token stored unless another is
+    // typed in
     field("password").placeholder = edited ? "unchanged unless typed in" : "";
+    field("token").placeholder = edited ? "unchanged unless typed in" : "sent as Authorization: Bearer";
+    fields();
     forget();
     working(false);
     dialog.showModal();
-    field(edited ? "host" : "name").focus();
+    const first = protocol() && protocol().token ? "url" : "host";
+    field(edited ? first : "name").focus();
   }
 
   return { open };

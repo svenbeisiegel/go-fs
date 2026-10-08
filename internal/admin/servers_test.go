@@ -179,7 +179,49 @@ func TestServerIsEditedInPlace(t *testing.T) {
 func TestStateOffersTheProtocols(t *testing.T) {
 	_, front := testServer(t, testConfig(t))
 	body := get(t, front)
-	if len(body.Protocols) == 0 || body.Protocols[0].ID != config.ServerTypeSFTP {
+	if len(body.Protocols) != 2 || body.Protocols[0].ID != config.ServerTypeSFTP ||
+		body.Protocols[1].ID != config.ServerTypeArtifactory || !body.Protocols[1].Token {
 		t.Errorf("the state offers %+v", body.Protocols)
+	}
+}
+
+func TestArtifactoryIsStoredOnceTheTokenWorks(t *testing.T) {
+	host := remotetest.NewArtifactoryHost(t, "secret", "libs")
+	path := testConfig(t)
+	_, front := testServer(t, path)
+	server := serverJSON{Name: "artifacts", Type: config.ServerTypeArtifactory, URL: host.URL + "/", Token: "wrong"}
+
+	status, body := postServer(t, front, ActionServerSave, serverSaveBody{Server: server})
+	if status != http.StatusBadGateway || !strings.Contains(body, "refused the token") {
+		t.Errorf("a wrong token answered %d: %s", status, body)
+	}
+	if len(loadServers(t, path)) != 0 {
+		t.Error("a server with a wrong token was stored")
+	}
+
+	server.Token = "secret"
+	status, body = postServer(t, front, ActionServerSave, serverSaveBody{Server: server})
+	if status != http.StatusOK {
+		t.Fatalf("the right token answered %d: %s", status, body)
+	}
+	stored := loadServers(t, path)
+	want := config.Server{Name: "artifacts", Type: config.ServerTypeArtifactory, URL: host.URL, Token: "secret"}
+	if len(stored) != 1 || stored[0] != want {
+		t.Fatalf("the file holds %+v, want %+v", stored, want)
+	}
+
+	// an edit that leaves the token empty keeps the one stored
+	server.Name, server.Token = "renamed", ""
+	status, body = postServer(t, front, ActionServerSave, serverSaveBody{Was: "artifacts", Server: server})
+	if status != http.StatusOK {
+		t.Fatalf("an edit without a token answered %d: %s", status, body)
+	}
+	if stored := loadServers(t, path); len(stored) != 1 || stored[0].Name != "renamed" || stored[0].Token != "secret" {
+		t.Errorf("after the edit the file holds %+v", stored)
+	}
+
+	status, body = postServer(t, front, ActionServerHostKey, serverHostKeyBody{Server: server})
+	if status != http.StatusBadRequest {
+		t.Errorf("the key of an Artifactory answered %d: %s", status, body)
 	}
 }

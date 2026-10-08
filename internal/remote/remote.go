@@ -5,7 +5,8 @@
 // and the admin interface check a login the same way.
 //
 // A protocol is one of config.ServerTypes; each has its own file here, and the
-// functions of this file pick it by Login.Type.
+// functions of this file pick it by Login.Type. What is done on a host, once
+// logged in to, is done through FS, which each protocol implements.
 package remote
 
 import (
@@ -13,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -30,6 +32,10 @@ type Login struct {
 	// HostKey is the fingerprint of the key that was accepted, for a protocol
 	// whose host shows one.
 	HostKey string
+	// URL and Token are what a protocol reached by an address and a Bearer
+	// token logs in with, in place of the host, the port and the login.
+	URL   string
+	Token string
 	// Server is the name of the stored server the login is, "" for one that
 	// was typed in. What goes wrong names it, since only an administrator can
 	// change the login of a server.
@@ -39,19 +45,21 @@ type Login struct {
 // FromServer is the login of a stored server.
 func FromServer(s config.Server) Login {
 	return Login{Type: s.Type, Host: s.Host, Port: s.Port, Username: s.Username,
-		Password: s.Password, HostKey: s.HostKeyFingerprint, Server: s.Name}
+		Password: s.Password, HostKey: s.HostKeyFingerprint, URL: s.URL, Token: s.Token, Server: s.Name}
 }
 
 // ConfigServer is the login as the entry of the file that stores it, under
 // name.
 func (l Login) ConfigServer(name string) config.Server {
 	return config.Server{Name: name, Type: l.Type, Host: l.Host, Port: l.Port, Username: l.Username,
-		Password: l.Password, HostKeyFingerprint: l.HostKey}
+		Password: l.Password, HostKeyFingerprint: l.HostKey, URL: l.URL, Token: l.Token}
 }
 
 // Checked reads a login: the type defaults to SFTP, the host loses the brackets
 // of an IPv6 address and the port defaults to that of the type. keyOnly is a
-// login only asked for the key of its host, which needs no username.
+// login only asked for the key of its host, which needs no username. A login
+// by token is its address, as config.ArtifactoryURL reads it, and the token,
+// and nothing of the rest.
 func (l Login) Checked(keyOnly bool) (Login, error) {
 	if l.Type == "" {
 		l.Type = config.ServerTypeSFTP
@@ -60,6 +68,10 @@ func (l Login) Checked(keyOnly bool) (Login, error) {
 	if !ok {
 		return Login{}, fmt.Errorf("%q is not a protocol go-fs knows", l.Type)
 	}
+	if kind.Token {
+		return l.checkedToken(kind, keyOnly)
+	}
+	l.URL, l.Token = "", ""
 	host, err := config.RemoteHost(l.Host)
 	if err != nil {
 		return Login{}, err
@@ -85,6 +97,39 @@ func (l Login) Checked(keyOnly bool) (Login, error) {
 	return l, nil
 }
 
+// checkedToken reads a login by an address and a token.
+func (l Login) checkedToken(kind config.ServerType, keyOnly bool) (Login, error) {
+	if keyOnly {
+		return Login{}, fmt.Errorf("a server reached by %s shows no key", kind.Label)
+	}
+	address, err := config.ArtifactoryURL(l.URL)
+	if err != nil {
+		return Login{}, err
+	}
+	l.URL = address
+	l.Token = strings.TrimSpace(l.Token)
+	if l.Token == "" {
+		return Login{}, errors.New("paste the token to log in with")
+	}
+	l.Host, l.Port, l.Username, l.Password, l.HostKey = "", 0, "", "", ""
+	return l, nil
+}
+
+// byToken reports a login by an address and a token.
+func (l Login) byToken() bool {
+	kind, ok := config.ServerTypeOf(l.Type)
+	return ok && kind.Token
+}
+
+// Who is who the host knows the login as, in what a page says it may not do:
+// the user, or the token.
+func (l Login) Who() string {
+	if l.byToken() {
+		return "the token"
+	}
+	return l.Username
+}
+
 // Address is where the host is dialled.
 func (l Login) Address() string {
 	return net.JoinHostPort(l.Host, strconv.Itoa(l.Port))
@@ -93,6 +138,12 @@ func (l Login) Address() string {
 // Shown is the host as a page and the log show it, without the port it has
 // when none is named.
 func (l Login) Shown() string {
+	if l.byToken() {
+		if u, err := url.Parse(l.URL); err == nil && u.Host != "" {
+			return u.Host
+		}
+		return l.URL
+	}
 	if kind, ok := config.ServerTypeOf(l.Type); ok && l.Port == kind.DefaultPort {
 		if strings.Contains(l.Host, ":") {
 			return "[" + l.Host + "]"
@@ -104,6 +155,9 @@ func (l Login) Shown() string {
 
 // Where is a path of the host as a page shows it.
 func (l Login) Where(p string) string {
+	if l.byToken() {
+		return l.URL + p
+	}
 	return l.Type + "://" + l.Shown() + p
 }
 
@@ -120,18 +174,21 @@ func HostKey(ctx context.Context, l Login, sshCfg config.SSH) (keyType, fingerpr
 
 // Test logs in to a host, to find whether the login works, and logs out again.
 func Test(ctx context.Context, l Login, sshCfg config.SSH) error {
-	switch l.Type {
-	case config.ServerTypeSFTP:
-		conn, client, err := OpenSFTP(ctx, l, sshCfg)
-		if err != nil {
+	fsys, err := Open(ctx, l, sshCfg)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = fsys.Close() }()
+	home, err := fsys.Resolve("")
+	if err != nil {
+		return fmt.Errorf("%s: %w", l.Shown(), err)
+	}
+	if _, err := fsys.Stat(home); err != nil {
+		if l.byToken() {
+			// what the token was refused with names the host already
 			return err
 		}
-		defer func() { _ = conn.Close() }()
-		defer func() { _ = client.Close() }()
-		if _, err := client.Getwd(); err != nil {
-			return fmt.Errorf("%s: %w", l.Shown(), err)
-		}
-		return nil
+		return fmt.Errorf("%s: %w", l.Shown(), err)
 	}
-	return fmt.Errorf("%q is not a protocol go-fs knows", l.Type)
+	return nil
 }

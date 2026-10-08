@@ -166,17 +166,25 @@
         <label for="send-protocol">Protocol</label>
         <select id="send-protocol" name="protocol">
           {{- range .Send.Protocols}}
-          <option value="{{.ID}}" data-port="{{.DefaultPort}}" data-hostkey="{{.HostKey}}">{{.Label}}</option>
+          <option value="{{.ID}}" data-port="{{.DefaultPort}}" data-hostkey="{{.HostKey}}" data-token="{{.Token}}">{{.Label}}</option>
           {{- end}}
         </select>
-        <label for="send-host">Host</label>
-        <input id="send-host" name="host" type="text" required placeholder="sftp.example.com" autocomplete="off" spellcheck="false">
-        <label for="send-port">Port</label>
-        <input id="send-port" name="port" type="number" required min="1" max="65535" value="22">
-        <label for="send-username">Username</label>
-        <input id="send-username" name="username" type="text" required autocomplete="off" spellcheck="false">
-        <label for="send-password">Password</label>
-        <input id="send-password" name="password" type="password" autocomplete="new-password">
+        <fieldset class="login" data-login="host">
+          <label for="send-host">Host</label>
+          <input id="send-host" name="host" type="text" required placeholder="sftp.example.com" autocomplete="off" spellcheck="false">
+          <label for="send-port">Port</label>
+          <input id="send-port" name="port" type="number" required min="1" max="65535" value="22">
+          <label for="send-username">Username</label>
+          <input id="send-username" name="username" type="text" required autocomplete="off" spellcheck="false">
+          <label for="send-password">Password</label>
+          <input id="send-password" name="password" type="password" autocomplete="new-password">
+        </fieldset>
+        <fieldset class="login" data-login="token" hidden disabled>
+          <label for="send-url">Server address</label>
+          <input id="send-url" name="url" type="text" required placeholder="https://acme.jfrog.io" autocomplete="off" spellcheck="false">
+          <label for="send-token">Token</label>
+          <input id="send-token" name="token" type="password" required placeholder="sent as Authorization: Bearer" autocomplete="new-password">
+        </fieldset>
       </fieldset>
     </div>
     <p class="connected" hidden>Connected to <span class="login"></span><button type="button" class="change">Change</button></p>

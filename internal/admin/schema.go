@@ -311,11 +311,12 @@ func kindOf(fieldType reflect.Type) (string, bool) {
 	return "", false
 }
 
-// secret reports the fields the page masks: the passwords, and the private
-// keys now that the file holds the key itself. A certificate is public and is
-// not one of them.
+// secret reports the fields the page masks: the passwords, the token a remote
+// server is logged in to with, and the private keys now that the file holds
+// the key itself. A certificate is public and is not one of them.
 func secret(name string) bool {
-	if strings.Contains(strings.ToLower(name), "password") || strings.EqualFold(name, "shareLinkSecret") {
+	if strings.Contains(strings.ToLower(name), "password") || strings.EqualFold(name, "shareLinkSecret") ||
+		strings.EqualFold(name, "token") {
 		return true
 	}
 	kind := material(name)
