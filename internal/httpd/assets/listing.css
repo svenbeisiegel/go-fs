@@ -355,13 +355,23 @@ dialog .hostkey .host { color: var(--ink); font-family: ui-monospace, SFMono-Reg
 dialog .fingerprint { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.6rem; color: var(--ink); }
 dialog .fingerprint .type { color: var(--faint); font-size: 0.8rem; }
 dialog .fingerprint code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; overflow-wrap: anywhere; }
+/* Logged in, the fields give way to a line naming the login. */
+dialog .connected { display: flex; align-items: baseline; gap: 0.4rem; color: var(--faint); }
+dialog .connected .login { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; overflow-wrap: anywhere; }
+dialog .connected .change { margin-left: auto; padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: 0.85rem; cursor: pointer; }
+dialog .connected .change:disabled { opacity: 0.45; cursor: default; }
 dialog .remote { display: flex; flex-direction: column; gap: 0.4rem; }
+/* the path of the folder, and beside it a spinner while another is read */
+dialog .remote-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; min-height: 1.3rem; }
+dialog .spinner { flex: none; width: 0.85rem; height: 0.85rem; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { dialog .spinner { animation-duration: 2s; } }
 dialog .remote-path { display: flex; flex-wrap: wrap; align-items: center; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
 dialog .remote-path button { padding: 0 0.15rem; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
 dialog .remote-path button[aria-current] { color: var(--ink); cursor: default; }
 dialog .remote-path .sep { color: var(--faint); }
 /* a fixed height, so the dialog keeps its size from one folder to the next */
-dialog .remote-list { margin: 0; padding: 0; list-style: none; height: min(18rem, 40vh); overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--ground); }
+dialog .remote-list { margin: 0; padding: 0; list-style: none; height: min(28rem, 55vh); overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--ground); }
 dialog .remote-list li { border-bottom: 1px solid var(--line); }
 dialog .remote-list li:last-child { border-bottom: 0; }
 dialog .remote-list button, dialog .remote-list .entry {

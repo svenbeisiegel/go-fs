@@ -1144,6 +1144,9 @@
     var form = dialog.querySelector("form");
     var what = dialog.querySelector("p.what");
     var fields = dialog.querySelector(".fields");
+    var connected = dialog.querySelector(".connected");
+    var loginText = connected.querySelector(".login");
+    var change = connected.querySelector(".change");
     var keyBox = dialog.querySelector(".hostkey");
     var warning = keyBox.querySelector(".warning");
     var keyHost = keyBox.querySelector(".host");
@@ -1153,6 +1156,7 @@
     var crumbs = remote.querySelector(".remote-path");
     var list = remote.querySelector(".remote-list");
     var where = remote.querySelector(".where");
+    var spinner = remote.querySelector(".spinner");
     var progress = dialog.querySelector(".progress");
     var bar = progress.querySelector("progress");
     var status = progress.querySelector(".status");
@@ -1220,8 +1224,17 @@
       });
     }
 
+    // Once logged in, the fields give way to a line naming the login, and
+    // their room to the folders of the host.
     function show(next) {
       step = next;
+      if (next === "folder") {
+        var host = login().host;
+        loginText.textContent = login().username + "@" +
+          (host.indexOf(":") >= 0 ? "[" + host + "]" : host) + ":" + login().port;
+      }
+      fields.hidden = next === "folder";
+      connected.hidden = next !== "folder";
       keyBox.hidden = next !== "hostkey";
       remote.hidden = next !== "folder";
       connect.hidden = next !== "connect";
@@ -1248,13 +1261,14 @@
       Array.prototype.forEach.call(form.querySelectorAll("input, .remote button"), function (input) {
         input.disabled = on;
       });
-      [connect, accept, go].forEach(function (button) {
+      [connect, accept, go, change].forEach(function (button) {
         button.disabled = on;
       });
       if (on) {
         bar.removeAttribute("value");
       } else {
         bar.value = 0;
+        spinner.hidden = true;
       }
     }
 
@@ -1331,7 +1345,13 @@
     function browse(path) {
       var ticket = ++asked;
       working(true);
-      tell(at ? "Reading the folder…" : "Logging in…");
+      // another folder of a host logged in to is waited on beside its path
+      if (at) {
+        quiet();
+        spinner.hidden = false;
+      } else {
+        tell("Logging in…");
+      }
       ask("send-browse", login(path)).then(function (view) {
         if (ticket !== asked) {
           return;
@@ -1508,6 +1528,11 @@
         tell(err.message, true);
       });
     }
+
+    change.addEventListener("click", function () {
+      forget();
+      field("password").focus();
+    });
 
     fields.addEventListener("input", function () {
       if (step !== "connect" || key) {

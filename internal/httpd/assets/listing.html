@@ -164,13 +164,17 @@
       <label for="send-password">Password</label>
       <input id="send-password" name="password" type="password" autocomplete="new-password">
     </div>
+    <p class="connected" hidden>Connected to <span class="login"></span><button type="button" class="change">Change</button></p>
     <div class="hostkey" hidden>
       <p class="warning" hidden></p>
       <p>The host shows this key. Accept it only if it is the one you expect of <span class="host"></span>:</p>
       <p class="fingerprint"><span class="type"></span><code></code></p>
     </div>
     <div class="remote" hidden>
-      <nav class="remote-path" aria-label="Remote folder"></nav>
+      <div class="remote-head">
+        <nav class="remote-path" aria-label="Remote folder"></nav>
+        <span class="spinner" role="status" aria-label="Reading the folder" hidden></span>
+      </div>
       <ul class="remote-list"></ul>
       <p class="where"></p>
     </div>
