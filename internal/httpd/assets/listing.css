@@ -120,15 +120,30 @@ input[type="search"] {
 .inline { display: contents; }
 
 .banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
   margin: 0.75rem 1.5rem 0;
-  padding: 0.6rem 0.85rem;
+  padding: 0.6rem 0.6rem 0.6rem 0.85rem;
   border: 1px solid var(--line);
   border-left: 3px solid var(--bad);
   border-radius: 4px;
   background: var(--raised);
-  white-space: pre-wrap;
 }
+.banner[hidden] { display: none; }
 .banner.good { border-left-color: var(--accent); }
+.banner .text { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.banner .close {
+  display: flex;
+  padding: 0.2rem;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+}
+.banner .close .ic { font-size: 1.05rem; }
+.banner .close:hover { background: var(--ground); color: var(--ink); }
 
 main { padding: 0 1.5rem; }
 

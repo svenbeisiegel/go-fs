@@ -44,15 +44,27 @@
     });
   }
 
+  var bannerText = banner.querySelector(".text");
+  // A report of something done goes away by itself after a while; a problem
+  // stays until it is dismissed, so that it is not missed.
+  var bannerTimer = null;
+
   function say(message, good) {
-    banner.textContent = message;
+    window.clearTimeout(bannerTimer);
+    bannerText.textContent = message;
     banner.classList.toggle("good", good === true);
     banner.hidden = false;
+    if (good === true) {
+      bannerTimer = window.setTimeout(clear, 15000);
+    }
   }
 
   function clear() {
+    window.clearTimeout(bannerTimer);
     banner.hidden = true;
   }
+
+  banner.querySelector(".close").addEventListener("click", clear);
 
   // A message that has to survive the reload after a pull is kept for the
   // next page of this tab. Storage may be off; the reload then says nothing.
