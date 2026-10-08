@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -413,13 +414,13 @@ func (a *artifactoryFS) Put(p string, body io.Reader, size int64) (int64, error)
 	resp, err := a.do(http.MethodPut, a.itemURL(p), counted, size,
 		http.Header{"Content-Type": {"application/octet-stream"}})
 	if err != nil {
-		return counted.n, err
+		return counted.n.Load(), err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return counted.n, a.failure(resp)
+		return counted.n.Load(), a.failure(resp)
 	}
-	return counted.n, nil
+	return counted.n.Load(), nil
 }
 
 func (a *artifactoryFS) Mkdir(p string) error {
@@ -582,14 +583,16 @@ func (f *artifactoryFile) Close() error {
 	return err
 }
 
-// countingReader counts what was read through it.
+// countingReader counts what was read through it. The count is atomic: the
+// HTTP transport reads a request body on its own goroutine, and may still be
+// at it when the response is in.
 type countingReader struct {
 	r io.Reader
-	n int64
+	n atomic.Int64
 }
 
 func (c *countingReader) Read(b []byte) (int, error) {
 	n, err := c.r.Read(b)
-	c.n += int64(n)
+	c.n.Add(int64(n))
 	return n, err
 }
