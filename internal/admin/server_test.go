@@ -276,7 +276,7 @@ func TestPageMenuTakesTheNav(t *testing.T) {
 	}
 
 	bare := page(nil)
-	if !strings.Contains(bare, `<summary class="plain">Admin<`) {
+	if !strings.Contains(bare, `<summary class="plain"><svg class="ic"><use href="#i-gear"/></svg>Admin<`) {
 		t.Error("the menu is not labelled with the page")
 	}
 	if strings.Contains(bare, "</svg>Registry</a>") {

@@ -238,18 +238,18 @@ func TestTheMenuOffersTheOtherPagesInOrder(t *testing.T) {
 	}
 
 	listing := bodyOf(t, withSession(t, server, http.MethodGet, "/", root))
-	inOrder("listing", listing, `<summary class="plain">Files<`,
+	inOrder("listing", listing, `<summary class="plain"><svg class="ic"><use href="#i-folder"/></svg>Files<`,
 		`</svg>Registry</a>`, `</svg>Admin</a>`, `</svg>Log out root</button>`)
 	if strings.Contains(listing, `</svg>Files</a>`) {
 		t.Error("the listing links to itself")
 	}
 
 	registry := bodyOf(t, withSession(t, server, http.MethodGet, "/?go-fs=registry", root))
-	inOrder("registry", registry, `<summary class="plain">Registry<`,
+	inOrder("registry", registry, `<summary class="plain"><svg class="ic"><use href="#i-box"/></svg>Registry<`,
 		`</svg>Files</a>`, `</svg>Admin</a>`, `</svg>Log out root</button>`)
 
 	admin := bodyOf(t, withSession(t, server, http.MethodGet, "/?go-fs=admin", root))
-	inOrder("admin", admin, `<summary class="plain">Admin<`,
+	inOrder("admin", admin, `<summary class="plain"><svg class="ic"><use href="#i-gear"/></svg>Admin<`,
 		`</svg>Files</a>`, `<a href="/?go-fs=registry">`, `</svg>Log out root</button>`)
 
 	// without a registry the admin page offers none

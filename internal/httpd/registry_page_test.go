@@ -82,7 +82,7 @@ func TestRegistryListShowsEveryTagWithItsPlatforms(t *testing.T) {
 		`<span class="badge" title="linux/arm64">arm64</span>`,
 		`>tool<wbr>:latest<`,
 		`<span class="badge" title="linux/arm/v7">arm/v7</span>`,
-		`<summary class="plain">Registry<`,
+		`<summary class="plain"><svg class="ic"><use href="#i-box"/></svg>Registry<`,
 		`<a href="/"><svg class="ic"><use href="#i-folder"/></svg>Files</a>`,
 		`aria-label="Options for team/app:1.0"`,
 		`data-pull="docker pull 127.0.0.1:`,

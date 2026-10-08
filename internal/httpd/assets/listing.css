@@ -32,9 +32,11 @@ body {
   font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
-/* Everything that only works once the script has run is hidden until it has. */
-.needs-js { display: none; }
-.js .needs-js { display: revert; }
+/* Everything that only works once the script has run is hidden until it has.
+   Once it has, the element keeps the display its own rules give it: a revert
+   here would turn the buttons back into inline blocks, and their icons would
+   sit on the baseline of the text. */
+:root:not(.js) .needs-js { display: none; }
 
 .ic { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor;
       stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }

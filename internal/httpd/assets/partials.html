@@ -31,7 +31,7 @@
 {{define "session"}}
 {{if or .Files .Registry .Admin .User .CanLogin}}
 <details class="nav">
-  <summary class="plain">{{.Page}}<svg class="ic caret"><use href="#i-caret"/></svg></summary>
+  <summary class="plain"><svg class="ic"><use href="#{{if eq .Page "Registry"}}i-box{{else}}i-folder{{end}}"/></svg>{{.Page}}<svg class="ic caret"><use href="#i-caret"/></svg></summary>
   <div class="menu">
     {{if .Files}}<a href="{{.Files}}"><svg class="ic"><use href="#i-folder"/></svg>Files</a>{{end}}
     {{if .Registry}}<a href="{{.Registry}}"><svg class="ic"><use href="#i-box"/></svg>Registry</a>{{end}}
