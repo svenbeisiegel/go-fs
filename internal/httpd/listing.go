@@ -232,6 +232,10 @@ func mustRead(name string) string {
 
 // rights is what the page may offer to the account looking at it.
 type rights struct {
+	// Download is Download on a file or a folder, and the link on a file's
+	// name; the page of a stored server leaves them out where the server
+	// does not allow downloads.
+	Download     bool
 	Upload       bool
 	DeleteFile   bool
 	DeleteFolder bool
@@ -271,6 +275,10 @@ type sendView struct {
 func sendViewOf(servers []config.Server) sendView {
 	view := sendView{Protocols: config.ServerTypes, Manual: config.ManualServer}
 	for _, server := range servers {
+		// a server only takes a file it allows uploads of
+		if !server.Rights().Upload {
+			continue
+		}
 		view.Servers = append(view.Servers, server.Name)
 	}
 	return view

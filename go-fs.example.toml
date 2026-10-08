@@ -247,6 +247,18 @@ banner = []
 # The SHA-256 fingerprint of the key the server showed when it was stored. A
 # server that shows another is not logged in to until it is edited.
 # hostKeyFingerprint = "SHA256:…"
+# What go-fs may do on the server, for any account, on top of what the
+# account itself may. Downloading and fetching a file of it: true when not
+# set.
+# allowDownload = true
+# Uploading a file to it, and sending one with Send File: false when not set.
+# allowUpload = true
+# Creating a folder on it: false when not set.
+# allowCreate = true
+# Deleting a file or a folder on it: false when not set.
+# allowDelete = true
+# Renaming a file or a folder on it: false when not set.
+# allowRename = true
 #
 # An Artifactory is reached by its address and logged in to with a token,
 # sent as "Authorization: Bearer <token>". The address is where the REST API

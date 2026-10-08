@@ -273,8 +273,8 @@ func TestTokenTable(t *testing.T) {
 }
 
 // A remote server is added and edited in a dialog that logs in to it first, so
-// the list has no blank record to add, and only the name is typed into it. A
-// folded server is named by its name.
+// the list has no blank record to add, and only the name and the rights are
+// typed into it. A folded server is named by its name.
 func TestServerTable(t *testing.T) {
 	schema, _ := build()
 	var table Table
@@ -289,7 +289,7 @@ func TestServerTable(t *testing.T) {
 	kinds := map[string]string{}
 	for _, field := range table.Fields {
 		kinds[field.Key] = field.Kind
-		if field.ReadOnly != (field.Key != "name") {
+		if field.ReadOnly != (field.Key != "name" && !strings.HasPrefix(field.Key, "allow")) {
 			t.Errorf("servers.%s read-only is %v", field.Key, field.ReadOnly)
 		}
 		if field.Summary != (field.Key == "name") {
@@ -301,7 +301,8 @@ func TestServerTable(t *testing.T) {
 	}
 	want := map[string]string{"name": kindText, "type": kindText, "host": kindText, "port": kindInt,
 		"username": kindText, "password": kindSecret, "hostKeyFingerprint": kindText,
-		"url": kindText, "token": kindSecret}
+		"url": kindText, "token": kindSecret, "allowDownload": kindBool, "allowUpload": kindBool,
+		"allowCreate": kindBool, "allowDelete": kindBool, "allowRename": kindBool}
 	if !reflect.DeepEqual(kinds, want) {
 		t.Errorf("the server fields are %v, want %v", kinds, want)
 	}

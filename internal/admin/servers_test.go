@@ -176,6 +176,40 @@ func TestServerIsEditedInPlace(t *testing.T) {
 	}
 }
 
+// The dialog edits the login of a server, and what the server allows stays as
+// the file has it.
+func TestServerEditKeepsTheRights(t *testing.T) {
+	host := remotetest.NewSFTPHost(t, "alice", "secret")
+	path := testConfig(t)
+	_, front := testServer(t, path)
+	if status, body := postServer(t, front, ActionServerSave,
+		serverSaveBody{Server: serverOn(host, "backup", "secret"), HostKey: host.Fingerprint}); status != http.StatusOK {
+		t.Fatalf("storing answered %d: %s", status, body)
+	}
+	if servers := loadServers(t, path); servers[0].AllowDownload != nil || servers[0].AllowUpload != nil {
+		t.Errorf("a new server is stored with rights: %+v", servers[0])
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yes, no := true, false
+	cfg.Servers[0].AllowDownload, cfg.Servers[0].AllowUpload, cfg.Servers[0].AllowRename = &no, &yes, &yes
+	if err := config.Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	if status, body := postServer(t, front, ActionServerSave,
+		serverSaveBody{Was: "backup", Server: serverOn(host, "backup", ""), HostKey: host.Fingerprint}); status != http.StatusOK {
+		t.Fatalf("the edit answered %d: %s", status, body)
+	}
+	rights := loadServers(t, path)[0].Rights()
+	if want := (config.ServerRights{Upload: true, Rename: true}); rights != want {
+		t.Errorf("the edited server allows %+v, want %+v", rights, want)
+	}
+}
+
 func TestStateOffersTheProtocols(t *testing.T) {
 	_, front := testServer(t, testConfig(t))
 	body := get(t, front)

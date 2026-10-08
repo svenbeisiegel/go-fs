@@ -1345,7 +1345,8 @@ dialog opens with a **Server** list: the servers an admin stored (see
 [Stored servers](#stored-servers)), and **Manual**, chosen at first, which
 asks for a login instead.
 
-A stored server is picked by its name. **Connect** goes straight to its
+A stored server is listed only when it allows uploads (`allowUpload`, see
+[Stored servers](#stored-servers)). It is picked by its name. **Connect** goes straight to its
 folders with the login and the host key the configuration file holds. The
 page never sees the password or the key; a host that shows another key than
 the stored one is not logged in to, and the dialog says that an administrator
@@ -1425,10 +1426,11 @@ The servers the dialog lists are `[[servers]]` entries, managed on the
    page; other changes still wait for **Apply**. The file is rewritten and kept
    as `.bak`, as Apply does.
 
-On the tab, the name of a server can be changed and the server removed, both
-written by **Apply**; everything else is read-only and changed with
-**Edit…**, which goes through the same dialog. An edit that leaves the
-password or the token empty keeps the stored one.
+On the tab, the name and the rights of a server can be changed and the server
+removed, all written by **Apply**; everything else is read-only and changed
+with **Edit…**, which goes through the same dialog. An edit that leaves the
+password or the token empty keeps the stored one, and an edit keeps the
+rights as they are.
 
 ```toml
 [[servers]]
@@ -1444,6 +1446,21 @@ hostKeyFingerprint = "SHA256:…"
 The name has to be unique, whatever its case, and cannot be `Manual`. The
 password is kept in plain text, as an account's is. Every account that may
 send sees every stored server, by name.
+
+What go-fs may do on a server is set per server, for every account, on top of
+what the account itself may: an action needs both.
+
+| key | allows | when not set |
+|---|---|---|
+| `allowDownload` | downloading a file, a folder as `.tar.xz`, and **Fetch…** into the served tree | `true` |
+| `allowUpload` | uploading to the server, and **Send File…** to it | `false` |
+| `allowCreate` | **New folder** | `false` |
+| `allowDelete` | deleting a file or a folder | `false` |
+| `allowRename` | renaming a file or a folder | `false` |
+
+A server stored without any of them can be browsed and downloaded from, and
+nothing more. Its folders are always listed; one without `allowDownload` shows
+its files without a link or **Download**.
 
 #### Artifactory
 
@@ -1501,7 +1518,8 @@ page never sees the password or the key. A server that cannot be reached,
 refuses the login or shows a different key is shown as an empty listing, with
 the reason in the banner.
 
-What an account may change on the server follows its permissions, as in the
+What an account may change on the server follows the rights of the server
+(see [Stored servers](#stored-servers)) and its own permissions, as in the
 served folder: `allowUserFileCreate` to upload, `allowUserFileOverwrite` to
 replace, `allowUserFolderCreate` for New folder, `allowUserFileCreate` and
 `allowUserFileDelete` to rename, and `allowUserFileDelete` and

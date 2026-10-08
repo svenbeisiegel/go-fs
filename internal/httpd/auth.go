@@ -549,6 +549,8 @@ func granted(perms config.Permissions, act action) bool {
 // checks in ServeHTTP saying the same thing.
 func (s *Server) rightsFor(set *settings, user *account, virtual string) rights {
 	return rights{
+		// whoever sees the listing may read what it lists
+		Download:     true,
 		Upload:       s.permits(set, user, http.MethodPut, virtual, actCreate),
 		Mkdir:        s.permits(set, user, methodMkcol, virtual, actMkdir),
 		DeleteFile:   s.permits(set, user, http.MethodDelete, virtual, actDeleteFile),

@@ -417,10 +417,18 @@ func listingOf(t *testing.T, server *testServer, session *http.Cookie) string {
 	return bodyOf(t, do(t, req))
 }
 
-// storedServer is a server the admin interface stored for the host.
+// storedServer is a server the admin interface stored for the host, which
+// allows everything.
 func storedServer(h *remotetest.SFTPHost, name string) config.Server {
-	return config.Server{Name: name, Type: config.ServerTypeSFTP, Host: h.Host, Port: h.Port,
-		Username: "alice", Password: "secret", HostKeyFingerprint: h.Fingerprint}
+	return allowingAll(config.Server{Name: name, Type: config.ServerTypeSFTP, Host: h.Host, Port: h.Port,
+		Username: "alice", Password: "secret", HostKeyFingerprint: h.Fingerprint})
+}
+
+// allowingAll is the server with every right switched on.
+func allowingAll(server config.Server) config.Server {
+	server.AllowDownload, server.AllowUpload, server.AllowCreate = ptr(true), ptr(true), ptr(true)
+	server.AllowDelete, server.AllowRename = ptr(true), ptr(true)
+	return server
 }
 
 func TestSendToAStoredServer(t *testing.T) {

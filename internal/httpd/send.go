@@ -166,6 +166,9 @@ func (b sendBody) request(action string, servers []config.Server) (sendRequest, 
 		if !ok {
 			return sendRequest{}, fmt.Errorf("there is no server named %q", name)
 		}
+		if !server.Rights().Upload {
+			return sendRequest{}, fmt.Errorf("the server %s does not allow to upload", server.Name)
+		}
 		login, err := remote.FromServer(server).Checked(false)
 		if err != nil {
 			return sendRequest{}, fmt.Errorf("the server %s: %w", server.Name, err)

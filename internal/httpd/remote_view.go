@@ -41,9 +41,10 @@ import (
 //
 // Browsing is offered to whoever may send, a session of an account that may
 // read, since the server's login reaches as far as a send does. What the
-// account may do beyond reading follows its permissions, as it does for the
-// served folder; its paths are of the served folder, and say nothing of a
-// server's.
+// account may do beyond listing follows its permissions, as it does for the
+// served folder, and what the server allows (see config.Server.Rights): both
+// have to grant a right. The account's paths are of the served folder, and say
+// nothing of a server's.
 
 const (
 	actionRemote = "remote"
@@ -180,6 +181,14 @@ func (s *Server) handleRemote(set *settings, w http.ResponseWriter, r *http.Requ
 	}
 }
 
+// remoteRefused answers a request the server does not allow, whatever the
+// account may.
+func (s *Server) remoteRefused(w http.ResponseWriter, q *remoteRequest, what string) {
+	s.log.Info("http remote refused, the server does not allow it", "server", q.server.Name,
+		"action", what, "path", q.path, "user", q.user.name, "address", q.address)
+	http.Error(w, fmt.Sprintf("the server %s does not allow to %s", q.server.Name, what), http.StatusForbidden)
+}
+
 // remoteGet lists a folder, packs it, or downloads a file.
 func (s *Server) remoteGet(set *settings, w http.ResponseWriter, r *http.Request, cred credential, q *remoteRequest, page bool) {
 	p, err := q.fs.Resolve(q.path)
@@ -201,8 +210,13 @@ func (s *Server) remoteGet(set *settings, w http.ResponseWriter, r *http.Request
 		return
 	}
 	q.path = p
+	archive := info.IsDir() && r.URL.Query().Get(remoteArchiveParam) != ""
+	if (archive || !info.IsDir()) && !q.server.Rights().Download {
+		s.remoteRefused(w, q, "download")
+		return
+	}
 	switch {
-	case info.IsDir() && r.URL.Query().Get(remoteArchiveParam) != "":
+	case archive:
 		s.remoteArchive(w, r, q)
 	case info.IsDir():
 		entries, err := readRemoteDirectory(q.fs, p)
@@ -245,17 +259,18 @@ func readRemoteDirectory(fsys remote.FS, folder string) ([]entry, error) {
 // remoteRights are what the page of a server offers: what the account may do
 // in the served folder, short of sharing and sending, which go-fs does with
 // what it serves itself; and fetching a file into the served tree, where the
-// account may create one.
-func remoteRights(cred credential) rights {
-	perms := cred.user.perms
+// account may create one. Each is offered only where the server allows it too.
+func remoteRights(cred credential, server config.Server) rights {
+	perms, allowed := cred.user.perms, server.Rights()
 	return rights{
-		Upload:       granted(perms, actCreate),
-		Mkdir:        granted(perms, actMkdir),
-		Rename:       granted(perms, actRename),
-		DeleteFile:   granted(perms, actDeleteFile),
-		DeleteFolder: granted(perms, actDeleteFolder),
+		Download:     allowed.Download,
+		Upload:       allowed.Upload && granted(perms, actCreate),
+		Mkdir:        allowed.Create && granted(perms, actMkdir),
+		Rename:       allowed.Rename && granted(perms, actRename),
+		DeleteFile:   allowed.Delete && granted(perms, actDeleteFile),
+		DeleteFolder: allowed.Delete && granted(perms, actDeleteFolder),
 		Downloads:    mayFollowFetches(cred),
-		RemoteFetch:  granted(perms, actCreate),
+		RemoteFetch:  allowed.Download && granted(perms, actCreate),
 	}
 }
 
@@ -335,7 +350,7 @@ func (s *Server) remotePage(set *settings, w http.ResponseWriter, r *http.Reques
 		}
 	}
 	who.Servers = others
-	page, err := listingPage(place, entries, parseSort(r.URL.Query()), remoteRights(cred), sendView{},
+	page, err := listingPage(place, entries, parseSort(r.URL.Query()), remoteRights(cred, q.server), sendView{},
 		who, nonce, set.cfg.MaxChunkSize)
 	if err != nil {
 		s.log.Error("http cannot render the remote listing", "server", q.server.Name, "error", err)
@@ -477,6 +492,10 @@ func addRemoteFile(fsys remote.FS, archive *tar.Writer, p string, info fs.FileIn
 // when it may not: a folder is never written over, and a file only by an
 // account that may replace files. It reports whether the name is taken.
 func (s *Server) remoteTaken(w http.ResponseWriter, r *http.Request, q *remoteRequest) (taken, ok bool) {
+	if !q.server.Rights().Upload {
+		s.remoteRefused(w, q, "upload")
+		return false, false
+	}
 	info, err := q.fs.Stat(q.path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -505,6 +524,10 @@ func (s *Server) remoteTaken(w http.ResponseWriter, r *http.Request, q *remoteRe
 func (s *Server) remotePut(set *settings, w http.ResponseWriter, r *http.Request, q *remoteRequest) {
 	if q.path == "" || q.path == "/" {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	if !q.server.Rights().Upload {
+		s.remoteRefused(w, q, "upload")
 		return
 	}
 	label := vfs.Target{Virtual: q.logged(q.path)}
@@ -648,6 +671,10 @@ func (s *Server) remoteMkdir(w http.ResponseWriter, r *http.Request, q *remoteRe
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
+	if !q.server.Rights().Create {
+		s.remoteRefused(w, q, "create a folder")
+		return
+	}
 	if q.path == "" || q.path == "/" {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
@@ -669,6 +696,10 @@ func (s *Server) remoteMkdir(w http.ResponseWriter, r *http.Request, q *remoteRe
 func (s *Server) remoteMove(set *settings, w http.ResponseWriter, r *http.Request, q *remoteRequest) {
 	if !granted(q.user.perms, actRename) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	if !q.server.Rights().Rename {
+		s.remoteRefused(w, q, "rename")
 		return
 	}
 	destination, err := url.Parse(r.Header.Get("Destination"))
@@ -704,6 +735,10 @@ func (s *Server) remoteMove(set *settings, w http.ResponseWriter, r *http.Reques
 func (s *Server) remoteDelete(w http.ResponseWriter, r *http.Request, q *remoteRequest) {
 	if q.path == "" || q.path == "/" {
 		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	if !q.server.Rights().Delete {
+		s.remoteRefused(w, q, "delete")
 		return
 	}
 	info, err := q.fs.Lstat(q.path)

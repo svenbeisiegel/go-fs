@@ -15,9 +15,9 @@ import (
 )
 
 // storedArtifactory is an Artifactory the admin interface stored for the
-// host.
+// host, which allows everything.
 func storedArtifactory(h *remotetest.ArtifactoryHost, name string) config.Server {
-	return config.Server{Name: name, Type: config.ServerTypeArtifactory, URL: h.URL, Token: h.Token}
+	return allowingAll(config.Server{Name: name, Type: config.ServerTypeArtifactory, URL: h.URL, Token: h.Token})
 }
 
 // artifactoryServer serves a stored Artifactory named Artifacts, with a

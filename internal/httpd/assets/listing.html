@@ -60,7 +60,7 @@
     {{end}}
     {{range .Entries}}
     <tr data-name="{{.Name}}" data-dir="{{.Group}}" data-size="{{.Bytes}}" data-time="{{.Unix}}" data-kind="{{.Kind}}"{{if (or (and .IsDir $.Rights.DeleteFolder) (and (not .IsDir) $.Rights.DeleteFile))}} data-delete="1"{{end}}>
-      <td><span class="name"><svg class="ic{{if .IsDir}} dir{{end}}"><use href="{{if .IsDir}}#i-folder{{else}}#i-file{{end}}"/></svg><a href="{{.Link}}">{{.Label}}</a></span></td>
+      <td><span class="name"><svg class="ic{{if .IsDir}} dir{{end}}"><use href="{{if .IsDir}}#i-folder{{else}}#i-file{{end}}"/></svg>{{if or .IsDir $.Rights.Download}}<a href="{{.Link}}">{{.Label}}</a>{{else}}<span>{{.Label}}</span>{{end}}</span></td>
       <td class="meta c-mod">{{.Modified}}</td>
       <td class="meta c-kind">{{.Kind}}</td>
       <td class="meta num c-size">{{.Size}}</td>
@@ -84,7 +84,7 @@
 </main>
 
 <div id="menu" class="menu" role="menu" hidden>
-  <a role="menuitem" data-do="download" download><svg class="ic"><use href="#i-download"/></svg><span>Download</span></a>
+  {{if .Rights.Download}}<a role="menuitem" data-do="download" download><svg class="ic"><use href="#i-download"/></svg><span>Download</span></a>{{end}}
   {{if .Rights.Share}}<button type="button" role="menuitem" data-do="share"><svg class="ic"><use href="#i-link"/></svg>Share&#8230;</button>{{end}}
   {{if .Rights.Send}}<button type="button" role="menuitem" data-do="send"><svg class="ic"><use href="#i-send"/></svg>Send File&#8230;</button>{{end}}
   {{if .Rights.RemoteFetch}}<button type="button" role="menuitem" data-do="remote-fetch"><svg class="ic"><use href="#i-download"/></svg>Fetch&#8230;</button>{{end}}

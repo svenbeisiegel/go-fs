@@ -801,6 +801,19 @@ func TestServers(t *testing.T) {
 	}
 }
 
+// A server allows downloading unless it is switched off, and everything else
+// only once it is switched on.
+func TestServerRights(t *testing.T) {
+	yes, no := true, false
+	if got, want := (Server{}).Rights(), (ServerRights{Download: true}); got != want {
+		t.Errorf("a server allows %+v by default, want %+v", got, want)
+	}
+	all := Server{AllowDownload: &no, AllowUpload: &yes, AllowCreate: &yes, AllowDelete: &yes, AllowRename: &yes}
+	if got, want := all.Rights(), (ServerRights{Upload: true, Create: true, Delete: true, Rename: true}); got != want {
+		t.Errorf("a server allows %+v, want %+v", got, want)
+	}
+}
+
 func TestArtifactoryURL(t *testing.T) {
 	for raw, want := range map[string]string{
 		"https://acme.jfrog.io":                   "https://acme.jfrog.io/artifactory",

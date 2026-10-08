@@ -148,8 +148,9 @@ func TestAFileIsSentToAStoredServer(t *testing.T) {
 		map[string]any{"host": host, "port": portNumber}, &key); status != http.StatusOK {
 		t.Fatalf("the host key answered %d", status)
 	}
+	allow := true
 	c.cfg.Servers = []config.Server{{Name: "Cluster", Type: config.ServerTypeSFTP, Host: host, Port: portNumber,
-		Username: "alice", Password: "pw", HostKeyFingerprint: key.Fingerprint}}
+		Username: "alice", Password: "pw", HostKeyFingerprint: key.Fingerprint, AllowUpload: &allow}}
 	c.reload(t, c.cfg.Users)
 
 	send := map[string]any{"server": "Cluster", "path": share + "/inbox"}

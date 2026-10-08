@@ -160,6 +160,12 @@ func (s *Server) remoteFetchStart(set *settings, w http.ResponseWriter, r *http.
 		http.NotFound(w, r)
 		return
 	}
+	if !server.Rights().Download {
+		s.log.Info("http remote fetch refused, the server does not allow downloads",
+			"server", server.Name, "user", cred.user.name, "address", address)
+		http.Error(w, fmt.Sprintf("the server %s does not allow to download", server.Name), http.StatusForbidden)
+		return
+	}
 	login, err := remote.FromServer(server).Checked(false)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("the server %s: %v", server.Name, err), http.StatusBadGateway)

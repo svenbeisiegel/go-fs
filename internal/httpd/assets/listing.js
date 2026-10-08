@@ -487,9 +487,12 @@
   function openMenu(button) {
     var row = button.closest("tr");
     var isFolder = row.dataset.dir === "1";
-    download.href = !isFolder ? segment(row.dataset.name)
-      : remote ? segment(row.dataset.name) + "&archive=1" : segment(row.dataset.name) + "/?go-fs=archive";
-    download.querySelector("span").textContent = isFolder ? "Download as .tar.xz" : "Download";
+    // a stored server may not allow downloads, and then there is none
+    if (download) {
+      download.href = !isFolder ? segment(row.dataset.name)
+        : remote ? segment(row.dataset.name) + "&archive=1" : segment(row.dataset.name) + "/?go-fs=archive";
+      download.querySelector("span").textContent = isFolder ? "Download as .tar.xz" : "Download";
+    }
     if (removal) {
       removal.hidden = row.dataset.delete !== "1";
     }
@@ -505,6 +508,10 @@
     if (importing) {
       importing.hidden = isFolder || !archiveName.test(row.dataset.name);
       importing.href = importing.dataset.registry + "&import=" + encodeURIComponent(row.dataset.name);
+    }
+    // where a stored server allows nothing on the row, there is no menu
+    if (!items().length) {
+      return;
     }
     opener = button;
     button.setAttribute("aria-expanded", "true");

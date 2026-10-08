@@ -317,7 +317,8 @@ func (t Token) ExpiresAt() (time.Time, bool) {
 // without whoever sends it typing the login or ever seeing the password. The
 // admin interface adds and edits servers, and stores one only once it has
 // logged in to it; the listing offers every server to every session that may
-// send.
+// send, and what may be done on one is what both the account and the server
+// allow (see Rights).
 type Server struct {
 	// Name is what the Send File dialog lists the server as. It has to be
 	// unique, whatever its case, and "Manual" is taken by the entry that
@@ -345,6 +346,53 @@ type Server struct {
 	// Token is what such a server is logged in to with, as a Bearer token.
 	// It is kept as it is, as the password is.
 	Token string `toml:"token,omitempty"`
+
+	// The rights below are what go-fs may do on the server, for any account
+	// and on top of what the account itself may; Rights resolves them. They
+	// are pointers only so that Save can leave an unset key out of the file.
+
+	// AllowDownload lets a file or a folder of the server be downloaded, and
+	// a file of it be fetched into the served tree. Granted when not set.
+	AllowDownload *bool `toml:"allowDownload,omitempty"`
+	// AllowUpload lets a file be uploaded to the server, and sent to it with
+	// Send File; a server without it is not offered there. Denied when not
+	// set.
+	AllowUpload *bool `toml:"allowUpload,omitempty"`
+	// AllowCreate lets a folder be created on the server. Denied when not set.
+	AllowCreate *bool `toml:"allowCreate,omitempty"`
+	// AllowDelete lets a file or a folder of the server be deleted. Denied
+	// when not set.
+	AllowDelete *bool `toml:"allowDelete,omitempty"`
+	// AllowRename lets a file or a folder of the server be renamed. Denied
+	// when not set.
+	AllowRename *bool `toml:"allowRename,omitempty"`
+}
+
+// ServerRights are what go-fs may do on a stored server.
+type ServerRights struct {
+	// Download is downloading a file or a folder of the server, and
+	// fetching a file of it into the served tree.
+	Download bool
+	// Upload is uploading a file to the server, and sending one to it.
+	Upload bool
+	// Create is creating a folder.
+	Create bool
+	// Delete is deleting a file or a folder.
+	Delete bool
+	// Rename is renaming a file or a folder.
+	Rename bool
+}
+
+// Rights resolves the rights of the server entry: downloading unless it is
+// switched off, the rest only once switched on.
+func (s Server) Rights() ServerRights {
+	return ServerRights{
+		Download: boolOr(s.AllowDownload, true),
+		Upload:   boolOr(s.AllowUpload, false),
+		Create:   boolOr(s.AllowCreate, false),
+		Delete:   boolOr(s.AllowDelete, false),
+		Rename:   boolOr(s.AllowRename, false),
+	}
 }
 
 // ServerType is a protocol a server may be reached with.
