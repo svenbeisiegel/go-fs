@@ -772,6 +772,21 @@ func TestServers(t *testing.T) {
 		"an allowed user with spaces": func(s *Server) {
 			s.AllowedUsers = []string{"alice "}
 		},
+		"a vault without a password": func(s *Server) {
+			s.VaultPath = "/vault"
+		},
+		"a vault password without a vault": func(s *Server) {
+			s.VaultPassword = "pw"
+		},
+		"a vault at the top of the server": func(s *Server) {
+			s.VaultPath, s.VaultPassword = "/", "pw"
+		},
+		"a vault above the login": func(s *Server) {
+			s.VaultPath, s.VaultPassword = "../vault", "pw"
+		},
+		"a vault path that is not clean": func(s *Server) {
+			s.VaultPath, s.VaultPassword = "/vaults//team/", "pw"
+		},
 	} {
 		server := valid
 		change(&server)
@@ -789,6 +804,11 @@ func TestServers(t *testing.T) {
 	named.AllowedUsers = []string{"alice", "nobody-configured"}
 	if err := check(named); err != nil {
 		t.Errorf("a server with allowed users was refused: %v", err)
+	}
+	vaulted := valid
+	vaulted.VaultPath, vaulted.VaultPassword = "vaults/team", "pw"
+	if err := check(vaulted); err != nil {
+		t.Errorf("a server with a vault was refused: %v", err)
 	}
 
 	if got, ok := FindServer([]Server{valid}, "Backup"); !ok || !reflect.DeepEqual(got, valid) {

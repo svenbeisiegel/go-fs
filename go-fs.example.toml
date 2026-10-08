@@ -256,6 +256,15 @@ banner = []
 # server that shows another is not logged in to until it is edited. An smb
 # server shows no key and has none.
 # hostKeyFingerprint = "SHA256:…"
+# A folder of the server that is a vault of Cryptomator, and the password
+# that unlocks it. go-fs then works in the vault alone, and encrypts and
+# decrypts its files and their names on the way, so the server only ever
+# holds ciphertext; the Cryptomator apps open the same vault. A path without
+# a slash in front is from where the login starts. The admin interface makes
+# a new vault or opens one that is there. The password is kept as it is, so
+# the vault is only as private as this file. No vault when not set.
+# vaultPath = "vaults/backup"
+# vaultPassword = "secret"
 # What go-fs may do on the server, for any account, on top of what the
 # account itself may. Downloading and fetching a file of it: true when not
 # set.

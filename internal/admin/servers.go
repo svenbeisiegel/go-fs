@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"go-fs/internal/cryptomator"
 	"go-fs/internal/remote"
 )
 
@@ -38,11 +39,17 @@ type serverJSON struct {
 	Password string `json:"password"`
 	URL      string `json:"url"`
 	Token    string `json:"token"`
+	// VaultPath and VaultPassword are the vault of Cryptomator on the server,
+	// and CreateVault makes a new one there rather than opening one.
+	VaultPath     string `json:"vaultPath"`
+	VaultPassword string `json:"vaultPassword"`
+	CreateVault   bool   `json:"createVault"`
 }
 
 func (s serverJSON) login() remote.Login {
 	return remote.Login{Type: strings.TrimSpace(s.Type), Host: s.Host, Port: s.Port,
-		Username: s.Username, Password: s.Password, URL: s.URL, Token: s.Token}
+		Username: s.Username, Password: s.Password, URL: s.URL, Token: s.Token,
+		VaultPath: s.VaultPath, VaultPassword: s.VaultPassword}
 }
 
 // serverHostKeyBody asks for the key of the host of a server.
@@ -146,6 +153,11 @@ func (h *Handler) handleServerSave(w http.ResponseWriter, r *http.Request) {
 	if index >= 0 && strings.TrimSpace(login.Token) == "" {
 		login.Token = cfg.Servers[index].Token
 	}
+	// as is the password of the vault, unless the vault is a new one, whose
+	// password is the one it is made with
+	if index >= 0 && login.VaultPassword == "" && !body.Server.CreateVault {
+		login.VaultPassword = cfg.Servers[index].VaultPassword
+	}
 	login.HostKey = body.HostKey
 	login, err = login.Checked(false)
 	if err != nil {
@@ -174,12 +186,28 @@ func (h *Handler) handleServerSave(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), serverTimeout)
 	defer cancel()
+	// a new vault is made before the login is tried, which then opens it
+	var recoveryKey string
+	if body.Server.CreateVault {
+		recoveryKey, err = remote.CreateVault(ctx, login, cfg.General.SSH)
+		if err != nil {
+			h.log.Info("the admin interface did not make a vault",
+				"server", name, "host", login.Shown(), "vault", login.VaultPath, "error", err, "address", addressOf(r))
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		h.log.Info("the admin interface made a vault",
+			"server", name, "host", login.Shown(), "vault", login.VaultPath, "address", addressOf(r))
+	}
 	if err := remote.Test(ctx, login, cfg.General.SSH); err != nil {
 		h.log.Info("the admin interface did not store a server, its login failed",
 			"server", name, "host", login.Shown(), "error", err, "address", addressOf(r))
 		status := http.StatusBadGateway
-		if errors.Is(err, context.Canceled) {
+		switch {
+		case errors.Is(err, context.Canceled):
 			status = http.StatusRequestTimeout
+		case errors.Is(err, cryptomator.ErrWrongPassword):
+			status = http.StatusBadRequest
 		}
 		http.Error(w, err.Error(), status)
 		return
@@ -201,10 +229,15 @@ func (h *Handler) handleServerSave(w http.ResponseWriter, r *http.Request) {
 	if index < len(records) {
 		record = records[index]
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	answer := map[string]any{
 		"record": record,
 		"path":   h.path,
 		"backup": backup,
 		"reload": cfg.General.ReloadConfig,
-	})
+	}
+	// the recovery key is shown once, and kept nowhere
+	if recoveryKey != "" {
+		answer["recoveryKey"] = recoveryKey
+	}
+	writeJSON(w, http.StatusOK, answer)
 }

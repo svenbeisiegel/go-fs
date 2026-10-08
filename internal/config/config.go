@@ -15,6 +15,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -353,6 +354,18 @@ type Server struct {
 	// It is kept as it is, as the password is.
 	Token string `toml:"token,omitempty"`
 
+	// VaultPath is a folder of the server that is a vault of Cryptomator:
+	// what go-fs does on the server is then done in the vault, whose files
+	// and names it encrypts and decrypts on the way, so that the server only
+	// ever holds ciphertext. The vault is all go-fs sees of the server. A
+	// path without a slash in front is from where the login starts. The
+	// admin interface makes a new vault, or opens one the Cryptomator apps
+	// made; they open the ones go-fs made. Empty for no vault.
+	VaultPath string `toml:"vaultPath,omitempty"`
+	// VaultPassword is what unlocks the vault. It is kept as it is, as the
+	// password is, so the vault is only as private as this file.
+	VaultPassword string `toml:"vaultPassword,omitempty"`
+
 	// AllowedUsers are the accounts, by username, that may use the server:
 	// see it in the menu, browse it, fetch from it and send to it. An
 	// account that sets isAdmin may use every server whether it is named
@@ -481,6 +494,26 @@ func RemoteHost(host string) (string, error) {
 		return "", fmt.Errorf("%q is not a host name", host)
 	}
 	return host, nil
+}
+
+// VaultPath reads the folder of a server that is a vault: clean, "" for
+// none, and a folder in the server rather than the top of it.
+func VaultPath(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if strings.ContainsAny(raw, "\x00\r\n") {
+		return "", fmt.Errorf("%q is not a folder", raw)
+	}
+	clean := path.Clean(raw)
+	if clean == "." || clean == "/" {
+		return "", errors.New("a vault is a folder of the server, not the top of it")
+	}
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("%q is above where the login starts", raw)
+	}
+	return clean, nil
 }
 
 // ArtifactoryURL reads the address of an Artifactory: http or https, a host,
@@ -1302,6 +1335,14 @@ func (c Config) validateServers() error {
 			if strings.TrimSpace(user) != user {
 				return fmt.Errorf("%s %q: allowedUsers %q cannot begin or end with a space", where, server.Name, user)
 			}
+		}
+		if vault, err := VaultPath(server.VaultPath); err != nil {
+			return fmt.Errorf("%s %q: vaultPath: %w", where, server.Name, err)
+		} else if vault != server.VaultPath {
+			return fmt.Errorf("%s %q: vaultPath %q has to be %q", where, server.Name, server.VaultPath, vault)
+		}
+		if (server.VaultPath == "") != (server.VaultPassword == "") {
+			return fmt.Errorf("%s %q: vaultPath and vaultPassword are set together or not at all", where, server.Name)
 		}
 		kind, ok := ServerTypeOf(server.Type)
 		if !ok {

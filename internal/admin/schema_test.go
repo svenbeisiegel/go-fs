@@ -302,7 +302,8 @@ func TestServerTable(t *testing.T) {
 	want := map[string]string{"name": kindText, "type": kindText, "host": kindText, "port": kindInt,
 		"username": kindText, "password": kindSecret, "hostKeyFingerprint": kindText,
 		"url": kindText, "token": kindSecret, "allowDownload": kindBool, "allowUpload": kindBool,
-		"allowCreate": kindBool, "allowDelete": kindBool, "allowRename": kindBool, "allowedUsers": kindLines}
+		"allowCreate": kindBool, "allowDelete": kindBool, "allowRename": kindBool, "allowedUsers": kindLines,
+		"vaultPath": kindText, "vaultPassword": kindSecret}
 	if !reflect.DeepEqual(kinds, want) {
 		t.Errorf("the server fields are %v, want %v", kinds, want)
 	}

@@ -1481,6 +1481,47 @@ A server stored without any of them can be browsed and downloaded from, and
 nothing more. Its folders are always listed; one without `allowDownload` shows
 its files without a link or **Download**.
 
+#### Encrypted servers
+
+A server can keep the files go-fs puts on it in a vault of
+[Cryptomator](https://cryptomator.org) (vault format 8, as the current apps
+make it), so that the server and whoever runs it only ever see ciphertext:
+the names of the files and the folders and what they hold are encrypted by
+go-fs before they leave it and decrypted when they come back. Browsing,
+downloading, **Fetch…**, uploading and **Send File…** all work as on any server.
+
+```toml
+[[servers]]
+name = "backup host"
+type = "sftp"
+host = "sftp.example.com"
+username = "backup"
+password = "secret"
+hostKeyFingerprint = "SHA256:…"
+vaultPath = "vaults/backup"
+vaultPassword = "another secret"
+```
+
+- `vaultPath` is the folder of the vault on the server. A path without a slash
+  in front is from where the login starts, the home folder for SFTP; on SMB and
+  Artifactory it starts with the share or the repository. With a vault, go-fs
+  sees the vault and nothing beside it: to reach the rest of the host too,
+  store it a second time without one.
+- In the **Edit…** dialog, **new vault** makes a new vault in the folder, which
+  has to be empty or not there yet; without it, the dialog opens the vault that
+  is there, and refuses to save the server when the password does not unlock
+  it. An edit that leaves the vault password empty keeps the stored one.
+- A new vault's **recovery key** is shown once, on the server's card, until the
+  page is read again. It is the key of the vault itself: it opens the vault
+  whatever its password, and go-fs keeps it nowhere. It is not the word list the
+  Cryptomator apps show, so their recovery dialog does not take it.
+- The Cryptomator apps open a vault go-fs made, and go-fs opens one they made
+  with a password. Vaults unlocked by Cryptomator Hub and the older
+  `SIV_CTRMAC` vaults are refused. Links inside a vault are not followed.
+- `vaultPassword` is kept in plain text, as the password is, so a vault keeps
+  its files from the server, not from whoever can read the configuration.
+  A file sent with the **Manual** login is never encrypted.
+
 #### Artifactory
 
 A JFrog Artifactory is a server of `type = "artifactory"`, reached by its REST

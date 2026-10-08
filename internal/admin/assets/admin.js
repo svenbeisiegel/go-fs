@@ -26,6 +26,9 @@ const openRecords = new WeakSet();
 // shown only here and only until the file is read again: the record, and so
 // the file, holds nothing but its hash
 const newTokens = new WeakMap();
+// newRecoveryKeys are the recovery keys of the vaults made for servers since
+// the page was read, by record, shown until it is read again.
+const newRecoveryKeys = new WeakMap();
 // the name each remote server has in the file, keyed by its record: the name
 // can be changed on the page before Apply, and the dialog that edits the
 // server has to tell the server which entry of the file it was
@@ -518,7 +521,14 @@ function tableBlock(holder, key, table, heading) {
       card.append(summary);
 
       if (newTokens.has(record)) {
-        card.append(tokenNotice(newTokens.get(record)));
+        card.append(tokenNotice(newTokens.get(record), "Copy this token now: it is shown only until the page "
+          + "is read again, and it is accepted once Apply has written it. Send it as "
+          + "\"Authorization: Bearer <token>\"."));
+      }
+      if (newRecoveryKeys.has(record)) {
+        card.append(tokenNotice(newRecoveryKeys.get(record), "Store this recovery key of the new vault somewhere "
+          + "safe now: it is shown only until the page is read again, and it opens the vault whatever its "
+          + "password. go-fs keeps it nowhere."));
       }
       card.append(fieldGrid(table.fields, record, ""));
       // the line the record folds up to follows what is typed into it
@@ -721,6 +731,9 @@ const serverDialog = (() => {
       password: field("password").value,
       url: field("url").value.trim(),
       token: field("token").value.trim(),
+      vaultPath: field("vaultPath").value.trim(),
+      vaultPassword: field("vaultPassword").value,
+      createVault: field("createVault").checked,
     };
   }
 
@@ -787,6 +800,10 @@ const serverDialog = (() => {
       const stored = record || {};
       Object.assign(stored, result.record);
       storedServers.set(stored, stored.name);
+      if (result.recoveryKey) {
+        newRecoveryKeys.set(stored, result.recoveryKey);
+        openRecords.add(stored);
+      }
       dialog.close();
       say("The server " + stored.name + " was logged in to and written to " + result.path
         + (result.reload ? ", and is offered from the next reload of the file on." : "; it is offered once go-fs is restarted."), true);
@@ -852,10 +869,14 @@ const serverDialog = (() => {
     field("password").value = "";
     field("url").value = from.url || "";
     field("token").value = "";
+    field("vaultPath").value = from.vaultPath || "";
+    field("vaultPassword").value = "";
+    field("createVault").checked = false;
     // an edit keeps the password and the token stored unless another is
     // typed in
     field("password").placeholder = edited ? "unchanged unless typed in" : "";
     field("token").placeholder = edited ? "unchanged unless typed in" : "sent as Authorization: Bearer";
+    field("vaultPassword").placeholder = edited && from.vaultPath ? "unchanged unless typed in" : "";
     fields();
     forget();
     working(false);
@@ -867,13 +888,12 @@ const serverDialog = (() => {
   return { open };
 })();
 
-// tokenNotice shows a token that was just created, the one time it is shown.
-function tokenNotice(token) {
+// tokenNotice shows a secret that was just created, a token or the recovery
+// key of a vault, the one time it is shown, with what text says of it.
+function tokenNotice(token, text) {
   const notice = document.createElement("div");
   notice.className = "token-notice";
-  notice.append(paragraph("Copy this token now: it is shown only until the page "
-    + "is read again, and it is accepted once Apply has written it. Send it as "
-    + "\"Authorization: Bearer <token>\".", ""));
+  notice.append(paragraph(text, ""));
   const row = document.createElement("div");
   row.className = "secret";
   const value = document.createElement("input");

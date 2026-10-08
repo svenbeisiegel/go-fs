@@ -30,4 +30,5 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.20.5 // indirect
 	github.com/geoffgarside/ber v1.2.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 )

@@ -59,6 +59,12 @@
       <input id="server-url" name="url" type="text" required spellcheck="false" autocomplete="off" placeholder="https://acme.jfrog.io" data-login="token" hidden disabled>
       <label for="server-token" data-login="token" hidden>token</label>
       <input id="server-token" name="token" type="password" autocomplete="new-password" placeholder="sent as Authorization: Bearer" data-login="token" hidden disabled>
+      <label for="server-vault-path">vault folder</label>
+      <input id="server-vault-path" name="vaultPath" type="text" spellcheck="false" autocomplete="off" placeholder="empty for none; a Cryptomator vault on the server">
+      <label for="server-vault-password">vault password</label>
+      <input id="server-vault-password" name="vaultPassword" type="password" autocomplete="new-password">
+      <label for="server-create-vault">new vault</label>
+      <input id="server-create-vault" name="createVault" type="checkbox" title="make a new vault in the folder, which has to be empty or not there yet">
     </div>
     <div class="hostkey" hidden>
       <p class="note"></p>

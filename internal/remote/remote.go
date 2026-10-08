@@ -36,6 +36,11 @@ type Login struct {
 	// token logs in with, in place of the host, the port and the login.
 	URL   string
 	Token string
+	// VaultPath is the folder of the host that is a vault of Cryptomator,
+	// "" for none, and VaultPassword what unlocks it: once logged in, what
+	// is done on the host is done in the vault, encrypted (see vaultFS).
+	VaultPath     string
+	VaultPassword string
 	// Server is the name of the stored server the login is, "" for one that
 	// was typed in. What goes wrong names it, since only an administrator can
 	// change the login of a server.
@@ -45,14 +50,16 @@ type Login struct {
 // FromServer is the login of a stored server.
 func FromServer(s config.Server) Login {
 	return Login{Type: s.Type, Host: s.Host, Port: s.Port, Username: s.Username,
-		Password: s.Password, HostKey: s.HostKeyFingerprint, URL: s.URL, Token: s.Token, Server: s.Name}
+		Password: s.Password, HostKey: s.HostKeyFingerprint, URL: s.URL, Token: s.Token,
+		VaultPath: s.VaultPath, VaultPassword: s.VaultPassword, Server: s.Name}
 }
 
 // ConfigServer is the login as the entry of the file that stores it, under
 // name.
 func (l Login) ConfigServer(name string) config.Server {
 	return config.Server{Name: name, Type: l.Type, Host: l.Host, Port: l.Port, Username: l.Username,
-		Password: l.Password, HostKeyFingerprint: l.HostKey, URL: l.URL, Token: l.Token}
+		Password: l.Password, HostKeyFingerprint: l.HostKey, URL: l.URL, Token: l.Token,
+		VaultPath: l.VaultPath, VaultPassword: l.VaultPassword}
 }
 
 // Checked reads a login: the type defaults to SFTP, the host loses the brackets
@@ -94,6 +101,22 @@ func (l Login) Checked(keyOnly bool) (Login, error) {
 	if kind.HostKey && !strings.HasPrefix(l.HostKey, "SHA256:") {
 		return Login{}, errors.New("accept the key of the host first")
 	}
+	return l.checkedVault()
+}
+
+// checkedVault reads the vault of a login: a path of the host, made
+// absolute and clean, that needs a password, or no vault and no password.
+func (l Login) checkedVault() (Login, error) {
+	vault, err := config.VaultPath(l.VaultPath)
+	if err != nil {
+		return Login{}, err
+	}
+	l.VaultPath = vault
+	if l.VaultPath == "" {
+		l.VaultPassword = ""
+	} else if l.VaultPassword == "" {
+		return Login{}, errors.New("type the password of the vault")
+	}
 	return l, nil
 }
 
@@ -112,7 +135,7 @@ func (l Login) checkedToken(kind config.ServerType, keyOnly bool) (Login, error)
 		return Login{}, errors.New("paste the token to log in with")
 	}
 	l.Host, l.Port, l.Username, l.Password, l.HostKey = "", 0, "", "", ""
-	return l, nil
+	return l.checkedVault()
 }
 
 // byToken reports a login by an address and a token.
@@ -153,8 +176,12 @@ func (l Login) Shown() string {
 	return l.Address()
 }
 
-// Where is a path of the host as a page shows it.
+// Where is a path of the host as a page shows it; one in a vault is shown
+// in the folder of the vault, by its cleartext name.
 func (l Login) Where(p string) string {
+	if l.VaultPath != "" {
+		p = strings.TrimSuffix(l.VaultPath, "/") + p
+	}
 	if l.byToken() {
 		return l.URL + p
 	}

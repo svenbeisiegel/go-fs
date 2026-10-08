@@ -56,7 +56,8 @@ func TestLoginIsChecked(t *testing.T) {
 
 func TestServerRoundTrips(t *testing.T) {
 	server := config.Server{Name: "backup", Type: config.ServerTypeSFTP, Host: "example.com", Port: 2222,
-		Username: "alice", Password: "secret", HostKeyFingerprint: "SHA256:x"}
+		Username: "alice", Password: "secret", HostKeyFingerprint: "SHA256:x",
+		VaultPath: "/vaults/team", VaultPassword: "pw"}
 	login := remote.FromServer(server)
 	if login.Server != "backup" {
 		t.Errorf("the login of a server is named %q", login.Server)

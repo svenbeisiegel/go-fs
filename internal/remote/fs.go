@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -44,9 +45,35 @@ type FS interface {
 	Close() error
 }
 
-// Open logs in to a host, with a login Checked read. Whatever it holds open
-// lives as long as ctx, which is what stops a transfer that hangs.
+// Open logs in to a host, with a login Checked read, and unlocks its vault
+// when it has one. Whatever it holds open lives as long as ctx, which is what
+// stops a transfer that hangs.
 func Open(ctx context.Context, l Login, sshCfg config.SSH) (FS, error) {
+	fsys, err := openHost(ctx, l, sshCfg)
+	if err != nil || l.VaultPath == "" {
+		return fsys, err
+	}
+	return openVault(fsys, l.VaultPath, l.VaultPassword)
+}
+
+// CreateVault logs in to a host, with a login Checked read, and makes a new
+// vault at its VaultPath, a folder that is not there yet or is empty, which
+// its VaultPassword unlocks. It answers the recovery key of the vault, which
+// opens it whatever its password and is not kept anywhere else.
+func CreateVault(ctx context.Context, l Login, sshCfg config.SSH) (string, error) {
+	if l.VaultPath == "" {
+		return "", errors.New("name the folder of the vault")
+	}
+	fsys, err := openHost(ctx, l, sshCfg)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = fsys.Close() }()
+	return createVault(fsys, l.VaultPath, l.VaultPassword)
+}
+
+// openHost logs in to a host, without regard to its vault.
+func openHost(ctx context.Context, l Login, sshCfg config.SSH) (FS, error) {
 	switch l.Type {
 	case config.ServerTypeSFTP:
 		return openSFTPFS(ctx, l, sshCfg)

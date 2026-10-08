@@ -265,3 +265,59 @@ func TestArtifactoryIsStoredOnceTheTokenWorks(t *testing.T) {
 		t.Errorf("the key of an Artifactory answered %d: %s", status, body)
 	}
 }
+
+// A server can be stored with a new vault, whose recovery key is answered
+// once, and an edit keeps the password of the vault unless one is typed in.
+func TestServerWithAVault(t *testing.T) {
+	host := remotetest.NewSFTPHost(t, "alice", "secret")
+	path := testConfig(t)
+	_, front := testServer(t, path)
+	vaulted := func(password string, create bool) serverJSON {
+		s := serverOn(host, "backup", "secret")
+		s.VaultPath, s.VaultPassword, s.CreateVault = "vault", password, create
+		return s
+	}
+
+	// a vault that is not there is not opened, and nothing is stored
+	status, body := postServer(t, front, ActionServerSave,
+		serverSaveBody{Server: vaulted("pw", false), HostKey: host.Fingerprint})
+	if status != http.StatusBadGateway || len(loadServers(t, path)) != 0 {
+		t.Errorf("a vault that is not there answered %d: %s", status, body)
+	}
+
+	status, body = postServer(t, front, ActionServerSave,
+		serverSaveBody{Server: vaulted("pw", true), HostKey: host.Fingerprint})
+	if status != http.StatusOK {
+		t.Fatalf("making the vault answered %d: %s", status, body)
+	}
+	var answer struct {
+		RecoveryKey string `json:"recoveryKey"`
+	}
+	if err := json.Unmarshal([]byte(body), &answer); err != nil || answer.RecoveryKey == "" {
+		t.Errorf("the recovery key answered is %q, %v", answer.RecoveryKey, err)
+	}
+	if file, _ := os.ReadFile(path); strings.Contains(string(file), answer.RecoveryKey) {
+		t.Error("the recovery key was written into the file")
+	}
+	servers := loadServers(t, path)
+	if len(servers) != 1 || servers[0].VaultPath != "vault" || servers[0].VaultPassword != "pw" {
+		t.Fatalf("the file holds %+v", servers)
+	}
+
+	// the vault is there now, and is opened again rather than made over
+	edit := serverSaveBody{Was: "backup", Server: vaulted("", false), HostKey: host.Fingerprint}
+	if status, body := postServer(t, front, ActionServerSave, edit); status != http.StatusOK || strings.Contains(body, "recoveryKey") {
+		t.Fatalf("the edit answered %d: %s", status, body)
+	}
+	if servers := loadServers(t, path); servers[0].VaultPassword != "pw" {
+		t.Errorf("the edit stored the vault password %q", servers[0].VaultPassword)
+	}
+	edit.Server = vaulted("wrong", false)
+	if status, body := postServer(t, front, ActionServerSave, edit); status != http.StatusBadRequest {
+		t.Errorf("a wrong vault password answered %d: %s", status, body)
+	}
+	edit.Server = vaulted("pw", true)
+	if status, body := postServer(t, front, ActionServerSave, edit); status != http.StatusBadGateway {
+		t.Errorf("a vault made over another answered %d: %s", status, body)
+	}
+}
