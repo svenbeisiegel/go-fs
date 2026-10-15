@@ -134,7 +134,8 @@ jobs:
       # install, start, upgrade and remove the rpm the way dnf does on a
       # server; the container has no systemd, so go-fs is started by hand as
       # the account the unit runs it as. The upgrade keeps the configuration
-      # go-fs wrote its secrets into.
+      # go-fs wrote its secrets into, and the removal keeps it as
+      # go-fs.toml.rpmsave, which rpm does with every changed config file.
       - name: install the rpm
         run: |
           docker run --rm -v "$PWD/dist:/dist:ro" rockylinux:9 sh -euxc '
@@ -160,7 +161,7 @@ jobs:
             grep -q "^httpSessionTokenSecret = \"..*\"" /etc/go-fs/go-fs.toml
             dnf remove -y go-fs
             test ! -e /usr/bin/go-fs
-            test -f /etc/go-fs/go-fs.toml
+            grep -q "^httpSessionTokenSecret = \"..*\"" /etc/go-fs/go-fs.toml.rpmsave
           '
 
       - uses: actions/upload-artifact@v7

@@ -83,7 +83,9 @@ dnf remove go-fs
 
 The package creates the `go-fs` account, then enables and starts the service. An
 update restarts it, and a removal stops and disables it. The configuration, the
-served files and the account stay after a removal. An update leaves a changed
+served files and the account stay after a removal; the configuration is renamed
+to `go-fs.toml.rpmsave`, since go-fs has written its secrets into it by then. An
+update leaves a changed
 configuration file alone, and puts the one it ships beside it as
 `go-fs.toml.rpmnew`.
 

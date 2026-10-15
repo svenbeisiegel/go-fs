@@ -343,10 +343,11 @@ func (c *client) upload(filename, mode string, content []byte, options ...option
 			chunk := content[offset:end]
 			done := len(chunk) < blockSize
 			block++
-			c.reply(encodeDATA(block, chunk))
+			data := encodeDATA(block, chunk)
+			c.reply(data)
 			offset = end
 			if done {
-				return c.awaitFinalACK(block)
+				return c.awaitFinalACK(block, data)
 			}
 		}
 	}
@@ -354,13 +355,17 @@ func (c *client) upload(filename, mode string, content []byte, options ...option
 
 // awaitFinalACK waits for the acknowledgement of the last block, which the
 // server only sends once the upload is in place. It returns the ERROR packet if
-// the server could not store the upload.
-func (c *client) awaitFinalACK(block uint16) (failure []byte) {
+// the server could not store the upload. Putting the upload in place includes
+// an fsync, which on a busy macOS runner can take several seconds, so like a
+// real client it retransmits the final block while it waits.
+func (c *client) awaitFinalACK(block uint16, data []byte) (failure []byte) {
 	c.t.Helper()
-	for {
-		packet := c.receive(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		packet := c.receive(2 * time.Second)
 		if packet == nil {
-			c.t.Fatalf("no acknowledgement for the final block %d", block)
+			c.reply(data)
+			continue
 		}
 		switch opcodeOf(packet) {
 		case opERROR:
@@ -371,6 +376,8 @@ func (c *client) awaitFinalACK(block uint16) (failure []byte) {
 			}
 		}
 	}
+	c.t.Fatalf("no acknowledgement for the final block %d", block)
+	return nil
 }
 
 // discardLogger is for the rare test that does not care about output.
