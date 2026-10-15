@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hirochachacha/go-smb2"
+	"github.com/cloudsoda/go-smb2"
 
 	"go-fs/internal/config"
 )

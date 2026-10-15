@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hirochachacha/go-smb2"
+	"github.com/cloudsoda/go-smb2"
 )
 
 // An SMB host, a Windows file server or a Samba, is reached by SMB 2 or 3 and
@@ -162,7 +162,7 @@ func openSMB(ctx context.Context, l Login) (FS, error) {
 	context.AfterFunc(ctx, func() { _ = conn.Close() })
 	domain, user := smbUser(l.Username)
 	smb := &smb2.Dialer{Initiator: &smb2.NTLMInitiator{User: user, Password: l.Password, Domain: domain}}
-	session, err := smb.DialContext(dialCtx, conn)
+	session, err := smb.DialConn(dialCtx, conn, l.Address())
 	if err != nil {
 		_ = conn.Close()
 		return nil, smbFailure(l, err)
