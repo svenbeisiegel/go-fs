@@ -127,6 +127,11 @@ func mayUpdate(cred credential) bool {
 func (s *Server) acceptUpdate(set *settings, w http.ResponseWriter, r *http.Request, user string) {
 	address := clientAddress(set, r)
 	current := s.updater.Current()
+	// refused before the body is read, which may be large and is useless
+	if current.ManagedBy != "" {
+		s.refuseUpdate(w, user, address, selfupdate.ErrManaged)
+		return
+	}
 	if r.ContentLength > selfupdate.MaxSize {
 		s.refuseUpdate(w, user, address, selfupdate.ErrTooLarge)
 		return
@@ -164,6 +169,11 @@ func (s *Server) describeRelease(set *settings, w http.ResponseWriter, r *http.R
 // it as it would an upload of it.
 func (s *Server) installRelease(set *settings, w http.ResponseWriter, r *http.Request, user string) {
 	address := clientAddress(set, r)
+	// refused before anything is downloaded
+	if s.updater.Current().ManagedBy != "" {
+		s.refuseUpdate(w, user, address, selfupdate.ErrManaged)
+		return
+	}
 	release, err := s.updater.Latest(r.Context(), false)
 	if err != nil {
 		s.refuseUpdate(w, user, address, err)
@@ -227,7 +237,7 @@ func (s *Server) refuseUpdate(w http.ResponseWriter, user, address string, err e
 	case errors.Is(err, selfupdate.ErrTooLarge), tooLarge(err):
 		status = http.StatusRequestEntityTooLarge
 		err = selfupdate.ErrTooLarge
-	case errors.Is(err, selfupdate.ErrBusy):
+	case errors.Is(err, selfupdate.ErrBusy), errors.Is(err, selfupdate.ErrManaged):
 		status = http.StatusConflict
 	case errors.Is(err, selfupdate.ErrNoKeys):
 		status = http.StatusServiceUnavailable

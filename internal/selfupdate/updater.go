@@ -58,6 +58,10 @@ var (
 	ErrPlatform = errors.New("the binary is built for another platform")
 	// ErrNotGoFS is a binary that did not answer -version as go-fs does.
 	ErrNotGoFS = errors.New("the binary does not run as go-fs")
+	// ErrManaged is an update to a binary an installer put in place, which
+	// the installer's next version replaces instead, or to a Windows service,
+	// which the restart into the update would leave.
+	ErrManaged = errors.New("this go-fs is updated by its installer or its service manager, not over http")
 )
 
 // Info describes the running binary. PID tells a script that the restart
@@ -70,6 +74,10 @@ type Info struct {
 	Executable string   `json:"executable"`
 	PID        int      `json:"pid"`
 	Keys       []string `json:"keys"`
+	// ManagedBy names the installer that put the binary in place, rpm or
+	// msi, or is service for a Windows service installed by hand; empty when
+	// the update over http may replace the binary.
+	ManagedBy string `json:"managedBy,omitempty"`
 }
 
 // Staged describes a binary that passed every check and waits to be applied.
@@ -82,6 +90,8 @@ type Staged struct {
 type Updater struct {
 	version string
 	keys    []ed25519.PublicKey
+	// managedBy is the installer that owns the executable, see SetManagedBy.
+	managedBy string
 
 	// exe is the running executable with its symlinks resolved, so that the
 	// file replaced is the file that runs; exeErr is why it is unknown.
@@ -150,13 +160,25 @@ func (u *Updater) Current() Info {
 		Executable: u.exe,
 		PID:        os.Getpid(),
 		Keys:       keys,
+		ManagedBy:  u.managedBy,
 	}
+}
+
+// SetManagedBy records that an installer put the executable in place, so
+// that every update is refused: the package manager keeps track of what it
+// installed, and a binary replaced behind its back is one it no longer
+// knows. It is called before the updater is handed to anything.
+func (u *Updater) SetManagedBy(installer string) {
+	u.managedBy = installer
 }
 
 // Stage reads an update from body and checks it. When it returns without an
 // error the new binary is ready beside the executable, and the running one has
 // not been touched; on an error nothing is left behind.
 func (u *Updater) Stage(ctx context.Context, body io.Reader) (Staged, error) {
+	if u.managedBy != "" {
+		return Staged{}, ErrManaged
+	}
 	if len(u.keys) == 0 {
 		return Staged{}, ErrNoKeys
 	}

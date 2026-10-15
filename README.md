@@ -15,6 +15,7 @@ make test           # the test suite
 make race           # the test suite under the race detector
 make release        # all five release binaries into dist/ with checksums
 make sign           # signed .update files for the binaries in dist/
+make packages       # the rpm packages into dist/, and what the msi is built from
 ```
 
 `make release` cross compiles for linux and windows on amd64 and arm64, and for
@@ -51,6 +52,74 @@ The release workflow refuses to run without the key.
 reports `1.0.0-dev`. Pass `VERSION=` to override for a single build, for example
 `make release VERSION=1.1` from a release pipeline.
 
+## Install
+
+Every release carries installers besides the plain binaries. They install go-fs
+as a service that starts with the system, with a configuration that serves HTTP
+on `127.0.0.1:8080` alone and has one account, `admin` with the password
+`admin`. Log in with it at `http://127.0.0.1:8080/?go-fs=admin` from the machine
+itself, change its password, and then set up the servers and the addresses they
+listen on. go-fs warns about that password at every start until it is changed.
+
+An installed go-fs is updated by installing the package of the newer release,
+which keeps the configuration as it is. [Updating over HTTP](#updating-over-http)
+refuses to replace a binary that a package installed.
+
+### Linux: rpm
+
+```shell
+dnf install ./go-fs-<version>-1.x86_64.rpm     # or .aarch64.rpm; also updates
+systemctl status go-fs
+journalctl -u go-fs -f                         # the log
+dnf remove go-fs
+```
+
+| Path | What |
+|---|---|
+| `/usr/bin/go-fs` | the binary |
+| `/etc/go-fs/go-fs.toml` | the configuration, owned by the `go-fs` account, mode `0600` |
+| `/var/lib/go-fs/files` | the folder the configuration serves |
+| `/usr/lib/systemd/system/go-fs.service` | the unit, which runs go-fs as the `go-fs` account |
+
+The package creates the `go-fs` account, then enables and starts the service. An
+update restarts it, and a removal stops and disables it. The configuration, the
+served files and the account stay after a removal. An update leaves a changed
+configuration file alone, and puts the one it ships beside it as
+`go-fs.toml.rpmnew`.
+
+The unit allows go-fs to bind ports below 1024 without root, so the servers can
+move to 21, 22, 69, 80 or 443. It keeps `/usr` and `/etc` read-only, except
+`/etc/go-fs`. A folder elsewhere only needs to be readable, or writable, by the
+`go-fs` account. Change the unit with a drop-in rather than by editing it:
+`systemctl edit go-fs`.
+
+### Windows: msi
+
+```powershell
+msiexec /i go-fs-<version>-x64.msi /qn            # or -arm64.msi; also updates
+msiexec /i go-fs-<version>-x64.msi /qn FIREWALL=1 # and let go-fs through the firewall
+Get-Service go-fs
+msiexec /x go-fs-<version>-x64.msi /qn
+```
+
+| Path | What |
+|---|---|
+| `C:\Program Files\go-fs\go-fs.exe` | the binary |
+| `C:\ProgramData\go-fs\go-fs.toml` | the configuration |
+| `C:\ProgramData\go-fs\files` | the folder the configuration serves |
+| `C:\ProgramData\go-fs\logs\go-fs.log` | the log, rotated at 10 MiB, five old files kept |
+
+The service `go-fs` runs as LocalSystem. It starts with Windows and is restarted
+if it crashes. `C:\ProgramData\go-fs` is readable by SYSTEM and the
+Administrators only, because the configuration holds every password and key. An
+update stops the service, replaces the binary and starts the service again. An
+uninstall removes the binary and the service, and keeps everything in
+`C:\ProgramData\go-fs`. The firewall stays closed unless `FIREWALL=1` is
+given, since nothing listens beyond `127.0.0.1` as installed.
+
+The installers are not code signed yet, so Windows SmartScreen warns about the
+msi when it is downloaded.
+
 ## Run
 
 ```shell
@@ -65,13 +134,15 @@ go-fs -config /etc/go-fs.toml
 | `-config <path>` | configuration file, `go-fs.toml` by default |
 | `-init <path>` | write a documented starter configuration and exit |
 | `-check` | load the configuration, report problems and exit |
+| `-logfile <path>` | write the log to this file instead of standard output, rotated at 10 MiB with five old files kept; what the Windows service uses |
 | `-version` | print the version and exit |
 
 `SIGINT` and `SIGTERM` shut the servers down, dropping open connections and
-aborting running transfers.
+aborting running transfers. Stopping the Windows service does the same.
 
-Serving on ports 21 and 69 needs privileges. Prefer a service manager that binds
-them for you, or run on high ports behind a redirect.
+Every default port is above 1024, so go-fs runs without privileges. Serving on
+21, 22 or 69 needs them: prefer a service manager that grants them, as the
+[rpm's unit](#linux-rpm) does, or run on high ports behind a redirect.
 
 ## Configuration
 
@@ -91,12 +162,20 @@ password = "doe"
 ftp = true
 
 [ftp]
+enabled = true
+address = ""
 port = 2121
 
 [tftp]
+enabled = true
 port = 6969
 allowWrite = true
 ```
+
+Without a section, a server keeps its defaults: only HTTP is on, every server
+listens on `127.0.0.1` alone, and the ports are 8021 for FTP, 8990 for FTPS,
+8022 for SFTP, 8080 for HTTP, 8443 for HTTPS and 8069 for TFTP. `address = ""`
+listens on every interface.
 
 `general.basefolder` is the folder every server falls back to when its own
 section does not name one, which is usually what you want — they all serve the
@@ -150,8 +229,9 @@ list: an account is configured once, with one password, and says which servers
 it may log in to with `ftp = true`, `sftp = true` and `http = true`, whether
 it may use the [S3 API](#s3) with `s3 = true`, and whether it may push to the
 [container registry](#container-registry) with `registry = true`, each off
-unless set. There is no default account, so a name that is not listed cannot
-log in anywhere, and a name is listed once — the same person on FTP and HTTP is
+unless set. There is no built-in account, so a name that is not listed cannot
+log in anywhere (the shipped configuration lists one, `admin`, see
+[Install](#install)), and a name is listed once — the same person on FTP and HTTP is
 one entry with both switches on. An entry that switches nothing on is kept
 without being served, which is the way to park an account.
 
@@ -242,7 +322,7 @@ enableAdminInterface = true   # the default
 ```
 
 Log in on the listing page as that account and an **Admin** button appears in
-the header, next to **Log out**; it leads to `https://host:9443/?go-fs=admin`
+the header, next to **Log out**; it leads to `https://host:8443/?go-fs=admin`
 (the listing also turns `/#/admin` into that address). Nobody else is answered:
 a browser with no session is sent to the login page, a session of an account
 that does not set `isAdmin` is `403`, and the account's password sent as a
@@ -353,8 +433,9 @@ the web interface — never drops a connection.
 
 ### Bind addresses and stalled transfers
 
-`ftp.address`, `sftp.address` and `http.address` name the interface each server
-binds to, empty for all of them, as `tftp.address` already did. The FTP one
+`ftp.address`, `sftp.address`, `http.address` and `tftp.address` name the
+interface each server binds to. They default to `127.0.0.1`, which only the
+machine itself can reach; empty binds to all interfaces. The FTP one
 covers the passive data ports too, so they follow the control port onto the same
 interface.
 
@@ -381,12 +462,21 @@ data connection owes nothing on the control one.
 | `users[].ftp`, `users[].sftp`, `users[].http`, `users[].s3` | `false` | an account logs in only to the servers it switches on |
 | `http.enableS3` | `true` | the S3 API is there wherever the HTTP server is, and serves only the accounts that set `s3` |
 | `users[].allowUser*` | `false` | an account is granted only the rights its table lists |
-| `sftp.enabled`, `http.enabled` | `false` | both are off by default, so an upgrade never opens a port on its own |
+| `http.enabled` | `true` | the one server that is on, so the admin interface can be reached to set up the rest |
+| `ftp.enabled`, `ftps.enabled`, `sftp.enabled`, `https.enabled`, `tftp.enabled` | `false` | each server is switched on deliberately |
+| `ftp.address`, `sftp.address`, `http.address`, `tftp.address` | `127.0.0.1` | nothing is reachable from another host until an address says so |
+| `ftp.port`, `ftps.port`, `sftp.port`, `http.port`, `https.port`, `tftp.port` | `8021`, `8990`, `8022`, `8080`, `8443`, `8069` | above 1024, so no privileges are needed |
 | `tftp.allowWrite` | `false` | read only unless switched on |
 | `tftp.maxBlockSize` | `1468` | keeps a block inside a typical ethernet MTU so datagrams are not IP fragmented |
 | `tftp.maxTimeout` | `60` | a client cannot negotiate a retransmit interval that pins a transfer slot |
 | `tftp.maxConnectionsPerHost` | `5` | one host cannot take every slot |
-| `[[users]]` in the shipped file | none | the examples are commented out, so a fresh configuration serves nobody |
+| `[[users]]` in the shipped file | `admin`, password `admin` | the one account that opens the admin interface after installing; its password is warned about until it is changed |
+
+These defaults changed after 0.9.17: before, FTP and TFTP were on, on ports 21 and
+69, every server listened on all interfaces, and HTTP was off. A configuration
+that sets `enabled`, `port` and `address` in each section, as one written from
+the old template does, is not affected. One that leaves them out now gets the
+new values, so check it before updating.
 
 ## TLS
 
@@ -552,7 +642,7 @@ allowUserFolderDelete = true
 
 [http]
 enabled = true
-port = 9080
+port = 8080
 basefolder = "/srv/http"
 methodsRequireAuth = ["PUT", "DELETE", "POST", "MKCOL", "MOVE"]
 pathsRequireAuth = ["^/private/.*"]
@@ -628,8 +718,8 @@ admin interface, next to USERS:
 Clients send the token as a header, on the plain port and the TLS port alike:
 
 ```sh
-curl -H "Authorization: Bearer gofs_…" https://host:9443/reports/today.csv
-curl -H "Authorization: Bearer gofs_…" -T build.zip https://host:9443/uploads/build.zip
+curl -H "Authorization: Bearer gofs_…" https://host:8443/reports/today.csv
+curl -H "Authorization: Bearer gofs_…" -T build.zip https://host:8443/uploads/build.zip
 ```
 
 What a token may do is set on its own entry:
@@ -671,11 +761,11 @@ allowUserFolderCreate = true
 
 | | |
 |---|---|
-| Endpoint | `https://host:9443` (or the plain port) |
+| Endpoint | `https://host:8443` (or the plain port) |
 | Buckets | every folder directly in `http.basefolder`, by its name ignoring case |
 | Region | `us-east-1`, the one region, fixed |
 | Access key / secret key | the account's `username` / `password` |
-| Addressing | path style only: `https://host:9443/<folder>/<key>` |
+| Addressing | path style only: `https://host:8443/<folder>/<key>` |
 
 Each folder directly in `http.basefolder` is a bucket holding that folder exactly
 as HTTP shows it: `s3://docs/a.txt` is the file served at `/docs/a.txt`, and the
@@ -703,9 +793,9 @@ Clients have to be set to path style and to the region. For example:
 
 ```shell
 aws configure set default.s3.addressing_style path
-aws --endpoint-url https://host:9443 --region us-east-1 s3 ls
-aws --endpoint-url https://host:9443 --region us-east-1 s3 ls s3://backups/
-aws --endpoint-url https://host:9443 --region us-east-1 s3 cp report.pdf s3://backups/2026/
+aws --endpoint-url https://host:8443 --region us-east-1 s3 ls
+aws --endpoint-url https://host:8443 --region us-east-1 s3 ls s3://backups/
+aws --endpoint-url https://host:8443 --region us-east-1 s3 cp report.pdf s3://backups/2026/
 ```
 
 Version 1 of the aws CLI presigns URLs with Signature Version 2 unless told
@@ -718,7 +808,7 @@ CLI signs with version 4 already.
 [go-fs]
 type = s3
 provider = Other
-endpoint = https://host:9443
+endpoint = https://host:8443
 region = us-east-1
 force_path_style = true
 access_key_id = backup
@@ -794,15 +884,15 @@ registry = true
 ```
 
 ```shell
-docker login host:9443
-docker tag app:latest host:9443/team/app:1.0
-docker push host:9443/team/app:1.0
-docker pull host:9443/team/app:1.0
+docker login host:8443
+docker tag app:latest host:8443/team/app:1.0
+docker push host:8443/team/app:1.0
+docker pull host:8443/team/app:1.0
 ```
 
 | | |
 |---|---|
-| Endpoint | `host:9443` (or the plain port), under `/v2/` |
+| Endpoint | `host:8443` (or the plain port), under `/v2/` |
 | Storage | `http.registryBaseFolder`, which nothing else may serve |
 | Pulling | anyone while `http.registryAnonymousRead = true` (the default), otherwise an account that sets `registry` |
 | Pushing, tagging, deleting | an account that sets `registry` |
@@ -842,10 +932,10 @@ machine and pushed separately end up under one tag:
 
 ```shell
 # on an amd64 machine
-docker push host:9443/team/app:1.0
+docker push host:8443/team/app:1.0
 # on an arm64 machine
-docker push host:9443/team/app:1.0
-docker manifest inspect host:9443/team/app:1.0   # lists linux/amd64 and linux/arm64
+docker push host:8443/team/app:1.0
+docker manifest inspect host:8443/team/app:1.0   # lists linux/amd64 and linux/arm64
 ```
 
 The platform comes from the image's configuration. An image for a platform
@@ -991,7 +1081,11 @@ go-fs checks the file, replaces its executable, and restarts into the new
 version. The configuration file is not touched.
 
 It is off by default. Turn it on with `http.enableSelfUpdate = true`, and allow
-at least one client:
+at least one client. A go-fs installed by the rpm or the msi refuses every
+update over HTTP, since its package owns the binary: install the package of the
+newer release instead. So does a go-fs that runs as a Windows service set up by
+hand, because the restart into the update would leave the service. The
+**UPDATE** tab then shows the latest release and how to install it.
 
 - **A bearer token** that sets `allowSelfUpdate = true`, for scripts. The token's
   `paths` do not matter here.
@@ -1004,12 +1098,12 @@ same reason the admin interface refuses them.
 
 ```sh
 # what is running, to pick the matching file
-curl -H "Authorization: Bearer gofs_…" "https://host:9443/?go-fs=update"
+curl -H "Authorization: Bearer gofs_…" "https://host:8443/?go-fs=update"
 # {"version":"1.1.0","os":"linux","arch":"arm64","executable":"/opt/go-fs/go-fs","pid":812,"keys":["d1db60358969ad82"]}
 
 # upload it; go-fs answers, then restarts
 curl -T go-fs_1.2.0_linux_arm64.update -H "Authorization: Bearer gofs_…" \
-     "https://host:9443/?go-fs=update"
+     "https://host:8443/?go-fs=update"
 # {"previous":"1.1.0","restarting":true,"version":"1.2.0"}
 ```
 
@@ -1029,7 +1123,7 @@ Before anything changes, the upload has to pass these checks, in this order:
 |---|---|
 | `202` | accepted; go-fs restarts right after answering |
 | `400` | the file carries no signature, e.g. a plain binary instead of the `.update` file |
-| `409` | another update is in progress |
+| `409` | another update is in progress, or a package or the Windows service manager owns the binary |
 | `413` | larger than 256 MiB |
 | `422` | unknown key, bad signature, wrong platform, or not a go-fs binary |
 | `503` | this build trusts no signing key |
@@ -1074,12 +1168,12 @@ A script does the same with `release=latest`:
 
 ```sh
 # the latest release, and whether it is newer than what runs
-curl -H "Authorization: Bearer gofs_…" "https://host:9443/?go-fs=update&release=latest"
+curl -H "Authorization: Bearer gofs_…" "https://host:8443/?go-fs=update&release=latest"
 # {"current":"1.1.0","version":"1.2.0","newer":true,"url":"https://github.com/…/v1.2.0",
 #  "published":"2026-10-01T10:00:00Z","asset":"go-fs_1.2.0_linux_arm64.update"}
 
 # download and install it; go-fs answers, then restarts
-curl -X POST -H "Authorization: Bearer gofs_…" "https://host:9443/?go-fs=update&release=latest"
+curl -X POST -H "Authorization: Bearer gofs_…" "https://host:8443/?go-fs=update&release=latest"
 # {"previous":"1.1.0","restarting":true,"version":"1.2.0"}
 ```
 
@@ -1640,9 +1734,11 @@ account, the server and the path.
 
 Everything the program has to say goes to **standard output**, one record per
 line, so whatever runs it — a terminal, systemd, a container — collects the log
-the way it collects any other program's. Nothing is written to a file by go-fs
-itself. Errors that stop it from starting at all, a configuration that does not
-parse say, go to standard error before any logger exists.
+the way it collects any other program's. Only with `-logfile`, which the
+Windows service uses since it has no standard output, does go-fs write the log
+to a file itself, rotated at 10 MiB with five old files kept. Errors that stop
+it from starting at all, a configuration that does not parse say, go to
+standard error before any logger exists, or to that file.
 
 ```toml
 [general]
@@ -1763,8 +1859,8 @@ pushed to one tag are merged into an index.
 
 **TFTP** — the protocol has no accounts and no passwords and no way to carry
 them, so anyone who can reach `tftp.port` can read what `allowRead` allows and
-write what `allowWrite` allows. It is on by default, read only; turn it off
-unless the network it sits on is one where that is what you want. An upload is written beside its
+write what `allowWrite` allows. It is off by default, and read only when turned
+on; keep it on a network where that is what you want. An upload is written beside its
 destination and renamed over it when it completes, so a transfer that breaks off
 leaves neither an empty file nor a truncated one.
 

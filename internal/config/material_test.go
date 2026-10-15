@@ -193,10 +193,8 @@ func TestValidateChecksTheWholePair(t *testing.T) {
 	_, otherKey := selfSigned(t, "other")
 
 	base := func() Config {
-		cfg := Default()
+		cfg := servingConfig(folder)
 		cfg.General.Basefolder = folder
-		cfg.FTP.Basefolder = folder
-		cfg.TFTP.Basefolder = folder
 		cfg.FTPS.Enabled = true
 		cfg.Users = []User{{Username: "john", Password: "doe", FTP: true}}
 		return cfg

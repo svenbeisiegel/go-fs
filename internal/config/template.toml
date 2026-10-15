@@ -1,7 +1,9 @@
 # go-fs configuration
 #
 # Every key is optional, an absent key keeps the default shown here. Paths have
-# to exist before the server starts.
+# to exist before the server starts. As it stands, this file serves only http,
+# on 127.0.0.1:8080, so nothing is reachable from another host until an
+# address below says so.
 #
 # The admin interface shows the comment directly above a key as that key's
 # help; a comment above a run of keys covers every one of them. A paragraph
@@ -102,15 +104,33 @@ banner = []
 # path = "/iso"
 # keep = 10
 
+# The accounts, one table per account, repeated for as many as are needed. An
+# account is configured once and says which servers it may log in to; its
+# rights are one set that holds on every one of them. A name that is not listed
+# here cannot log in anywhere.
+#
+# The admin account below is the one account this file starts with, so that
+# the admin interface can be opened right after installing, at
+# http://127.0.0.1:8080/?go-fs=admin, to set this server up. Its password is
+# printed here for everyone to read, and go-fs warns about it at every start:
+# change it, before any server listens on more than 127.0.0.1. It is not a
+# default, an account only exists while it is listed in this file.
+[[users]]
+username = "admin"
+password = "admin"
+http = true
+paths = ["^/.*"]
+allowUserFileCreate = true
+allowUserFileRetrieve = true
+allowUserFileOverwrite = true
+allowUserFileDelete = true
+allowUserFolderDelete = true
+allowUserFolderCreate = true
+isAdmin = true
+
 # The examples below are commented out on purpose — uncomment one and put a
 # name and a password of your own in, rather than starting with the ones
 # printed in the documentation.
-#
-# The accounts, one table per account, repeated for as many as are needed. An
-# account is configured once and says which servers it may log in to; its
-# rights are one set that holds on every one of them. There is no default
-# account: a name that is not listed here cannot log in anywhere, so as this
-# file stands the servers accept nobody.
 # [[users]]
 # username = "john"
 # password = "doe"
@@ -306,12 +326,12 @@ banner = []
 [ftp]
 # Serve the plain control port. The TLS listener has its own switch in [ftps];
 # everything else in this section applies to both of them.
-enabled = true
+enabled = false
 
-port = 21
+port = 8021
 # interface the control ports and the passive data ports bind to, empty binds
-# to all
-address = ""
+# to all; 127.0.0.1 is reachable from this host alone
+address = "127.0.0.1"
 # served folder, general.basefolder when not set; it has to exist either
 # way
 # basefolder = "/srv/ftp"
@@ -368,7 +388,7 @@ allowForeignDataConnection = false
 # ftp.enabled, so turning that one off serves implicit FTPS only.
 enabled = false
 
-port = 990
+port = 8990
 # The certificate and its key themselves, base64 of the PEM, not paths to them,
 # so the whole configuration stays in this one file. When both are empty a
 # self-signed certificate is generated at startup; it changes on every restart
@@ -383,9 +403,10 @@ key = ""
 [sftp]
 enabled = false
 
-port = 22
-# interface to bind to, empty binds to all
-address = ""
+port = 8022
+# interface to bind to, empty binds to all; 127.0.0.1 is reachable from this
+# host alone
+address = "127.0.0.1"
 # served folder, general.basefolder when not set; it has to exist either
 # way
 # basefolder = "/srv/sftp"
@@ -411,11 +432,12 @@ loginFailureDelay = 1
 [http]
 # Serve the plain port. The TLS listener has its own switch in [https];
 # everything else in this section applies to both of them.
-enabled = false
+enabled = true
 
-port = 9080
-# interface both listeners bind to, empty binds to all
-address = ""
+port = 8080
+# interface both listeners bind to, empty binds to all; 127.0.0.1 is
+# reachable from this host alone
+address = "127.0.0.1"
 # served folder, general.basefolder when not set; it has to exist either
 # way
 # basefolder = "/srv/http"
@@ -424,7 +446,7 @@ address = ""
 realm = "go-fs"
 
 # The web interface that edits this file, served by this server at
-# ?go-fs=admin on both listeners (http://host:9080/?go-fs=admin, or #/admin
+# ?go-fs=admin on both listeners (http://host:8080/?go-fs=admin, or #/admin
 # from the listing). Only an account that sets isAdmin = true and has logged
 # in through the browser can reach it; nobody else is answered. The page shows
 # and edits every password in this file, so serve it over [https] rather than
@@ -451,7 +473,7 @@ enableSelfUpdate = false
 # so the key a.txt in the bucket docs is the file http serves at /docs/a.txt.
 # There is one region, "us-east-1", which cannot be changed, and buckets
 # cannot be made or removed over S3. Clients have to address them path style,
-# https://host:9443/docs/key. A request without such a signature is served as
+# https://host:8443/docs/key. A request without such a signature is served as
 # it always was.
 enableS3 = true
 
@@ -545,7 +567,7 @@ pathsRequireAuth = []
 # Independent of http.enabled, so turning that one off serves HTTPS only.
 enabled = false
 
-port = 9443
+port = 8443
 # The certificate and its key themselves, base64 of the PEM, not paths to them,
 # so the whole configuration stays in this one file. When both are empty a
 # self-signed certificate is generated at startup; it changes on every restart
@@ -559,11 +581,12 @@ key = ""
 # allows and write what allowWrite allows. Turn it off, or keep it on a network
 # where that is what you want.
 [tftp]
-enabled = true
+enabled = false
 
-port = 69
-# interface to bind to, empty binds to all
-address = ""
+port = 8069
+# interface to bind to, empty binds to all; 127.0.0.1 is reachable from this
+# host alone
+address = "127.0.0.1"
 # udp4, udp6 or empty. Empty derives it from address and otherwise uses udp6,
 # which also accepts IPv4 clients on a dual stack host. Set udp4 explicitly on
 # hosts configured with bindv6only.

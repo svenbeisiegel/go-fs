@@ -237,6 +237,16 @@ function updatePanel(index) {
   const latest = document.createElement("div");
   latest.id = "release";
   latest.className = "release";
+  if (update.managedBy) {
+    // a package owns the executable, and only its newer version replaces it
+    element.append(
+      paragraph("Running go-fs " + update.version + " for " + update.os + "/" + update.arch
+        + " from " + update.executable + (update.managedBy === "service" ? ", as a Windows service." : ", installed by the " + update.managedBy + " package."),
+        "update-current"),
+      latest,
+      paragraph(managedHelp(), "section-help"));
+    return element;
+  }
   element.append(
     paragraph("Running go-fs " + update.version + " for " + update.os + "/" + update.arch
       + " from " + update.executable + ".", "update-current"),
@@ -275,6 +285,22 @@ function updatePanel(index) {
   row.append(input, button);
   element.append(row);
   return element;
+}
+
+// managedHelp says how a go-fs that a package installed is updated: by the
+// package of the newer release, which keeps the configuration as it is.
+function managedHelp() {
+  if (update.managedBy === "msi") {
+    return "Updates come as a new MSI: download the go-fs-<version>-" + (update.arch === "arm64" ? "arm64" : "x64")
+      + ".msi of the release and run it, or msiexec /i <file> /qn. It stops the service, replaces "
+      + "the executable and starts the service again; the configuration file is kept.";
+  }
+  if (update.managedBy === "rpm") {
+    return "Updates come as a new rpm package: install the go-fs package of the release with "
+      + "dnf install <file>, which restarts the service; the configuration file is kept.";
+  }
+  return "go-fs runs as a Windows service, which a restart into an update would leave: stop the "
+    + "service, replace the executable with the one of the release and start the service again.";
 }
 
 // showRelease draws what is known about the latest release: a mark on the
@@ -331,6 +357,13 @@ function showRelease() {
 
   const status = paragraph("go-fs " + info.version + " is available" + when + " (", "release-status release-new");
   status.append(notes, ").");
+  if (update.managedBy) {
+    status.append(update.managedBy === "service"
+      ? " It cannot be installed from here while go-fs runs as a service."
+      : " Install it with its " + update.managedBy + " package, it cannot be installed from here.");
+    holder.replaceChildren(status, again);
+    return;
+  }
   if (!info.asset) {
     status.append(" It has no update file for " + update.os + "/" + update.arch
       + ", so it cannot be installed from here.");

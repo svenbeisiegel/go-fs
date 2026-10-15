@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -33,6 +34,16 @@ var baseVersion string
 // to the embedded version below.
 var version string
 
+// packaging names the installer a build is made for, rpm or msi, stamped with
+// -ldflags "-X main.packaging=...". The installer then owns the executable, so
+// the self update leaves it alone. Empty for the plain binaries.
+var packaging string
+
+// errorOutput is where the error that ends the program is written: standard
+// error, or the log file when -logfile names one, since a Windows service has
+// no standard error that anybody reads.
+var errorOutput io.Writer = os.Stderr
+
 func currentVersion() string {
 	if version != "" {
 		return version
@@ -41,18 +52,23 @@ func currentVersion() string {
 }
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "go-fs:", err)
+	// start runs run, under the service manager when Windows started go-fs
+	// as a service
+	if err := start(); err != nil {
+		fmt.Fprintln(errorOutput, "go-fs:", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+// run serves until a signal, an update or stop ends it. stop is closed by the
+// Windows service manager when it stops the service, and nil otherwise.
+func run(stop <-chan struct{}) error {
 	var (
 		configPath  = flag.String("config", "go-fs.toml", "path of the configuration file")
 		initPath    = flag.String("init", "", "write a documented starter configuration to this path and exit")
 		checkOnly   = flag.Bool("check", false, "load the configuration, report problems and exit")
 		showVersion = flag.Bool("version", false, "print the version and exit")
+		logFile     = flag.String("logfile", "", "write the log to this file, rotated by size, instead of standard output")
 	)
 	flag.Parse()
 
@@ -72,6 +88,17 @@ func run() error {
 		return nil
 	}
 
+	var output io.Writer = os.Stdout
+	if *logFile != "" && !*checkOnly {
+		file, err := logging.OpenFile(*logFile)
+		if err != nil {
+			return err
+		}
+		// left open: it takes every record up to the last one, and the
+		// error that ends the program after that
+		output, errorOutput = file, file
+	}
+
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		return err
@@ -81,7 +108,7 @@ func run() error {
 		return nil
 	}
 
-	logger := logging.New(cfg.General.LogLevel, cfg.General.LogFormat)
+	logger := logging.NewTo(output, cfg.General.LogLevel, cfg.General.LogFormat)
 	// the first record says what is running, so that a log handed over for
 	// analysis carries the build it came from and the file it was configured by
 	logger.Info("go-fs starting",
@@ -91,6 +118,8 @@ func run() error {
 		"arch", runtime.GOARCH,
 		"pid", os.Getpid(),
 		"config", *configPath,
+		"installer", packaging,
+		"service", stop != nil,
 		"logLevel", cfg.General.LogLevel,
 		"logFormat", cfg.General.LogFormat)
 	warnAboutSecrets(logger.Logger, *configPath, cfg)
@@ -115,9 +144,26 @@ func run() error {
 		return err
 	}
 	updater := selfupdate.New(currentVersion(), keys)
+	switch {
+	case packaging != "":
+		updater.SetManagedBy(packaging)
+	case stop != nil:
+		// Windows has no exec, so the restart into an update starts a new
+		// process, which the service manager would not know as the service
+		updater.SetManagedBy("service")
+	}
 	// a staged update a crash never applied is removed
 	updater.CleanupOld()
-	if cfg.HTTP.EnableSelfUpdate && len(keys) == 0 {
+	switch {
+	case cfg.HTTP.EnableSelfUpdate && packaging != "":
+		logger.Warn("http.enableSelfUpdate is set, but this go-fs was installed by the "+
+			packaging+" package, so every update over http is refused; install the "+
+			"package of the newer release instead", "installer", packaging)
+	case cfg.HTTP.EnableSelfUpdate && stop != nil:
+		logger.Warn("http.enableSelfUpdate is set, but go-fs runs as a Windows service, " +
+			"so every update over http is refused; stop the service, replace the " +
+			"executable and start it again instead")
+	case cfg.HTTP.EnableSelfUpdate && len(keys) == 0:
 		logger.Warn("http.enableSelfUpdate is set, but this build trusts no update " +
 			"signing key, so every update will be refused")
 	}
@@ -147,23 +193,29 @@ func run() error {
 	}
 
 	var received os.Signal
+	stopped := false
 	select {
 	case received = <-signals:
+	case <-stop:
+		stopped = true
 	case <-updater.Done():
 	}
 	// the signal is handed back to the runtime, so that a second one ends the
 	// process at once should the shutdown below hang on a client
 	signal.Stop(signals)
-	if received != nil {
+	switch {
+	case received != nil:
 		logger.Info("shutting down", "signal", received.String())
-	} else {
+	case stopped:
+		logger.Info("shutting down, the service is stopped")
+	default:
 		logger.Info("shutting down to restart into the new version")
 	}
 	cancel()
 	started := time.Now()
 	sup.Shutdown(context.Background())
 	logger.Info("shutdown complete", "took", time.Since(started).Round(time.Millisecond))
-	if received != nil {
+	if received != nil || stopped {
 		return nil
 	}
 	return restart(logger.Logger, updater)

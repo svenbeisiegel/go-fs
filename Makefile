@@ -39,7 +39,19 @@ define crosscompile
 	@$(MAKE) --no-print-directory checksums
 endef
 
-.PHONY: all build test race cover fuzz vet fmt lint clean release sign checksums version
+# The installers ship binaries of their own, stamped with the installer that
+# owns them so that they leave updating to it, and a configuration that serves
+# from a folder of the platform. They are built into PKG; the packages
+# themselves land in DIST beside the release binaries.
+PKG  := build/pkg
+NFPM := go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+# the basefolder line of the template, and what it says for each installer
+TEMPLATE_BASEFOLDER := basefolder = "/srv/files"
+LINUX_BASEFOLDER    := basefolder = "/var/lib/go-fs/files"
+WINDOWS_BASEFOLDER  := basefolder = "C:/ProgramData/go-fs/files"
+
+.PHONY: all build test race cover fuzz vet fmt lint clean release sign checksums version \
+	packages rpm msi-inputs
 
 all: vet test build
 
@@ -85,7 +97,7 @@ version:
 	@echo $(VERSION)
 
 clean:
-	rm -rf $(DIST) $(BINARY) coverage.out
+	rm -rf $(DIST) build $(BINARY) coverage.out
 
 # release cross compiles every supported platform at the released version and
 # writes the checksums. With the private key in GOFS_SIGNING_KEY it also writes
@@ -112,3 +124,43 @@ sign:
 checksums:
 	@cd $(DIST) && (sha256sum * > SHA256SUMS 2>/dev/null || shasum -a 256 * > SHA256SUMS)
 	@echo "wrote $(DIST)/SHA256SUMS"
+
+# packages builds what the installers need at the released version: the rpm
+# packages into DIST, and the binaries and configuration the msi is made of,
+# which only the WiX Toolset on Windows can build, into PKG. It runs after
+# release, which empties DIST, and writes the checksums again.
+packages: rpm msi-inputs
+	@$(MAKE) --no-print-directory checksums
+
+# installerconfig writes the template with its basefolder line replaced, and
+# fails when the template no longer has that line to replace.
+define installerconfig
+	@mkdir -p $(dir $(2))
+	@grep -qxF '$(TEMPLATE_BASEFOLDER)' $(TEMPLATE) || \
+		(echo "$(TEMPLATE) has no line $(TEMPLATE_BASEFOLDER)"; exit 1)
+	@sed 's|^$(TEMPLATE_BASEFOLDER)$$|$(1)|' $(TEMPLATE) > $(2)
+	@echo "wrote $(2)"
+endef
+
+# nfpm takes its files from fixed paths, see packaging/linux/nfpm.yaml, so the
+# architectures are packaged one after the other.
+rpm:
+	$(call installerconfig,$(LINUX_BASEFOLDER),$(PKG)/linux/go-fs.toml)
+	@mkdir -p $(DIST)
+	@for arch in amd64 arm64; do \
+		echo "building $(PKG)/linux/$(BINARY) for $$arch"; \
+		GOOS=linux GOARCH=$$arch $(BUILDENV) go build $(GOFLAGS) \
+			-ldflags "-s -w -X main.version=$(VERSION) -X main.packaging=rpm" \
+			-o $(PKG)/linux/$(BINARY) . || exit 1; \
+		VERSION=$(VERSION) ARCH=$$arch $(NFPM) package --config packaging/linux/nfpm.yaml \
+			--packager rpm --target $(DIST)/ || exit 1; \
+	done
+
+msi-inputs:
+	$(call installerconfig,$(WINDOWS_BASEFOLDER),$(PKG)/go-fs.windows.toml)
+	@for arch in amd64 arm64; do \
+		bin=$(PKG)/$(BINARY)_windows_$$arch.exe; \
+		echo "building $$bin"; \
+		GOOS=windows GOARCH=$$arch $(BUILDENV) go build $(GOFLAGS) \
+			-ldflags "-s -w -X main.version=$(VERSION) -X main.packaging=msi" -o $$bin . || exit 1; \
+	done

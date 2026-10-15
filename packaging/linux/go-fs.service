@@ -1,0 +1,37 @@
+[Unit]
+Description=go-fs file server (FTP, FTPS, SFTP, HTTP, HTTPS, S3, TFTP)
+Documentation=https://github.com/svenbeisiegel/go-fs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=go-fs
+Group=go-fs
+ExecStart=/usr/bin/go-fs -config /etc/go-fs/go-fs.toml
+# reloads the configuration file without a restart, as the watcher does
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2
+
+# The default ports are all above 1024; this is what lets the servers move to
+# 21, 22, 69, 80 or 443 without running as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+
+# /usr, /boot and /etc are read-only for go-fs, except its own folder in /etc,
+# where it writes its configuration file. Folders served from elsewhere need
+# no more than file permissions for the go-fs user; serving as another user,
+# or from a folder this hides, is a drop-in made with systemctl edit go-fs.
+ProtectSystem=full
+ReadWritePaths=/etc/go-fs
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

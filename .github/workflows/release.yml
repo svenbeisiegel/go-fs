@@ -61,6 +61,95 @@ jobs:
           GOFS_SIGNING_KEY: ${{ secrets.GOFS_SIGNING_KEY }}
         run: make release VERSION=${{ inputs.version }}
 
+      # the rpm packages into dist, and what the msi job below builds the
+      # Windows installers from into build/pkg
+      - name: make packages
+        run: make packages VERSION=${{ inputs.version }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release
+          path: dist/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: msi-inputs
+          path: |
+            build/pkg/go-fs_windows_*.exe
+            build/pkg/go-fs.windows.toml
+          if-no-files-found: error
+
+  # The WiX Toolset builds an msi on Windows alone. Version 5 is the last one
+  # under the MS-RL without the Open Source Maintenance Fee of 6 and later; it
+  # is built for .NET 6, which the runner no longer has, hence the roll
+  # forward to the .NET it does have.
+  msi:
+    needs: release
+    runs-on: windows-latest
+    env:
+      DOTNET_ROLL_FORWARD: Major
+      WIX_VERSION: 5.0.2
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: msi-inputs
+          path: build/pkg
+
+      - name: install the WiX Toolset
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version $env:WIX_VERSION
+          wix extension add --global WixToolset.Util.wixext/$env:WIX_VERSION
+          wix extension add --global WixToolset.Firewall.wixext/$env:WIX_VERSION
+
+      # Code signing goes here once there is a certificate, for example with
+      # Azure Trusted Signing (azure/trusted-signing-action): sign
+      # build/pkg/go-fs_windows_*.exe before the msi is built, so that the
+      # installed binary is signed, and the .msi files after.
+
+      - name: build the msi files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          foreach ($pair in @(@("x64", "amd64"), @("arm64", "arm64"))) {
+            $arch, $goarch = $pair
+            wix build packaging/windows/go-fs.wxs -arch $arch `
+              -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext `
+              -d Version=${{ inputs.version }} `
+              -d Bin="$PWD\build\pkg\go-fs_windows_$goarch.exe" `
+              -d Config="$PWD\build\pkg\go-fs.windows.toml" `
+              -o dist/go-fs-${{ inputs.version }}-$arch.msi
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: msi
+          path: dist/*.msi
+          if-no-files-found: error
+
+  publish:
+    needs: [release, msi]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release
+          path: dist
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: msi
+          path: dist
+
+      # the checksums cover the msi files as well, which the first job did
+      # not have yet
+      - name: checksums
+        run: cd dist && sha256sum $(ls | grep -vx SHA256SUMS) > SHA256SUMS
+
       - name: publish GitHub release
         uses: softprops/action-gh-release@v3
         with:

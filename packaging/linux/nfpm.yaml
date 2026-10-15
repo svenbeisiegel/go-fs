@@ -1,0 +1,78 @@
+# The rpm package, built by make rpm with nfpm, which expands VERSION, the
+# released version, and ARCH, the Go architecture, from its environment. The
+# files are relative to the repository root, where make runs nfpm, and make
+# puts them in build/pkg/linux for each architecture in turn: the binary built
+# with -X main.packaging=rpm, and the template serving /var/lib/go-fs/files.
+name: go-fs
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+release: 1
+section: net
+maintainer: Sven Beisiegel
+vendor: Sven Beisiegel
+homepage: https://github.com/svenbeisiegel/go-fs
+license: Apache-2.0
+description: |
+  FTP, FTPS, SFTP, HTTP, HTTPS, an S3 compatible API and TFTP in a single
+  binary, configured from one TOML file, with hot reload and a web interface
+  for editing it. Runs as the go-fs systemd service.
+
+contents:
+  - src: build/pkg/linux/go-fs
+    dst: /usr/bin/go-fs
+    file_info:
+      mode: 0755
+
+  - src: packaging/linux/go-fs.service
+    dst: /usr/lib/systemd/system/go-fs.service
+    file_info:
+      mode: 0644
+
+  # go-fs writes into its configuration file, the generated secrets at the
+  # first start and every change made in the admin interface, by writing a
+  # file beside it and renaming that over it: the folder is the service's
+  # too. noreplace keeps the file as it is on an upgrade, and puts the new
+  # template beside it as go-fs.toml.rpmnew.
+  - dst: /etc/go-fs
+    type: dir
+    file_info:
+      mode: 0750
+      owner: go-fs
+      group: go-fs
+  - src: build/pkg/linux/go-fs.toml
+    dst: /etc/go-fs/go-fs.toml
+    type: config|noreplace
+    file_info:
+      mode: 0600
+      owner: go-fs
+      group: go-fs
+
+  # the folder the template serves
+  - dst: /var/lib/go-fs
+    type: dir
+    file_info:
+      mode: 0750
+      owner: go-fs
+      group: go-fs
+  - dst: /var/lib/go-fs/files
+    type: dir
+    file_info:
+      mode: 0750
+      owner: go-fs
+      group: go-fs
+
+  - src: LICENSE
+    dst: /usr/share/licenses/go-fs/LICENSE
+    file_info:
+      mode: 0644
+
+scripts:
+  preinstall: packaging/linux/preinstall.sh
+  postinstall: packaging/linux/postinstall.sh
+  preremove: packaging/linux/preremove.sh
+  postremove: packaging/linux/postremove.sh
+
+rpm:
+  summary: FTP, SFTP, HTTP, S3 and TFTP file server in one binary
+  group: System Environment/Daemons

@@ -29,6 +29,8 @@ type stubUpdater struct {
 	latestErr   error
 	downloadErr error
 	refreshed   []bool
+	// managedBy is what Current reports as the installer of the binary
+	managedBy string
 
 	mu        sync.Mutex
 	staged    []byte
@@ -47,7 +49,7 @@ func newStubUpdater() *stubUpdater {
 
 func (u *stubUpdater) Current() selfupdate.Info {
 	return selfupdate.Info{Version: "1.0.0", OS: runtime.GOOS, Arch: runtime.GOARCH,
-		Executable: "/opt/go-fs/go-fs", Keys: []string{"0123456789abcdef"}}
+		Executable: "/opt/go-fs/go-fs", Keys: []string{"0123456789abcdef"}, ManagedBy: u.managedBy}
 }
 
 func (u *stubUpdater) Stage(_ context.Context, body io.Reader) (selfupdate.Staged, error) {
@@ -311,6 +313,7 @@ func TestUpdateRefusalStatus(t *testing.T) {
 		{selfupdate.ErrNotGoFS, http.StatusUnprocessableEntity},
 		{selfupdate.ErrTooLarge, http.StatusRequestEntityTooLarge},
 		{selfupdate.ErrBusy, http.StatusConflict},
+		{selfupdate.ErrManaged, http.StatusConflict},
 		{selfupdate.ErrNoKeys, http.StatusServiceUnavailable},
 		{errors.New("disk full"), http.StatusInternalServerError},
 	}
@@ -446,6 +449,43 @@ func TestUpdateInstallRelease(t *testing.T) {
 	if record := server.logs.find("http self update accepted, restarting"); record == nil ||
 		record["source"] != "go-fs_2.0.0_linux_amd64.update" {
 		t.Errorf("record %v", record)
+	}
+}
+
+// A binary an installer put in place is described, and the latest release
+// with it, but neither an upload nor the release is taken: nothing is read or
+// downloaded, and nothing restarts.
+func TestUpdateRefusedWhenManaged(t *testing.T) {
+	server := newUpdateServer(t, nil)
+	server.updater.managedBy = "rpm"
+
+	res := bearer(t, server.testServer, http.MethodGet, updatePath, server.updating, nil)
+	var info selfupdate.Info
+	if err := json.NewDecoder(res.Body).Decode(&info); err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK || info.ManagedBy != "rpm" {
+		t.Errorf("status %d, info %+v", res.StatusCode, info)
+	}
+	res = bearer(t, server.testServer, http.MethodGet, releasePath, server.updating, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("the latest release is not described: status %d", res.StatusCode)
+	}
+
+	res = bearer(t, server.testServer, http.MethodPut, updatePath, server.updating,
+		strings.NewReader("new binary"))
+	if res.StatusCode != http.StatusConflict {
+		t.Errorf("upload: status %d, want %d", res.StatusCode, http.StatusConflict)
+	}
+	res = bearer(t, server.testServer, http.MethodPost, releasePath, server.updating, nil)
+	if res.StatusCode != http.StatusConflict {
+		t.Errorf("release: status %d, want %d", res.StatusCode, http.StatusConflict)
+	}
+	if calls := server.updater.stageCalls(); calls != 0 {
+		t.Errorf("%d updates were staged", calls)
+	}
+	if server.updater.wasRequested(2 * restartDelay) {
+		t.Error("a refused update requested a restart")
 	}
 }
 

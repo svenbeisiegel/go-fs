@@ -156,6 +156,7 @@ func newServerWith(t *testing.T, tune func(*ftpConfig), tuneTLS func(*config.FTP
 	t.Helper()
 	base := t.TempDir()
 	cfg := ftpConfig{FTP: config.Default().FTP}
+	cfg.Enabled = true
 	cfg.Basefolder = base
 	cfg.Port = 0
 	cfg.MaxConnections = 8

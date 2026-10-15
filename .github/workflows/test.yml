@@ -116,3 +116,115 @@ jobs:
         with:
           name: fuzz-failures
           path: '**/testdata/fuzz/**'
+
+  packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # a second, higher version as well, for the upgrade below
+      - name: make packages
+        run: |
+          make packages
+          make rpm VERSION="$(cat VERSION).1"
+
+      # install, start, upgrade and remove the rpm the way dnf does on a
+      # server; the container has no systemd, so go-fs is started by hand as
+      # the account the unit runs it as. The upgrade keeps the configuration
+      # go-fs wrote its secrets into.
+      - name: install the rpm
+        run: |
+          docker run --rm -v "$PWD/dist:/dist:ro" rockylinux:9 sh -euxc '
+            version=$(ls /dist/go-fs-*.x86_64.rpm | sort -V | head -1)
+            update=$(ls /dist/go-fs-*.x86_64.rpm | sort -V | tail -1)
+            dnf install -y "$version"
+            id go-fs
+            test "$(stat -c %U:%a /etc/go-fs/go-fs.toml)" = go-fs:600
+            test "$(stat -c %U /var/lib/go-fs/files)" = go-fs
+            runuser -u go-fs -- /usr/bin/go-fs -check -config /etc/go-fs/go-fs.toml
+            setpriv --reuid go-fs --regid go-fs --init-groups \
+              /usr/bin/go-fs -config /etc/go-fs/go-fs.toml > /tmp/go-fs.log 2>&1 &
+            pid=$!
+            for i in $(seq 1 20); do curl -fsS -o /dev/null http://127.0.0.1:8080/ && break; sleep 0.5; done
+            curl -fsS -o /dev/null http://127.0.0.1:8080/
+            kill $pid; wait $pid || true
+            cat /tmp/go-fs.log
+            grep -q "installer=rpm" /tmp/go-fs.log
+            grep -q "documentation prints" /tmp/go-fs.log
+            grep -q "^httpSessionTokenSecret = \"..*\"" /etc/go-fs/go-fs.toml
+            dnf install -y "$update"
+            rpm -q go-fs
+            grep -q "^httpSessionTokenSecret = \"..*\"" /etc/go-fs/go-fs.toml
+            dnf remove -y go-fs
+            test ! -e /usr/bin/go-fs
+            test -f /etc/go-fs/go-fs.toml
+          '
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: msi-inputs
+          path: |
+            build/pkg/go-fs_windows_*.exe
+            build/pkg/go-fs.windows.toml
+          if-no-files-found: error
+
+  msi:
+    needs: packages
+    runs-on: windows-latest
+    env:
+      DOTNET_ROLL_FORWARD: Major
+      WIX_VERSION: 5.0.2
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: msi-inputs
+          path: build/pkg
+
+      - name: install the WiX Toolset
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version $env:WIX_VERSION
+          wix extension add --global WixToolset.Util.wixext/$env:WIX_VERSION
+          wix extension add --global WixToolset.Firewall.wixext/$env:WIX_VERSION
+
+      - name: build the msi
+        shell: pwsh
+        run: |
+          wix build packaging/windows/go-fs.wxs -arch x64 `
+            -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext `
+            -d Version=0.0.1 `
+            -d Bin="$PWD\build\pkg\go-fs_windows_amd64.exe" `
+            -d Config="$PWD\build\pkg\go-fs.windows.toml" `
+            -o go-fs.msi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # install it as an admin would, quietly, and see the service come up and
+      # serve, then go away again with the uninstall
+      - name: install the msi
+        shell: pwsh
+        run: |
+          $install = Start-Process msiexec -Wait -PassThru -ArgumentList "/i go-fs.msi /qn /l*v install.log"
+          if ($install.ExitCode -ne 0) { Get-Content install.log -Tail 80; exit $install.ExitCode }
+          $service = Get-Service go-fs
+          $service | Format-List Name, Status, StartType
+          if ($service.StartType -ne "Automatic") { throw "the service does not start with Windows" }
+          $up = $false
+          foreach ($i in 1..20) {
+            try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/ | Out-Null; $up = $true; break }
+            catch { Start-Sleep -Milliseconds 500 }
+          }
+          $log = "$env:ProgramData\go-fs\logs\go-fs.log"
+          Get-Content $log
+          if (-not $up) { throw "go-fs does not answer on 127.0.0.1:8080" }
+          if (-not (Select-String -Quiet -Path $log -Pattern "installer=msi")) { throw "the log does not say msi" }
+          Stop-Service go-fs
+          if (-not (Select-String -Quiet -Path $log -Pattern "shutdown complete")) { throw "no clean shutdown" }
+          $uninstall = Start-Process msiexec -Wait -PassThru -ArgumentList "/x go-fs.msi /qn /l*v uninstall.log"
+          if ($uninstall.ExitCode -ne 0) { Get-Content uninstall.log -Tail 80; exit $uninstall.ExitCode }
+          if (Get-Service go-fs -ErrorAction SilentlyContinue) { throw "the service is still there" }
+          if (-not (Test-Path "$env:ProgramData\go-fs\go-fs.toml")) { throw "the uninstall removed the configuration" }

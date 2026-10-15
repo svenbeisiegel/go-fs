@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Windows installer: go-fs.exe in Program Files, run by the go-fs service,
+  which starts with Windows, and the configuration in ProgramData. Built on
+  Windows by the WiX Toolset, once for each architecture:
+
+    wix build packaging/windows/go-fs.wxs -arch x64 -ext WixToolset.Util.wixext
+      -ext WixToolset.Firewall.wixext -d Version=0.10.0
+      -d Bin=build/pkg/go-fs_windows_amd64.exe -d Config=build/pkg/go-fs.windows.toml
+      -o dist/go-fs-0.10.0-x64.msi
+
+  Bin is the binary built with -X main.packaging=msi, which leaves updating to
+  this installer, and Config the template serving C:\ProgramData\go-fs\files;
+  make msi-inputs builds both.
+
+  An update is the msi of the newer release, run like the first one: the
+  major upgrade stops and removes the service of the installed version,
+  installs the new one and starts it again. The configuration file is never
+  replaced, nor removed by an uninstall: it holds the accounts and the keys.
+
+  msiexec /i go-fs-<version>-x64.msi /qn            installs or updates quietly
+  msiexec /i go-fs-<version>-x64.msi /qn FIREWALL=1 also opens the firewall
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall">
+  <Package Name="go-fs"
+           Manufacturer="Sven Beisiegel"
+           Version="$(Version)"
+           UpgradeCode="703FFA44-28B3-48C3-AB59-2D180F83AAD9"
+           Scope="perMachine"
+           Compressed="yes">
+    <SummaryInformation Description="go-fs file server" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of go-fs is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/svenbeisiegel/go-fs" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <!-- 1 lets go-fs.exe through the Windows firewall on every port. Off by
+         default: as installed, every server listens on 127.0.0.1 alone. -->
+    <Property Id="FIREWALL" Value="0" Secure="yes" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="go-fs" />
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DATAFOLDER" Name="go-fs">
+        <Directory Id="FILESFOLDER" Name="files" />
+        <Directory Id="LOGFOLDER" Name="logs" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="go-fs" AllowAbsent="no">
+      <ComponentRef Id="Executable" />
+      <ComponentRef Id="DataFolder" />
+      <ComponentRef Id="FilesFolder" />
+      <ComponentRef Id="LogFolder" />
+      <ComponentRef Id="Configuration" />
+      <ComponentRef Id="Firewall" />
+    </Feature>
+
+    <Component Id="Executable" Directory="INSTALLFOLDER">
+      <File Id="GoFsExe" Name="go-fs.exe" Source="$(Bin)" KeyPath="yes" />
+      <ServiceInstall Id="Service"
+                      Name="go-fs"
+                      DisplayName="go-fs file server"
+                      Description="Serves FTP, FTPS, SFTP, HTTP, HTTPS, S3 and TFTP as configured in C:\ProgramData\go-fs\go-fs.toml."
+                      Type="ownProcess"
+                      Start="auto"
+                      ErrorControl="normal"
+                      Account="LocalSystem"
+                      Arguments="-config &quot;[DATAFOLDER]go-fs.toml&quot; -logfile &quot;[LOGFOLDER]go-fs.log&quot;">
+        <!-- a crash is followed by a restart; a configuration go-fs refuses
+             ends the service with an error, which is in the log -->
+        <util:ServiceConfig FirstFailureActionType="restart"
+                            SecondFailureActionType="restart"
+                            ThirdFailureActionType="restart"
+                            RestartServiceDelayInSeconds="5"
+                            ResetPeriodInDays="1" />
+      </ServiceInstall>
+      <ServiceControl Id="ServiceControl"
+                      Name="go-fs"
+                      Start="install"
+                      Stop="both"
+                      Remove="uninstall"
+                      Wait="yes" />
+    </Component>
+
+    <!-- The configuration holds every password and key, and go-fs replaces it
+         by writing a file beside it and renaming that over it, so the file
+         takes its permissions from this folder: SYSTEM and Administrators
+         only, inherited by everything below. Kept by an uninstall. -->
+    <Component Id="DataFolder" Directory="DATAFOLDER" Guid="20B49A3D-DBEF-467A-B4CD-ADF5A59E73EC" Permanent="yes">
+      <CreateFolder>
+        <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+      </CreateFolder>
+    </Component>
+    <Component Id="FilesFolder" Directory="FILESFOLDER" Guid="D6EF36D3-4661-4B22-856F-B8BB5865AC7D" Permanent="yes">
+      <CreateFolder />
+    </Component>
+    <Component Id="LogFolder" Directory="LOGFOLDER" Guid="81CCB142-4D8E-44FC-BADC-24D4BEAF8B85" Permanent="yes">
+      <CreateFolder />
+    </Component>
+
+    <!-- installed once and then left alone: an update never overwrites it,
+         however it was changed, and an uninstall keeps it -->
+    <Component Id="Configuration" Directory="DATAFOLDER" NeverOverwrite="yes" Permanent="yes">
+      <File Id="ConfigFile" Name="go-fs.toml" Source="$(Config)" KeyPath="yes" />
+    </Component>
+
+    <Component Id="Firewall" Directory="INSTALLFOLDER" Guid="03E65786-3A1A-471B-B8B3-43024753353C" Condition="FIREWALL = 1">
+      <RegistryValue Root="HKLM" Key="Software\go-fs" Name="Firewall" Type="integer" Value="1" KeyPath="yes" />
+      <fw:FirewallException Id="FirewallException"
+                            Name="go-fs file server"
+                            Program="[#GoFsExe]"
+                            Scope="any"
+                            Profile="all" />
+    </Component>
+  </Package>
+</Wix>

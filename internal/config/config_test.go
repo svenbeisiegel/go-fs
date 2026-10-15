@@ -29,6 +29,18 @@ func authorizedKey(t *testing.T) string {
 	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
 }
 
+// servingConfig is the defaults with ftp and tftp switched on as well, the
+// servers most of the checks here are about, and every server on folder.
+func servingConfig(folder string) Config {
+	cfg := Default()
+	cfg.FTP.Enabled = true
+	cfg.FTP.Basefolder = folder
+	cfg.TFTP.Enabled = true
+	cfg.TFTP.Basefolder = folder
+	cfg.HTTP.Basefolder = folder
+	return cfg
+}
+
 func writeConfig(t *testing.T, body string) (path string, folder string) {
 	t.Helper()
 	folder = t.TempDir()
@@ -42,7 +54,11 @@ func writeConfig(t *testing.T, body string) (path string, folder string) {
 
 func TestLoadAppliesDefaults(t *testing.T) {
 	path, _ := writeConfig(t, `
+[http]
+enabled = false
+
 [ftp]
+enabled = true
 basefolder = "{{folder}}"
 port = 2121
 
@@ -84,9 +100,47 @@ basefolder = "{{folder}}"
 	}
 }
 
+// A file that names no server starts the http server alone, on 127.0.0.1 and
+// on ports that need no privileges, so a fresh install exposes nothing.
+func TestTheDefaultsServeHTTPOnLocalhostOnly(t *testing.T) {
+	cfg := Default()
+	if !cfg.HTTP.Enabled || cfg.FTP.Enabled || cfg.FTPS.Enabled || cfg.SFTP.Enabled ||
+		cfg.HTTPS.Enabled || cfg.TFTP.Enabled {
+		t.Errorf("enabled: ftp %v ftps %v sftp %v http %v https %v tftp %v, want http alone",
+			cfg.FTP.Enabled, cfg.FTPS.Enabled, cfg.SFTP.Enabled, cfg.HTTP.Enabled,
+			cfg.HTTPS.Enabled, cfg.TFTP.Enabled)
+	}
+	for name, got := range map[string][2]int{
+		"ftp":   {cfg.FTP.Port, 8021},
+		"ftps":  {cfg.FTPS.Port, 8990},
+		"sftp":  {cfg.SFTP.Port, 8022},
+		"http":  {cfg.HTTP.Port, 8080},
+		"https": {cfg.HTTPS.Port, 8443},
+		"tftp":  {cfg.TFTP.Port, 8069},
+	} {
+		if got[0] != got[1] {
+			t.Errorf("%s.port = %d, want %d", name, got[0], got[1])
+		}
+	}
+	for name, got := range map[string]string{
+		"ftp":  cfg.FTP.Address,
+		"sftp": cfg.SFTP.Address,
+		"http": cfg.HTTP.Address,
+		"tftp": cfg.TFTP.Address,
+	} {
+		if got != "127.0.0.1" {
+			t.Errorf("%s.address = %q, want 127.0.0.1", name, got)
+		}
+	}
+}
+
 func TestUserPermissionDefaults(t *testing.T) {
 	path, _ := writeConfig(t, `
+[http]
+enabled = false
+
 [ftp]
+enabled = true
 basefolder = "{{folder}}"
 
 [[users]]
@@ -147,7 +201,7 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		{"admin without http", func(c *Config) {
 			c.Users = []User{{Username: "root", Password: "x", FTP: true, IsAdmin: true}}
 		}, "isAdmin but not http"},
-		{"nothing enabled", func(c *Config) { c.FTP.Enabled = false; c.TFTP.Enabled = false }, "nothing to do"},
+		{"nothing enabled", func(c *Config) { c.FTP.Enabled = false; c.TFTP.Enabled = false; c.HTTP.Enabled = false }, "nothing to do"},
 		{"ftp port", func(c *Config) { c.FTP.Port = 0 }, "ftp.port"},
 		{"passive range reversed", func(c *Config) {
 			c.FTP.PassiveMinPort = 50100
@@ -194,7 +248,7 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 			c.HTTPS.Enabled = true
 			c.HTTPS.Cert = "cert.pem"
 		}, "together"},
-		{"http basefolder", func(c *Config) { c.HTTP.Enabled = true }, "http.basefolder"},
+		{"http basefolder", func(c *Config) { c.HTTP.Basefolder = "" }, "http.basefolder"},
 		// an http account is checked whether or not http is enabled: the entry
 		// is what is wrong, and it stays wrong on the day http is switched on
 		{"http user without a password", func(c *Config) {
@@ -368,9 +422,7 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := Default()
-			cfg.FTP.Basefolder = folder
-			cfg.TFTP.Basefolder = folder
+			cfg := servingConfig(folder)
 			tc.mutate(&cfg)
 			err := cfg.Validate()
 			if err == nil {
@@ -395,9 +447,7 @@ func mkdir(t *testing.T, parent, name string) string {
 
 func TestValidateAcceptsARegistryFolderOfItsOwn(t *testing.T) {
 	parent := t.TempDir()
-	cfg := Default()
-	cfg.FTP.Basefolder = mkdir(t, parent, "served")
-	cfg.TFTP.Basefolder = cfg.FTP.Basefolder
+	cfg := servingConfig(mkdir(t, parent, "served"))
 	cfg.HTTP.Enabled = true
 	cfg.HTTP.Basefolder = cfg.FTP.Basefolder
 	// a sibling whose name starts like the served folder's is not inside it
@@ -416,9 +466,7 @@ func TestValidateAcceptsARegistryFolderOfItsOwn(t *testing.T) {
 // that does not log in to it.
 func TestValidateAcceptsAccountsAsTheyAreMeant(t *testing.T) {
 	folder := t.TempDir()
-	cfg := Default()
-	cfg.FTP.Basefolder = folder
-	cfg.TFTP.Basefolder = folder
+	cfg := servingConfig(folder)
 	cfg.Users = []User{
 		{Username: "parked", Password: "x"},
 		// no password is fine on ftp and sftp when a key is there, and on ftp
@@ -513,9 +561,7 @@ func TestTemplateRoundTrips(t *testing.T) {
 
 func TestSaveKeepsExplicitUserFlags(t *testing.T) {
 	folder := t.TempDir()
-	cfg := Default()
-	cfg.FTP.Basefolder = folder
-	cfg.TFTP.Basefolder = folder
+	cfg := servingConfig(folder)
 	yes := true
 	cfg.Users = []User{{Username: "john", Password: "doe", FTP: true, AllowUserFileDelete: &yes}}
 
@@ -630,10 +676,8 @@ enabled = true
 }
 
 func TestGeneralBasefolderHasToBeAbsolute(t *testing.T) {
-	cfg := Default()
+	cfg := servingConfig(t.TempDir())
 	cfg.General.Basefolder = "relative/path"
-	cfg.FTP.Basefolder = t.TempDir()
-	cfg.TFTP.Basefolder = cfg.FTP.Basefolder
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "absolute path") {
 		t.Errorf("error = %v, want one about an absolute path", err)
@@ -678,17 +722,18 @@ func TestDocumentedPasswordsAreReported(t *testing.T) {
 		t.Errorf("found %v", found)
 	}
 
-	// the shipped template has no live account at all, so it reports none
+	// the shipped template has the one admin account that opens the admin
+	// interface after installing, and its password is reported until changed
 	template, err := Parse(Template())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := template.ExampleAccounts(); len(got) != 0 {
-		t.Errorf("the shipped template still has a documented password: %v", got)
+	if len(template.Users) != 1 || template.Users[0].Username != "admin" ||
+		!template.Users[0].IsAdmin || !template.Users[0].HTTP {
+		t.Fatalf("the shipped template defines %+v, want the one admin account", template.Users)
 	}
-	if len(template.Users) != 0 {
-		t.Errorf("the shipped template defines %d accounts, it should define none",
-			len(template.Users))
+	if got := template.ExampleAccounts(); len(got) != 1 || !strings.Contains(got[0], "admin") {
+		t.Errorf("the admin password of the template is not reported: %v", got)
 	}
 	if len(template.Tokens) != 0 {
 		t.Errorf("the shipped template defines %d tokens, it should define none",
@@ -724,9 +769,7 @@ func TestTokens(t *testing.T) {
 		t.Error("a token without an expiry expires")
 	}
 
-	cfg := Default()
-	cfg.FTP.Basefolder = t.TempDir()
-	cfg.TFTP.Basefolder = cfg.FTP.Basefolder
+	cfg := servingConfig(t.TempDir())
 	cfg.Tokens = []Token{token}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("a valid token was refused: %v", err)
@@ -737,9 +780,7 @@ func TestServers(t *testing.T) {
 	valid := Server{Name: "backup", Type: ServerTypeSFTP, Host: "sftp.example.com", Port: 2222,
 		Username: "alice", Password: "secret", HostKeyFingerprint: "SHA256:abc"}
 	check := func(servers ...Server) error {
-		cfg := Default()
-		cfg.FTP.Basefolder = t.TempDir()
-		cfg.TFTP.Basefolder = cfg.FTP.Basefolder
+		cfg := servingConfig(t.TempDir())
 		cfg.Servers = servers
 		return cfg.Validate()
 	}

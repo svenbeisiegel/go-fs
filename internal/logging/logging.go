@@ -3,8 +3,9 @@
 //
 // Everything goes to standard output as one record per line, text or JSON as
 // configured, so that whatever runs go-fs — a terminal, systemd, a container —
-// collects the log the way it collects any other program's. Nothing is ever
-// written to a file by the program itself.
+// collects the log the way it collects any other program's. Only a Windows
+// service, which has no standard output, writes to a file instead: -logfile
+// names it, and File rotates it.
 package logging
 
 import (

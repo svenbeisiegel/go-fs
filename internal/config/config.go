@@ -841,8 +841,10 @@ type TFTP struct {
 	MaxFileSize           int64 `toml:"maxFileSize"`
 }
 
-// Default returns the configuration that applies when nothing is set. The
-// values match the FTPdefaults, UserDefaults and TFTPdefaults of the original.
+// Default returns the configuration that applies when nothing is set. Only the
+// http server is on, every server listens on 127.0.0.1 alone and on a port
+// above 1024, so that a fresh install runs without privileges and exposes
+// nothing to the network until its configuration says so.
 func Default() Config {
 	return Config{
 		General: General{
@@ -860,8 +862,8 @@ func Default() Config {
 			},
 		},
 		FTP: FTP{
-			Enabled:             true,
-			Port:                21,
+			Port:                8021,
+			Address:             "127.0.0.1",
 			MaxConnections:      10,
 			PassiveMinPort:      1024,
 			PassiveMaxPort:      1034,
@@ -873,19 +875,19 @@ func Default() Config {
 			LoginFailureDelay:   1,
 		},
 		FTPS: FTPS{
-			Port: 990,
+			Port: 8990,
 		},
-		// SFTP is the one server that is off by default: a configuration
-		// written for an earlier version has no [sftp] section, and starting
-		// an SSH listener on such an upgrade would be a surprise.
 		SFTP: SFTP{
-			Port:              22,
+			Port:              8022,
+			Address:           "127.0.0.1",
 			MaxConnections:    10,
 			IdleTimeout:       600,
 			LoginFailureDelay: 1,
 		},
 		HTTP: HTTP{
-			Port:                  9080,
+			Enabled:               true,
+			Port:                  8080,
+			Address:               "127.0.0.1",
 			Realm:                 "go-fs",
 			EnableAdminInterface:  true,
 			EnableS3:              true,
@@ -902,11 +904,11 @@ func Default() Config {
 			MethodsRequireAuth:    []string{"PUT", "DELETE", "POST", "MKCOL", "MOVE"},
 		},
 		HTTPS: HTTPS{
-			Port: 9443,
+			Port: 8443,
 		},
 		TFTP: TFTP{
-			Enabled:               true,
-			Port:                  69,
+			Port:                  8069,
+			Address:               "127.0.0.1",
 			AllowRead:             true,
 			AllowCreateDirectory:  true,
 			MaxConnections:        10,
@@ -1067,7 +1069,7 @@ func Save(path string, cfg Config) error {
 // exampleSecrets are the passwords this project prints in its own README and
 // starter configuration. One of them in a live file is not a password at all:
 // it is on every page anyone reads before installing this.
-var exampleSecrets = map[string]bool{"doe": true, "mustermann": true}
+var exampleSecrets = map[string]bool{"admin": true, "doe": true, "mustermann": true}
 
 // ExampleAccounts names the accounts whose password is one of those, so that a
 // server never comes up quietly protected by a password anyone can look up. It

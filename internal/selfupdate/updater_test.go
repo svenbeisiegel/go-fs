@@ -236,6 +236,22 @@ func TestStageWithoutKeys(t *testing.T) {
 	}
 }
 
+// A binary an installer put in place is not replaced, however well the update
+// is signed, and nothing of it is written or run.
+func TestStageWhenManaged(t *testing.T) {
+	public, private := newKey(t)
+	u := testUpdater(t, public)
+	u.SetManagedBy("msi")
+	if got := u.Current().ManagedBy; got != "msi" {
+		t.Errorf("ManagedBy = %q", got)
+	}
+	_, err := u.Stage(context.Background(), bytes.NewReader(signed(t, private, buildFake(t, "go-fs 9.9.9"))))
+	if !errors.Is(err, ErrManaged) {
+		t.Fatalf("Stage: %v, want %v", err, ErrManaged)
+	}
+	assertNothingRan(t, u)
+}
+
 // A failed update frees the updater for the next one; a staged one keeps it,
 // since the process is about to restart.
 func TestStageBusy(t *testing.T) {
