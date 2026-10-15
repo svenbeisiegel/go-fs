@@ -49,6 +49,11 @@ NFPM := go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
 TEMPLATE_BASEFOLDER := basefolder = "/srv/files"
 LINUX_BASEFOLDER    := basefolder = "/var/lib/go-fs/files"
 WINDOWS_BASEFOLDER  := basefolder = "C:/ProgramData/go-fs/files"
+# the registryBaseFolder line of the template, and what it says for each
+# installer: the folder registry beside the served folder
+TEMPLATE_REGISTRY := registryBaseFolder = ""
+LINUX_REGISTRY    := registryBaseFolder = "/var/lib/go-fs/registry"
+WINDOWS_REGISTRY  := registryBaseFolder = "C:/ProgramData/go-fs/registry"
 
 .PHONY: all build test race cover fuzz vet fmt lint clean release sign checksums version \
 	packages rpm msi-inputs
@@ -132,20 +137,24 @@ checksums:
 packages: rpm msi-inputs
 	@$(MAKE) --no-print-directory checksums
 
-# installerconfig writes the template with its basefolder line replaced, and
-# fails when the template no longer has that line to replace.
+# installerconfig writes the template with its basefolder line replaced by
+# the first argument and its registryBaseFolder line by the third, and fails
+# when the template no longer has those lines to replace.
 define installerconfig
 	@mkdir -p $(dir $(2))
 	@grep -qxF '$(TEMPLATE_BASEFOLDER)' $(TEMPLATE) || \
 		(echo "$(TEMPLATE) has no line $(TEMPLATE_BASEFOLDER)"; exit 1)
-	@sed 's|^$(TEMPLATE_BASEFOLDER)$$|$(1)|' $(TEMPLATE) > $(2)
+	@grep -qxF '$(TEMPLATE_REGISTRY)' $(TEMPLATE) || \
+		(echo "$(TEMPLATE) has no line $(TEMPLATE_REGISTRY)"; exit 1)
+	@sed -e 's|^$(TEMPLATE_BASEFOLDER)$$|$(1)|' \
+		-e 's|^$(TEMPLATE_REGISTRY)$$|$(3)|' $(TEMPLATE) > $(2)
 	@echo "wrote $(2)"
 endef
 
 # nfpm takes its files from fixed paths, see packaging/linux/nfpm.yaml, so the
 # architectures are packaged one after the other.
 rpm:
-	$(call installerconfig,$(LINUX_BASEFOLDER),$(PKG)/linux/go-fs.toml)
+	$(call installerconfig,$(LINUX_BASEFOLDER),$(PKG)/linux/go-fs.toml,$(LINUX_REGISTRY))
 	@mkdir -p $(DIST)
 	@for arch in amd64 arm64; do \
 		echo "building $(PKG)/linux/$(BINARY) for $$arch"; \
@@ -157,7 +166,7 @@ rpm:
 	done
 
 msi-inputs:
-	$(call installerconfig,$(WINDOWS_BASEFOLDER),$(PKG)/go-fs.windows.toml)
+	$(call installerconfig,$(WINDOWS_BASEFOLDER),$(PKG)/go-fs.windows.toml,$(WINDOWS_REGISTRY))
 	@for arch in amd64 arm64; do \
 		bin=$(PKG)/$(BINARY)_windows_$$arch.exe; \
 		echo "building $$bin"; \

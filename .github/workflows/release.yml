@@ -104,6 +104,7 @@ jobs:
           dotnet tool install --global wix --version $env:WIX_VERSION
           wix extension add --global WixToolset.Util.wixext/$env:WIX_VERSION
           wix extension add --global WixToolset.Firewall.wixext/$env:WIX_VERSION
+          wix extension add --global WixToolset.UI.wixext/$env:WIX_VERSION
 
       # Code signing goes here once there is a certificate, for example with
       # Azure Trusted Signing (azure/trusted-signing-action): sign
@@ -117,7 +118,7 @@ jobs:
           foreach ($pair in @(@("x64", "amd64"), @("arm64", "arm64"))) {
             $arch, $goarch = $pair
             wix build packaging/windows/go-fs.wxs -arch $arch `
-              -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext `
+              -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext `
               -d Version=${{ inputs.version }} `
               -d Bin="$PWD\build\pkg\go-fs_windows_$goarch.exe" `
               -d Config="$PWD\build\pkg\go-fs.windows.toml" `

@@ -61,6 +61,13 @@ contents:
       mode: 0750
       owner: go-fs
       group: go-fs
+  # the folder of the container registry, beside the served one
+  - dst: /var/lib/go-fs/registry
+    type: dir
+    file_info:
+      mode: 0750
+      owner: go-fs
+      group: go-fs
 
   - src: LICENSE
     dst: /usr/share/licenses/go-fs/LICENSE

@@ -114,11 +114,14 @@ banner = []
 # http://127.0.0.1:8080/?go-fs=admin, to set this server up. Its password is
 # printed here for everyone to read, and go-fs warns about it at every start:
 # change it, before any server listens on more than 127.0.0.1. It is not a
-# default, an account only exists while it is listed in this file.
+# default, an account only exists while it is listed in this file. It may also
+# push to the container registry, which the rpm and msi installers turn on
+# (see http.registryBaseFolder).
 [[users]]
 username = "admin"
 password = "admin"
 http = true
+registry = true
 paths = ["^/.*"]
 allowUserFileCreate = true
 allowUserFileRetrieve = true
@@ -483,7 +486,8 @@ enableS3 = true
 # ordinary path of the served folder. The folder has to exist, and it must
 # neither be nor hold nor lie inside a folder that any server serves: nothing
 # but the registry may write to it. Pushing and deleting take a [[users]]
-# entry that sets registry = true.
+# entry that sets registry = true. The rpm and msi installers set it to the
+# folder registry beside the served folder files.
 registryBaseFolder = ""
 # Let anyone pull from the registry without credentials. With it off, pulling
 # takes an account that sets registry = true, as pushing always does.

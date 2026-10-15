@@ -723,13 +723,14 @@ func TestDocumentedPasswordsAreReported(t *testing.T) {
 	}
 
 	// the shipped template has the one admin account that opens the admin
-	// interface after installing, and its password is reported until changed
+	// interface after installing and pushes to the registry the installers
+	// turn on, and its password is reported until changed
 	template, err := Parse(Template())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(template.Users) != 1 || template.Users[0].Username != "admin" ||
-		!template.Users[0].IsAdmin || !template.Users[0].HTTP {
+		!template.Users[0].IsAdmin || !template.Users[0].HTTP || !template.Users[0].Registry {
 		t.Fatalf("the shipped template defines %+v, want the one admin account", template.Users)
 	}
 	if got := template.ExampleAccounts(); len(got) != 1 || !strings.Contains(got[0], "admin") {

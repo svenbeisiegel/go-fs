@@ -145,6 +145,8 @@ jobs:
             id go-fs
             test "$(stat -c %U:%a /etc/go-fs/go-fs.toml)" = go-fs:600
             test "$(stat -c %U /var/lib/go-fs/files)" = go-fs
+            test "$(stat -c %U /var/lib/go-fs/registry)" = go-fs
+            grep -qxF "registryBaseFolder = \"/var/lib/go-fs/registry\"" /etc/go-fs/go-fs.toml
             runuser -u go-fs -- /usr/bin/go-fs -check -config /etc/go-fs/go-fs.toml
             setpriv --reuid go-fs --regid go-fs --init-groups \
               /usr/bin/go-fs -config /etc/go-fs/go-fs.toml > /tmp/go-fs.log 2>&1 &
@@ -192,12 +194,13 @@ jobs:
           dotnet tool install --global wix --version $env:WIX_VERSION
           wix extension add --global WixToolset.Util.wixext/$env:WIX_VERSION
           wix extension add --global WixToolset.Firewall.wixext/$env:WIX_VERSION
+          wix extension add --global WixToolset.UI.wixext/$env:WIX_VERSION
 
       - name: build the msi
         shell: pwsh
         run: |
           wix build packaging/windows/go-fs.wxs -arch x64 `
-            -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext `
+            -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext `
             -d Version=0.0.1 `
             -d Bin="$PWD\build\pkg\go-fs_windows_amd64.exe" `
             -d Config="$PWD\build\pkg\go-fs.windows.toml" `
@@ -222,6 +225,9 @@ jobs:
           $log = "$env:ProgramData\go-fs\logs\go-fs.log"
           Get-Content $log
           if (-not $up) { throw "go-fs does not answer on 127.0.0.1:8080" }
+          if (-not (Test-Path "$env:ProgramData\go-fs\registry")) { throw "the install made no registry folder" }
+          try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/v2/ | Out-Null }
+          catch { if ($_.Exception.Response.StatusCode.value__ -ne 401) { throw "the registry does not answer on /v2/: $_" } }
           if (-not (Select-String -Quiet -Path $log -Pattern "installer=msi")) { throw "the log does not say msi" }
           Stop-Service go-fs
           if (-not (Select-String -Quiet -Path $log -Pattern "shutdown complete")) { throw "no clean shutdown" }
