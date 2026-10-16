@@ -248,9 +248,24 @@
   <form method="dialog">
     <h2 id="share-title">Share file</h2>
     <p></p>
-    <input class="link" type="text" readonly aria-label="Share link" spellcheck="false">
+    <div class="share-lines">
+      <label for="share-link">Link</label>
+      <div class="share-line">
+        <input id="share-link" class="link" data-kind="link" type="text" readonly spellcheck="false">
+        <button class="go" type="button" data-copy><svg class="ic"><use href="#i-copy"/></svg><span>Copy</span></button>
+      </div>
+      <label for="share-curl">curl</label>
+      <div class="share-line">
+        <input id="share-curl" class="link" data-kind="curl" type="text" readonly spellcheck="false">
+        <button class="go" type="button" data-copy><svg class="ic"><use href="#i-copy"/></svg><span>Copy</span></button>
+      </div>
+      <label for="share-wget">wget</label>
+      <div class="share-line">
+        <input id="share-wget" class="link" data-kind="wget" type="text" readonly spellcheck="false">
+        <button class="go" type="button" data-copy><svg class="ic"><use href="#i-copy"/></svg><span>Copy</span></button>
+      </div>
+    </div>
     <div class="row">
-      <button class="go" type="submit" value="copy"><svg class="ic"><use href="#i-copy"/></svg><span>Copy</span></button>
       <button class="plain" type="submit" value="cancel">Close</button>
     </div>
   </form>

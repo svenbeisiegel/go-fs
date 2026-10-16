@@ -644,9 +644,18 @@
   // one this page was loaded from, which is right behind a proxy as well.
 
   var shareDialog = document.getElementById("share-dialog");
-  var shareField = shareDialog ? shareDialog.querySelector("input.link") : null;
-  var copyLabel = shareDialog ? shareDialog.querySelector("button[value='copy'] span") : null;
-  var copiedTimer = null;
+  var shareFields = shareDialog ? shareDialog.querySelectorAll("input.link") : [];
+  var copyButtons = shareDialog ? shareDialog.querySelectorAll("button[data-copy]") : [];
+
+  function shareField(kind) {
+    return shareDialog.querySelector("input.link[data-kind='" + kind + "']");
+  }
+
+  // shellQuote makes a word safe to paste into a POSIX shell: the name may
+  // hold spaces or quotes, and the link's query an & or a ?.
+  function shellQuote(text) {
+    return "'" + text.replace(/'/g, "'\\''") + "'";
+  }
 
   function shareEntry(row) {
     var name = row.dataset.name;
@@ -664,21 +673,28 @@
       shareDialog.querySelector("p").textContent = "Anyone with this link can download " +
         decodeURI(folder) + name + " without logging in. It stops working as soon as " +
         "the file is changed, renamed or replaced.";
-      shareField.value = window.location.origin + view.path;
-      copyLabel.textContent = "Copy";
+      var url = window.location.origin + view.path;
+      // the commands name the output file, or the key would end up in it
+      shareField("link").value = url;
+      shareField("curl").value = "curl -fL -o " + shellQuote(name) + " " + shellQuote(url);
+      shareField("wget").value = "wget -O " + shellQuote(name) + " " + shellQuote(url);
+      copyButtons.forEach(function (button) {
+        window.clearTimeout(button.copiedTimer);
+        button.querySelector("span").textContent = "Copy";
+      });
       shareDialog.showModal();
-      shareField.focus();
-      shareField.select();
+      shareField("link").focus();
+      shareField("link").select();
     }).catch(failed);
   }
 
   // The clipboard API is only there in a secure context, which a plain http
   // page on another host is not; the selection is copied the old way there.
-  function copyLink() {
-    shareField.focus();
-    shareField.select();
+  function copyField(field) {
+    field.focus();
+    field.select();
     if (navigator.clipboard && window.isSecureContext) {
-      return navigator.clipboard.writeText(shareField.value);
+      return navigator.clipboard.writeText(field.value);
     }
     return new Promise(function (resolve, reject) {
       if (document.execCommand("copy")) {
@@ -690,24 +706,26 @@
   }
 
   if (shareDialog) {
-    shareField.addEventListener("focus", function () {
-      shareField.select();
-    });
-    shareDialog.querySelector("form").addEventListener("submit", function (event) {
-      if (!event.submitter || event.submitter.value !== "copy") {
-        return;
-      }
-      // the dialog stays open, so the link can still be read after copying
-      event.preventDefault();
-      copyLink().then(function () {
-        copyLabel.textContent = "Copied";
-      }, function () {
-        copyLabel.textContent = "Press Ctrl+C";
+    shareFields.forEach(function (field) {
+      field.addEventListener("focus", function () {
+        field.select();
       });
-      window.clearTimeout(copiedTimer);
-      copiedTimer = window.setTimeout(function () {
-        copyLabel.textContent = "Copy";
-      }, 2000);
+    });
+    // each line copies its own field; the buttons do not submit, so the
+    // dialog stays open and the line can still be read after copying
+    copyButtons.forEach(function (button) {
+      var label = button.querySelector("span");
+      button.addEventListener("click", function () {
+        copyField(button.parentNode.querySelector("input.link")).then(function () {
+          label.textContent = "Copied";
+        }, function () {
+          label.textContent = "Press Ctrl+C";
+        });
+        window.clearTimeout(button.copiedTimer);
+        button.copiedTimer = window.setTimeout(function () {
+          label.textContent = "Copy";
+        }, 2000);
+      });
     });
   }
 
