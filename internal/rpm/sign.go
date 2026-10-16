@@ -73,6 +73,8 @@ func (f *File) Sign(key Signer) (*File, error) {
 	if _, err := io.Copy(temp, source); err != nil {
 		return nil, err
 	}
+	// Windows does not replace a file that is still open
+	source.Close()
 	if err := temp.Sync(); err != nil {
 		return nil, err
 	}

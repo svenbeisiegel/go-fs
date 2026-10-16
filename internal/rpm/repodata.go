@@ -484,7 +484,7 @@ func otherXML(entries []Entry) otherDoc {
 	for _, e := range entries {
 		p := otherPackage{PkgID: e.Checksum, Name: e.Name, Arch: e.Arch, Version: versionOf(e.EVR)}
 		for _, c := range e.Changelog {
-			p.Changelog = append(p.Changelog, changelogXML{Author: c.Author, Date: c.Date, Text: c.Text})
+			p.Changelog = append(p.Changelog, changelogXML(c))
 		}
 		doc.Packages = append(doc.Packages, p)
 	}

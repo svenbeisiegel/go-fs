@@ -410,7 +410,7 @@ type usesPermissionV2 struct {
 }
 
 func permissionV2(p Permission) usesPermissionV2 {
-	return usesPermissionV2{Name: p.Name, MaxSdkVersion: p.MaxSdkVersion}
+	return usesPermissionV2(p)
 }
 
 type featureV2 struct {
