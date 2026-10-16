@@ -205,9 +205,14 @@ jobs:
           KEEP: 5
         run: bash packaging/repo/build.sh site
 
+      # artifacts outlive an attempt, so a re-run of this job would find the
+      # first attempt's as well, which deploy-pages refuses: one per attempt
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site
+          name: github-pages-${{ github.run_attempt }}
 
       - id: deploy
         uses: actions/deploy-pages@v5
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}
