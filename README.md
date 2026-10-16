@@ -1106,8 +1106,9 @@ swept as the hourly cleanup sweeps them.
 
 ### Package repository
 
-go-fs can host an rpm repository for zypper and dnf in a folder it serves over
-HTTP, and keep it up to date by itself. Put an rpm into the folder over any of
+go-fs can host an rpm repository for zypper and dnf, or an
+[F-Droid repository](#f-droid-repository) for Android, in a folder it serves
+over HTTP, and keep it up to date by itself. Put an rpm into the folder over any of
 the servers (an HTTP `PUT`, S3, FTP, SFTP, TFTP) or copy it there on disk. At
 the next look at the folder, go-fs:
 
@@ -1163,6 +1164,69 @@ sudo dnf config-manager addrepo --from-repofile=https://files.example.com/rpm/go
 zypper and dnf read the folder without logging in, so it has to be public: not
 in `pathsRequireAuth`, and with `GET` not in `methodsRequireAuth`. Uploading to
 it is protected as any upload is.
+
+#### F-Droid repository
+
+With `type = "fdroid"` the folder is a repository of APKs that the
+[F-Droid](https://f-droid.org) app adds as a third-party repository. It works
+like an rpm repository, with these differences:
+
+- **The APKs are not signed again.** They keep their developer's signature,
+  which Android checks when it installs one. An APK that is not signed at all
+  is left out. What is signed is the index.
+- **`keep`** counts versions per package name, by `versionCode`.
+- **The index** is version 2 of the F-Droid format: `index-v2.json`, and
+  `entry.json` signed into `entry.jar`. The app checks `entry.jar` against the
+  fingerprint the repository was added with. The launcher icons of the apps are
+  extracted into `icons/`. F-Droid apps from before 2023 read only the first
+  version of the index, which is not written.
+- **`signingKey`** is a self-signed certificate and its RSA private key, PEM,
+  one after the other. The dialog generates one (RSA 4096, valid for 10000
+  days, as `fdroid init` makes it), or takes an uploaded PEM file. The
+  repository's fingerprint is the SHA-256 of that certificate, so keep the key
+  once clients use the repository.
+- **`url` is required and has to end in `/repo`**, for example
+  `https://files.example.com/android/repo` for the folder `/android/repo`.
+  Given any other address, the app looks for the repository at
+  `<address>/fdroid/repo`.
+
+```toml
+[[repositories]]
+name = "android"
+type = "fdroid"
+folder = "/android/repo"
+signingKey = "…"                # certificate and RSA private key, PEM, base64
+keep = 3                        # versions per package name; 0 keeps all
+url = "https://files.example.com/android/repo"
+title = "Example apps"          # optional, the name the app shows; name when not set
+description = "The apps of example.com."   # optional
+icon = "/icon.png"              # optional, an image in the folder
+```
+
+The repository's record on the REPOSITORY tab shows its address with the
+fingerprint, `https://files.example.com/android/repo?fingerprint=<SHA-256>`.
+Add that in the F-Droid app under Settings › Repositories, or open the
+`fdroidrepos://` link the record gives on the phone.
+
+The app's name and icon come from the APK. More can be put beside the APKs in
+the fastlane layout, per app and language, and every file is optional:
+
+```text
+<folder>/<packageName>/<locale>/          e.g. org.example.app/en-US/
+  title.txt                 name, instead of the APK's label
+  short_description.txt     summary, up to 80 characters
+  full_description.txt      description
+  video.txt                 address of a video
+  changelogs/<versionCode>.txt, changelogs/default.txt
+  icon.png, featureGraphic.png, promoGraphic.png, tvBanner.png
+  phoneScreenshots/, sevenInchScreenshots/, tenInchScreenshots/,
+  tvScreenshots/, wearScreenshots/
+```
+
+fdroidserver's names (`name.txt`, `summary.txt`, `description.txt`) work too.
+The default language is `en-US`. A change to these files is picked up at the
+next look, as a new APK is. As for rpm, the folder has to be public for
+reading.
 
 ### Updating over HTTP
 

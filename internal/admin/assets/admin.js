@@ -983,14 +983,36 @@ function repositoryView(record, view) {
       box.append(list);
     }
   }
-  box.append(...clientCommands(record));
+  box.append(...clientCommands(record, view));
   return box;
 }
 
-// clientCommands is how zypper and dnf add the repository: from the .repo
-// file the repository writes when it knows its address, or from the address
-// the page is served at otherwise.
-function clientCommands(record) {
+// fdroidLinks is how the F-Droid app adds the repository: the address with
+// the fingerprint of the key, which the app checks the index against, as a
+// link that opens the app on the phone it is followed on, and to copy.
+function fdroidLinks(record, view) {
+  const out = [];
+  const fingerprint = view.status && view.status.fingerprint;
+  if (!record.url || !fingerprint) return out;
+  const address = record.url + "?fingerprint=" + fingerprint;
+  const pre = document.createElement("pre");
+  pre.textContent = address;
+  out.push(paragraph("In the F-Droid app, under Settings › Repositories, add:", ""), pre);
+  const link = document.createElement("a");
+  link.href = address.replace(/^http(s?):\/\//, "fdroidrepo$1://");
+  link.textContent = "Open in the F-Droid app";
+  const line = paragraph("On the phone itself: ", "");
+  line.append(link);
+  out.push(line);
+  return out;
+}
+
+// clientCommands is how a client adds the repository. zypper and dnf add it
+// from the .repo file the repository writes when it knows its address, or
+// from the address the page is served at otherwise; the F-Droid app from its
+// address and the fingerprint of its key.
+function clientCommands(record, view) {
+  if (record.type === "fdroid") return fdroidLinks(record, view);
   const out = [];
   if (record.type !== "rpm") return out;
   const pre = (text) => {
@@ -1056,17 +1078,46 @@ const repositoryDialog = (() => {
     });
   }
 
+  // keyKind is the kind of key the chosen type signs with: an F-Droid
+  // repository signs with a certificate and its key, an rpm one with OpenPGP
+  const keyKind = () => field("type").value === "fdroid" ? "jarkey" : "pgpkey";
+
   function showKey(text) {
-    keySummary.textContent = text || "none yet: generate one, or upload an armored private key";
+    keySummary.textContent = text || (keyKind() === "jarkey"
+      ? "none yet: generate one, or upload a certificate and its RSA private key, PEM"
+      : "none yet: generate one, or upload an armored private key");
     keySummary.classList.toggle("none", !text);
   }
+
+  // showType shows the fields of the chosen type, and the stored key while
+  // the type is the stored one
+  function showType() {
+    const type = field("type").value;
+    form.querySelectorAll("[data-type]").forEach((element) => {
+      element.hidden = element.dataset.type !== type;
+    });
+    field("url").placeholder = type === "fdroid"
+      ? "https://files.example.com/android/repo, ending in /repo; required"
+      : "https://files.example.com/rpm/go-fs, for the .repo file";
+    field("url").required = type === "fdroid";
+    if (key !== "") return;
+    const view = record ? repositoryViews[storedRepositories.get(record)] : null;
+    showKey(view && view.key && record.type === type
+      ? view.key + " (kept unless another is generated or uploaded)" : "");
+  }
+
+  field("type").addEventListener("change", () => {
+    // a key made for the other type does not sign for this one
+    key = "";
+    showType();
+  });
 
   generate.addEventListener("click", async () => {
     working(true);
     tell("Generating a key, which takes a few seconds…");
     try {
       const result = await post("?go-fs=admin-generate",
-        { kind: "pgpkey", name: field("name").value.trim() || "go-fs" });
+        { kind: keyKind(), name: field("name").value.trim() || "go-fs" });
       key = result.value;
       showKey(result.summary);
       tell("");
@@ -1085,7 +1136,7 @@ const repositoryDialog = (() => {
     tell("");
     try {
       const result = await post("?go-fs=admin-upload",
-        { kind: "pgpkey", filename: file.name, content: await base64Of(file) });
+        { kind: keyKind(), filename: file.name, content: await base64Of(file) });
       key = result.value;
       showKey(result.summary);
     } catch (error) {
@@ -1103,6 +1154,7 @@ const repositoryDialog = (() => {
     if (busy) return;
     working(true);
     tell("Saving…");
+    const type = field("type").value;
     try {
       const result = await post("?go-fs=admin-repository-save", {
         was: record ? storedRepositories.get(record) || "" : "",
@@ -1114,6 +1166,9 @@ const repositoryDialog = (() => {
           keep: Number(field("keep").value) || 0,
           pollInterval: Number(field("pollInterval").value) || 0,
           url: field("url").value.trim(),
+          title: type === "fdroid" ? field("title").value.trim() : "",
+          description: type === "fdroid" ? field("description").value.trim() : "",
+          icon: type === "fdroid" ? field("icon").value.trim() : "",
         },
       });
       working(false);
@@ -1153,8 +1208,10 @@ const repositoryDialog = (() => {
     field("keep").value = String(edited ? from.keep || 0 : 5);
     field("pollInterval").value = String(from.pollInterval || 60);
     field("url").value = from.url || "";
-    const view = edited ? repositoryViews[storedRepositories.get(edited)] : null;
-    showKey(view && view.key ? view.key + " (kept unless another is generated or uploaded)" : "");
+    field("title").value = from.title || "";
+    field("description").value = from.description || "";
+    field("icon").value = from.icon || "";
+    showType();
     tell("");
     working(false);
     dialog.showModal();

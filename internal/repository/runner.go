@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,8 +14,6 @@ import (
 	"time"
 
 	"go-fs/internal/config"
-	"go-fs/internal/pgp"
-	"go-fs/internal/rpm"
 )
 
 // runner keeps one repository.
@@ -26,8 +23,7 @@ type runner struct {
 	// repository on disk.
 	base   string
 	folder string
-	key    *pgp.Key
-	public []byte
+	kind   kind
 	log    *slog.Logger
 
 	// quit is closed to stop the runner, and done once it has stopped.
@@ -51,30 +47,27 @@ type runner struct {
 type known struct {
 	size    int64
 	modTime time.Time
-	entry   rpm.Entry
+	entry   entry
 }
 
 func newRunner(repo config.Repository, base string, logger *slog.Logger) (*runner, error) {
-	key, err := config.PGPKey(repo.SigningKey)
-	if err != nil {
-		return nil, fmt.Errorf("signingKey %w", err)
-	}
-	public, err := key.Public()
+	folder := config.RepositoryPath(base, repo.Folder)
+	log := logger.With("repository", repo.Name)
+	k, status, err := newKind(repo, folder, log)
 	if err != nil {
 		return nil, err
 	}
 	return &runner{
 		repo:    repo,
 		base:    base,
-		folder:  config.RepositoryPath(base, repo.Folder),
-		key:     key,
-		public:  public,
-		log:     logger.With("repository", repo.Name),
+		folder:  folder,
+		kind:    k,
+		log:     log,
 		quit:    make(chan struct{}),
 		done:    make(chan struct{}),
 		known:   map[string]known{},
 		skipped: map[string]string{},
-		status:  Status{KeyID: key.KeyID()},
+		status:  status,
 	}, nil
 }
 
@@ -82,7 +75,7 @@ func newRunner(repo config.Repository, base string, logger *slog.Logger) (*runne
 // or stop is called.
 func (r *runner) run(ctx context.Context) {
 	defer close(r.done)
-	r.log.Info("repository started", "folder", r.repo.Folder, "key", r.key.KeyID(),
+	r.log.Info("repository started", "type", r.repo.Type, "folder", r.repo.Folder, "key", r.kind.keyID(),
 		"pollInterval", r.repo.Interval())
 	r.look()
 	ticker := time.NewTicker(time.Duration(r.repo.Interval()) * time.Second)
@@ -147,7 +140,7 @@ func (r *runner) update(now time.Time) error {
 	}
 
 	// every package is read and checked first, and the old versions pruned,
-	// so that only the packages that stay are signed
+	// so that only the packages that stay are admitted
 	skipped := map[string]string{}
 	var candidates []candidate
 	for _, href := range found {
@@ -163,7 +156,7 @@ func (r *runner) update(now time.Time) error {
 	}
 	candidates = r.prune(candidates)
 
-	var entries []rpm.Entry
+	var entries []entry
 	current := map[string]known{}
 	for _, c := range candidates {
 		if r.stopped() {
@@ -180,17 +173,12 @@ func (r *runner) update(now time.Time) error {
 	r.known = current
 	r.skip(skipped)
 
-	listing := listingOf(entries)
-	if listing == r.listed && r.written() {
+	listing := listingOf(entries) + r.kind.inputs(entries)
+	if listing == r.listed && r.kind.written() {
 		return nil
 	}
-	if _, err := rpm.WriteRepodata(r.folder, entries, r.public, func(repomd []byte) ([]byte, error) {
-		return r.key.ArmoredSign(bytes.NewReader(repomd))
-	}, now); err != nil {
-		return fmt.Errorf("writing the metadata: %w", err)
-	}
-	if err := r.writeDefinition(); err != nil {
-		return fmt.Errorf("writing the repository definition: %w", err)
+	if err := r.kind.write(entries, now); err != nil {
+		return err
 	}
 	r.listed = listing
 	r.status.Packages = len(entries)
@@ -222,12 +210,16 @@ func (r *runner) packages() ([]string, error) {
 		}
 		name := d.Name()
 		if d.IsDir() {
-			if path != r.folder && (strings.HasPrefix(name, ".") || name == rpm.RepodataFolder) {
+			if path == r.folder {
+				return nil
+			}
+			rel, err := filepath.Rel(r.folder, path)
+			if err != nil || strings.HasPrefix(name, ".") || r.kind.skipDir(filepath.ToSlash(rel)) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if strings.HasPrefix(name, ".") || !strings.HasSuffix(name, ".rpm") || !d.Type().IsRegular() {
+		if strings.HasPrefix(name, ".") || !r.kind.isPackage(name) || !d.Type().IsRegular() {
 			return nil
 		}
 		rel, err := filepath.Rel(r.folder, path)
@@ -246,12 +238,17 @@ func (r *runner) packages() ([]string, error) {
 type candidate struct {
 	href string
 	// before is what was read of it before, when it did not change since,
-	// and file the package read now otherwise.
+	// and opened the package read now otherwise.
 	before *known
-	file   *rpm.File
-	name   string
-	arch   string
-	evr    rpm.EVR
+	opened release
+}
+
+// release is the version the candidate is.
+func (c candidate) release() release {
+	if c.before != nil {
+		return c.before.entry
+	}
+	return c.opened
 }
 
 // read reads and checks the package at href, from what was read of it
@@ -263,54 +260,32 @@ func (r *runner) read(href string) (candidate, error) {
 		return candidate{}, err
 	}
 	if before, ok := r.known[href]; ok && before.size == info.Size() && before.modTime.Equal(info.ModTime()) {
-		return candidate{href: href, before: &before,
-			name: before.entry.Name, arch: before.entry.Arch, evr: before.entry.EVR}, nil
+		return candidate{href: href, before: &before}, nil
 	}
-
-	f, err := rpm.Open(path)
+	opened, err := r.kind.open(path)
 	if err != nil {
-		return candidate{}, fmt.Errorf("cannot be read, it may still be arriving: %w", err)
-	}
-	if err := f.Verify(); err != nil {
-		if errors.Is(err, rpm.ErrIncomplete) {
-			// the details change while it arrives, and the reason is
-			// logged each time it changes
-			return candidate{}, fmt.Errorf("%w; it may still be arriving", rpm.ErrIncomplete)
-		}
 		return candidate{}, err
 	}
-	if f.IsSource() {
-		return candidate{}, errors.New("is a source package, which the repository does not list")
-	}
-	p := f.Package()
-	return candidate{href: href, file: f, name: p.Name, arch: p.Arch, evr: p.EVR}, nil
+	return candidate{href: href, opened: opened}, nil
 }
 
-// admit makes a package that stays in the repository ready to be listed:
-// signed with the repository's key, where it was not, and read for the
-// metadata.
+// admit makes a package that stays in the repository ready to be listed, as
+// its kind does: an rpm is signed with the repository's key, where it was
+// not, and read for the metadata.
 func (r *runner) admit(c candidate) (known, error) {
 	if c.before != nil {
 		return *c.before, nil
 	}
-	f := c.file
-	if !f.SignedBy(r.key) {
-		signed, err := f.Sign(r.key)
-		if err != nil {
-			return known{}, fmt.Errorf("cannot be signed: %w", err)
-		}
-		f = signed
-		r.log.Info("repository signed a package", "package", c.href, "key", r.key.KeyID())
-	}
-	info, err := os.Stat(f.Path)
+	e, err := r.kind.admit(c.opened, c.href)
 	if err != nil {
 		return known{}, err
 	}
-	entry, err := f.Entry(c.href)
+	// admitting may have changed the file, and it is known as it is now
+	info, err := os.Stat(filepath.Join(r.folder, filepath.FromSlash(c.href)))
 	if err != nil {
 		return known{}, err
 	}
-	return known{size: info.Size(), modTime: info.ModTime(), entry: entry}, nil
+	return known{size: info.Size(), modTime: info.ModTime(), entry: e}, nil
 }
 
 // skip records the files left out at this look, and logs each the first
@@ -332,7 +307,8 @@ func (r *runner) prune(candidates []candidate) []candidate {
 	}
 	groups := map[string][]candidate{}
 	for _, c := range candidates {
-		groups[c.name+"."+c.arch] = append(groups[c.name+"."+c.arch], c)
+		group := c.release().group()
+		groups[group] = append(groups[group], c)
 	}
 	removed := map[string]bool{}
 	for _, group := range groups {
@@ -341,7 +317,7 @@ func (r *runner) prune(candidates []candidate) []candidate {
 		}
 		// the newest first; two files of one version stay in the order of
 		// their names
-		slices.SortStableFunc(group, func(a, b candidate) int { return rpm.Compare(b.evr, a.evr) })
+		slices.SortStableFunc(group, func(a, b candidate) int { return b.release().compare(a.release()) })
 		for _, old := range group[r.repo.Keep:] {
 			path := filepath.Join(r.folder, filepath.FromSlash(old.href))
 			if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -350,7 +326,7 @@ func (r *runner) prune(candidates []candidate) []candidate {
 			}
 			removed[old.href] = true
 			r.log.Info("repository removed an old version", "package", old.href,
-				"version", old.evr.String(), "keep", r.repo.Keep)
+				"version", old.release().version(), "keep", r.repo.Keep)
 		}
 	}
 	if len(removed) == 0 {
@@ -361,40 +337,11 @@ func (r *runner) prune(candidates []candidate) []candidate {
 
 // listingOf identifies what metadata lists, so that it is written only when
 // that changed.
-func listingOf(entries []rpm.Entry) string {
+func listingOf(entries []entry) string {
 	var b strings.Builder
 	for _, e := range entries {
-		fmt.Fprintf(&b, "%s %s %d\n", e.Href, e.Checksum, e.ModTime)
+		b.WriteString(e.listing())
+		b.WriteByte('\n')
 	}
 	return b.String()
-}
-
-// written reports whether the metadata is still in the folder, which
-// someone may have removed since it was written.
-func (r *runner) written() bool {
-	_, err := rpm.ReadRepomd(r.folder)
-	return err == nil
-}
-
-// writeDefinition writes <name>.repo into the folder, when the repository
-// knows the address it is reached at.
-func (r *runner) writeDefinition() error {
-	if r.repo.URL == "" {
-		return nil
-	}
-	definition := fmt.Sprintf(`[%[1]s]
-name=%[1]s
-baseurl=%[2]s
-type=rpm-md
-enabled=1
-autorefresh=1
-gpgcheck=1
-repo_gpgcheck=1
-gpgkey=%[2]s/repodata/repomd.xml.key
-`, r.repo.Name, r.repo.URL)
-	path := filepath.Join(r.folder, r.repo.Name+".repo")
-	if existing, err := os.ReadFile(path); err == nil && string(existing) == definition {
-		return nil
-	}
-	return os.WriteFile(path, []byte(definition), 0o644)
 }

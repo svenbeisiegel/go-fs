@@ -16,6 +16,7 @@ import (
 
 // The package repositories are edited in a dialog, as the remote servers are:
 // it asks for the kind, the folder, the key and how many versions to keep, and
+// for an F-Droid repository what the app shows of it, and
 // the repository is written into the file at once, with nothing else of the
 // page, once the file it would make is one go-fs starts with. The folder is
 // made when it is not there yet.
@@ -35,6 +36,9 @@ type repositoryJSON struct {
 	Keep         int    `json:"keep"`
 	PollInterval int    `json:"pollInterval"`
 	URL          string `json:"url"`
+	Title        string `json:"title"`
+	Description  string `json:"description"`
+	Icon         string `json:"icon"`
 }
 
 // repositorySaveBody stores a repository.
@@ -57,7 +61,7 @@ func repositoryViews(cfg config.Config) map[string]repositoryView {
 	statuses := repository.Statuses()
 	views := make(map[string]repositoryView, len(cfg.Repositories))
 	for _, repo := range cfg.Repositories {
-		view := repositoryView{Key: config.Describe(config.KindPGPKey, repo.SigningKey)}
+		view := repositoryView{Key: config.Describe(config.SigningKeyKind(repo.Type), repo.SigningKey)}
 		if status, ok := statuses[repo.Name]; ok {
 			view.Status = &status
 		}
@@ -107,6 +111,8 @@ func (h *Handler) handleRepositorySave(w http.ResponseWriter, r *http.Request) {
 		SigningKey:   strings.TrimSpace(posted.SigningKey),
 		Keep:         posted.Keep,
 		PollInterval: posted.PollInterval,
+		Title:        strings.TrimSpace(posted.Title),
+		Description:  strings.TrimSpace(posted.Description),
 	}
 	if repo.Name == "" {
 		http.Error(w, "name the repository", http.StatusBadRequest)
@@ -127,6 +133,12 @@ func (h *Handler) handleRepositorySave(w http.ResponseWriter, r *http.Request) {
 	if repo.URL, err = config.RepositoryURL(posted.URL); err != nil {
 		http.Error(w, "address: "+err.Error(), http.StatusBadRequest)
 		return
+	}
+	if icon := strings.TrimSpace(posted.Icon); icon != "" {
+		if repo.Icon, err = config.RepositoryFolder(icon); err != nil {
+			http.Error(w, "icon: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	if repo.PollInterval == config.DefaultPollInterval {
 		// the default is left out of the file, as an unset key

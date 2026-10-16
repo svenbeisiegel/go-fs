@@ -85,7 +85,7 @@ func TestUpdateSignsAndLists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !f.SignedBy(r.key) {
+	if !f.SignedBy(r.kind.(*rpmKind).key) {
 		t.Fatal("the package was not signed")
 	}
 	for _, name := range []string{"repodata/repomd.xml.asc", "repodata/repomd.xml.key", "test.repo"} {

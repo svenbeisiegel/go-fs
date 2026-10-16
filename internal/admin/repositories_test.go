@@ -143,3 +143,47 @@ func TestGeneratePGPKey(t *testing.T) {
 		t.Errorf("summary = %q", answer.Summary)
 	}
 }
+
+func TestRepositorySaveFDroid(t *testing.T) {
+	if testing.Short() {
+		t.Skip("generating an RSA 4096 key takes seconds")
+	}
+	path := testConfig(t)
+	_, front := testServer(t, path)
+	status, body := postServer(t, front, ActionGenerate, map[string]string{"kind": config.KindJARKey, "name": "android"})
+	if status != http.StatusOK {
+		t.Fatalf("generate: %d %s", status, body)
+	}
+	var generated struct{ Value, Summary string }
+	json.Unmarshal([]byte(body), &generated)
+	if !strings.HasPrefix(generated.Summary, "RSA 4096 key, fingerprint ") {
+		t.Errorf("summary = %q", generated.Summary)
+	}
+
+	status, body = postServer(t, front, ActionRepositorySave, repositorySaveBody{Repository: repositoryJSON{
+		Name: "android", Type: "fdroid", Folder: "/android/repo", SigningKey: generated.Value, Keep: 2,
+		URL: "https://files.example.com/android/repo", Title: " Example apps ", Description: "Apps", Icon: "icon.png",
+	}})
+	if status != http.StatusOK {
+		t.Fatalf("save: %d %s", status, body)
+	}
+	var answer struct {
+		View repositoryView `json:"view"`
+	}
+	json.Unmarshal([]byte(body), &answer)
+	if answer.View.Key != generated.Summary {
+		t.Errorf("the key is described as %q, want %q", answer.View.Key, generated.Summary)
+	}
+	repo := loadRepositories(t, path).Repositories[0]
+	if repo.Type != "fdroid" || repo.Title != "Example apps" || repo.Description != "Apps" || repo.Icon != "/icon.png" {
+		t.Errorf("stored %+v", repo)
+	}
+
+	// the address has to be one the F-Droid app finds the repository at
+	status, body = postServer(t, front, ActionRepositorySave, repositorySaveBody{Was: "android", Repository: repositoryJSON{
+		Name: "android", Type: "fdroid", Folder: "/android/repo", URL: "https://files.example.com/android",
+	}})
+	if status != http.StatusBadRequest || !strings.Contains(body, "/repo") {
+		t.Errorf("an address not ending in /repo: %d %s", status, body)
+	}
+}
