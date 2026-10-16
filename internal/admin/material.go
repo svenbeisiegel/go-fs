@@ -162,6 +162,17 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		}
 		answer["value"] = key
 
+	case config.KindJARKey:
+		// named after the repository, which is the name of the certificate
+		key, err := config.GenerateJARKey(posted.Name)
+		if err != nil {
+			h.log.Error("the admin interface cannot generate an F-Droid repository key", "error", err)
+			http.Error(w, "the key could not be generated: "+err.Error(),
+				http.StatusInternalServerError)
+			return
+		}
+		answer["value"] = key
+
 	default:
 		// a private key on its own would not match any certificate
 		http.Error(w, "there is nothing to generate for this setting", http.StatusBadRequest)

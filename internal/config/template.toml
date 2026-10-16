@@ -329,31 +329,48 @@ isAdmin = true
 # Package repositories go-fs keeps in folders the http server serves, one
 # table per repository. Put a package into the folder over any of the
 # servers, or copy it there, and at the next look at the folder go-fs signs
-# it with the repository's key, removes the oldest versions of it beyond
-# keep, and writes the metadata clients read the repository by anew, signed
-# too. They are added and edited in the admin interface, on the REPOSITORY
+# it with the repository's key (an rpm; an APK keeps its developer's
+# signature), removes the oldest versions of it beyond keep, and writes the
+# metadata clients read the repository by anew, signed too. They are added and edited in the admin interface, on the REPOSITORY
 # tab, which also generates the key.
 # [[repositories]]
 # Names the repository, and is the id clients give it: letters, digits,
 # dots, dashes and underscores. Unique, whatever its case.
 # name = "go-fs"
-# The kind of repository: rpm, an rpm-md repository for zypper and dnf.
+# The kind of repository: rpm, an rpm-md repository for zypper and dnf, or
+# fdroid, an F-Droid repository of APKs for the F-Droid app on Android. An
+# fdroid repository leaves the APKs as their developer signed them, and signs
+# its index.
 # type = "rpm"
 # The folder of the repository in http.basefolder, as the file listing shows
 # it. It has to exist.
 # folder = "/rpm/go-fs"
-# The OpenPGP private key packages and metadata are signed with, armored and
-# base64 encoded, without a passphrase; only RSA keys are accepted. It is
+# The key the repository signs with, base64 encoded, without a passphrase;
+# only RSA keys are accepted. For rpm the OpenPGP private key packages and
+# metadata are signed with, armored. For fdroid a certificate and its private
+# key, PEM, one after the other; the F-Droid app adds the repository by the
+# fingerprint of the certificate, so keep the key once clients use it. It is
 # kept as it is, so keep this file private.
 # signingKey = "…"
 # How many versions of each package, by name and architecture, stay in the
-# folder; older ones are removed. 0 keeps every version.
+# folder; older ones are removed. 0 keeps every version. An APK is a version
+# of its package name, by its versionCode.
 # keep = 5
 # How often the folder is looked at, in seconds. 60 when not set.
 # pollInterval = 60
 # Where clients reach the folder. When set, <name>.repo is written into it,
-# the definition zypper and dnf add.
+# the definition zypper and dnf add. An fdroid repository needs it, ending in
+# /repo: the F-Droid app looks for the repository at <address>/fdroid/repo
+# when it is given any other address.
 # url = "https://files.example.com/rpm/go-fs"
+# The name the F-Droid app shows of an fdroid repository, at most 50
+# characters; the name when not set.
+# title = "Example apps"
+# The text the F-Droid app shows of an fdroid repository.
+# description = "The apps of example.com."
+# The image the F-Droid app shows of an fdroid repository, a .png, .jpg or
+# .webp in its folder, by its path in it.
+# icon = "/icon.png"
 
 [ftp]
 # Serve the plain control port. The TLS listener has its own switch in [ftps];

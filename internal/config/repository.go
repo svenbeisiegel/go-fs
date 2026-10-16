@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"go-fs/internal/fdroid"
 	"go-fs/internal/pgp"
 )
 
@@ -23,26 +24,50 @@ type Repository struct {
 	// the repository a client adds. Letters, digits, dots, dashes and
 	// underscores; unique, whatever its case.
 	Name string `toml:"name"`
-	// Type is the kind of repository: rpm, for zypper and dnf.
+	// Type is the kind of repository: rpm, for zypper and dnf, or fdroid,
+	// for the F-Droid app on Android.
 	Type string `toml:"type"`
 	// Folder is where the repository is, a folder of http.basefolder as the
 	// file listing shows it, such as /rpm/go-fs. It has to exist.
 	Folder string `toml:"folder"`
-	// SigningKey is the OpenPGP private key the packages and the metadata
-	// are signed with, armored and then base64 as the other keys in this
-	// file are, without a passphrase. Only RSA keys are accepted. It is kept
+	// SigningKey is the key the repository signs with, base64 as the other
+	// keys in this file are, without a passphrase, and RSA only. For rpm it
+	// is an armored OpenPGP private key, which signs the packages and the
+	// metadata. For fdroid it is a certificate and its private key, PEM, one
+	// after the other, which sign the index; clients add the repository by
+	// the fingerprint of the certificate, so it is not to change. It is kept
 	// as it is, so keep this file private.
 	SigningKey string `toml:"signingKey"`
 	// Keep is how many versions of each package, by name and architecture,
-	// stay in the folder; older ones are removed. 0 keeps every version.
+	// stay in the folder; older ones are removed. 0 keeps every version. An
+	// APK is a version of its package name, by its versionCode.
 	Keep int `toml:"keep"`
 	// PollInterval is how often, in seconds, the folder is looked at for
 	// packages that were added, replaced or removed. 60 when not set.
 	PollInterval int `toml:"pollInterval,omitempty"`
 	// URL is where clients reach the folder, such as
 	// https://files.example.com/rpm/go-fs. When set, the repository writes
-	// <name>.repo into the folder, the definition zypper and dnf add.
+	// <name>.repo into the folder, the definition zypper and dnf add. An
+	// fdroid repository has to have one, ending in /repo, which is the
+	// address the client is given and the index names.
 	URL string `toml:"url,omitempty"`
+	// Title is the name the F-Droid app shows of an fdroid repository, the
+	// name when not set.
+	Title string `toml:"title,omitempty"`
+	// Description is the text the F-Droid app shows of an fdroid
+	// repository.
+	Description string `toml:"description,omitempty"`
+	// Icon is the image the F-Droid app shows of an fdroid repository, a
+	// file in its folder by its path in it, such as /icon.png.
+	Icon string `toml:"icon,omitempty"`
+}
+
+// DisplayName is the name a client shows of the repository.
+func (r Repository) DisplayName() string {
+	if r.Title != "" {
+		return r.Title
+	}
+	return r.Name
 }
 
 // DefaultPollInterval is how often a repository's folder is looked at when
@@ -70,10 +95,24 @@ type RepositoryType struct {
 // RepositoryTypeRPM is an rpm-md repository, read by zypper and dnf.
 const RepositoryTypeRPM = "rpm"
 
+// RepositoryTypeFDroid is an F-Droid repository of APKs, read by the F-Droid
+// app on Android.
+const RepositoryTypeFDroid = "fdroid"
+
 // RepositoryTypes are the kinds a repository may be. Another one is added here
 // and given an implementation in internal/repository.
 var RepositoryTypes = []RepositoryType{
 	{ID: RepositoryTypeRPM, Label: "rpm (zypper, dnf)"},
+	{ID: RepositoryTypeFDroid, Label: "F-Droid (Android)"},
+}
+
+// SigningKeyKind is the kind of key material a repository of type typ signs
+// with.
+func SigningKeyKind(typ string) string {
+	if typ == RepositoryTypeFDroid {
+		return KindJARKey
+	}
+	return KindPGPKey
 }
 
 // RepositoryTypeOf looks a kind of repository up by its ID.
@@ -202,7 +241,7 @@ func (c Config) validateRepositories() error {
 		if strings.TrimSpace(repo.SigningKey) == "" {
 			return fmt.Errorf("%s has no signingKey", where)
 		}
-		if _, err := DecodePGPKey(repo.SigningKey); err != nil {
+		if _, err := Decode(SigningKeyKind(repo.Type), repo.SigningKey); err != nil {
 			return fmt.Errorf("%s: signingKey %w", where, err)
 		}
 		if repo.Keep < 0 {
@@ -215,6 +254,50 @@ func (c Config) validateRepositories() error {
 			return fmt.Errorf("%s: url: %w", where, err)
 		} else if address != repo.URL {
 			return fmt.Errorf("%s: url %q has to be %q", where, repo.URL, address)
+		}
+		if err := repo.validateFDroid(); err != nil {
+			return fmt.Errorf("%s: %w", where, err)
+		}
+	}
+	return nil
+}
+
+// maxTitle is the longest title the F-Droid app shows whole.
+const maxTitle = 50
+
+// validateFDroid checks what is particular to an fdroid repository, and
+// that a repository of another type sets none of it.
+func (r Repository) validateFDroid() error {
+	if r.Type != RepositoryTypeFDroid {
+		for key, value := range map[string]string{"title": r.Title, "description": r.Description, "icon": r.Icon} {
+			if value != "" {
+				return fmt.Errorf("%s is for an fdroid repository only", key)
+			}
+		}
+		return nil
+	}
+	if r.URL == "" {
+		return errors.New("an fdroid repository needs its url, the address the F-Droid app is given")
+	}
+	if u, _ := url.Parse(r.URL); !strings.HasSuffix(u.Path, "/repo") {
+		// the client appends /fdroid/repo to any other address it is given
+		return fmt.Errorf("url %q has to end in /repo, or the F-Droid app looks for the repository at %s/fdroid/repo",
+			r.URL, r.URL)
+	}
+	if len([]rune(r.Title)) > maxTitle {
+		return fmt.Errorf("title has to be at most %d characters", maxTitle)
+	}
+	if r.Icon != "" {
+		icon, err := RepositoryFolder(r.Icon)
+		if err != nil {
+			return fmt.Errorf("icon: %w", err)
+		}
+		if icon != r.Icon {
+			return fmt.Errorf("icon %q has to be %q", r.Icon, icon)
+		}
+		ext := strings.ToLower(path.Ext(icon))
+		if ext != ".png" && ext != ".jpg" && ext != ".webp" {
+			return fmt.Errorf("icon %q has to be a .png, .jpg or .webp image", r.Icon)
 		}
 	}
 	return nil
@@ -253,6 +336,49 @@ func GeneratePGPKey(name string) (string, error) {
 		return "", err
 	}
 	return Encode(armored), nil
+}
+
+// KindJARKey is the key the index of an fdroid repository is signed with.
+const KindJARKey = "jarkey"
+
+// DecodeJARKey turns a configured signing key of an fdroid repository into
+// the PEM it stands for, checked to be one go-fs can sign with.
+func DecodeJARKey(value string) ([]byte, error) {
+	decoded, err := DecodePEM(value)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := fdroid.Parse(decoded); err != nil {
+		return nil, err
+	}
+	return decoded, nil
+}
+
+// JARKey parses a configured signing key of an fdroid repository.
+func JARKey(value string) (*fdroid.Key, error) {
+	decoded, err := DecodePEM(value)
+	if err != nil {
+		return nil, err
+	}
+	return fdroid.Parse(decoded)
+}
+
+// GenerateJARKey makes a new signing key for the fdroid repository called
+// name, as the value the file holds.
+func GenerateJARKey(name string) (string, error) {
+	pemBytes, err := fdroid.Generate(name)
+	if err != nil {
+		return "", err
+	}
+	return Encode(pemBytes), nil
+}
+
+func describeJARKey(value string) string {
+	key, err := JARKey(value)
+	if err != nil {
+		return "this value " + err.Error()
+	}
+	return key.Describe()
 }
 
 func describePGPKey(value string) string {

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -102,5 +103,75 @@ func TestPGPKeyMaterial(t *testing.T) {
 	}
 	if got := Describe(KindPGPKey, Encode([]byte("-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n"))); !strings.HasPrefix(got, "this value ") {
 		t.Errorf("describe of something else = %q", got)
+	}
+}
+
+// testJARKey is one signing key of an fdroid repository for every test,
+// since making one takes a while.
+var testJARKey = sync.OnceValues(func() (string, error) { return GenerateJARKey("test") })
+
+func TestFDroidRepositories(t *testing.T) {
+	folder := t.TempDir()
+	mkdir(t, folder, "android/repo")
+	key, err := testJARKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	good := Repository{Name: "android", Type: RepositoryTypeFDroid, Folder: "/android/repo", SigningKey: key,
+		URL: "https://files.example.com/android/repo", Title: "Example apps", Icon: "/icon.png"}
+	valid := servingConfig(folder)
+	valid.Repositories = []Repository{good}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("a valid fdroid repository is refused: %v", err)
+	}
+
+	cases := []struct {
+		name   string
+		change func(*Repository)
+		want   string
+	}{
+		{"no url", func(r *Repository) { r.URL = "" }, "needs its url"},
+		{"url not ending in /repo", func(r *Repository) { r.URL = "https://files.example.com/android" }, "end in /repo"},
+		{"an OpenPGP key", func(r *Repository) { r.SigningKey = testSigningKey(t) }, "signingKey"},
+		{"a long title", func(r *Repository) { r.Title = strings.Repeat("x", 51) }, "at most 50"},
+		{"an icon out of the folder", func(r *Repository) { r.Icon = "/../icon.png" }, "leaves the served folder"},
+		{"an icon that is no image", func(r *Repository) { r.Icon = "/icon.svg" }, ".png, .jpg or .webp"},
+		{"title on rpm", func(r *Repository) { r.Type = RepositoryTypeRPM; r.SigningKey = testSigningKey(t) },
+			"for an fdroid repository only"},
+	}
+	for _, c := range cases {
+		cfg := servingConfig(folder)
+		repo := good
+		c.change(&repo)
+		cfg.Repositories = []Repository{repo}
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: got %v, want %q", c.name, err, c.want)
+		}
+	}
+	if got := good.DisplayName(); got != "Example apps" {
+		t.Errorf("display name %q", got)
+	}
+	if got := (Repository{Name: "android"}).DisplayName(); got != "android" {
+		t.Errorf("display name without a title %q", got)
+	}
+}
+
+func TestJARKeyMaterial(t *testing.T) {
+	key, err := testJARKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Decode(KindJARKey, key); err != nil {
+		t.Fatal(err)
+	}
+	if got := Describe(KindJARKey, key); !strings.HasPrefix(got, "RSA 4096 key, fingerprint ") {
+		t.Errorf("describe = %q", got)
+	}
+	if _, err := Decode(KindJARKey, testSigningKey(t)); err == nil {
+		t.Error("an OpenPGP key is taken for the key of an fdroid repository")
+	}
+	if SigningKeyKind(RepositoryTypeFDroid) != KindJARKey || SigningKeyKind(RepositoryTypeRPM) != KindPGPKey {
+		t.Error("the kinds of signing key")
 	}
 }

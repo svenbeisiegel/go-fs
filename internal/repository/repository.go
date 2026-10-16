@@ -1,8 +1,10 @@
 // Package repository keeps the package repositories of [[repositories]] up to
 // date: each one's folder is looked at every pollInterval seconds, and when a
-// package was added, replaced or removed, the packages are checked, signed
-// with the repository's key where they are not, pruned to the newest keep
-// versions, and the metadata clients read the repository by is written anew.
+// package was added, replaced or removed, the packages are checked, pruned to
+// the newest keep versions, and the metadata clients read the repository by
+// is written anew and signed. An rpm repository signs the rpms too, where they
+// are not signed with its key; an F-Droid repository leaves the APKs as their
+// developer signed them.
 //
 // The folder is polled rather than told about uploads: a package arrives by
 // any of the servers, each with its own way of finishing a file, or is copied
@@ -156,8 +158,11 @@ type Status struct {
 	// Skipped are the files that are not in the repository, by their path
 	// in it, with the reason.
 	Skipped map[string]string `json:"skipped,omitempty"`
-	// KeyID is the id of the key the repository signs with.
+	// KeyID is the id of the OpenPGP key an rpm repository signs with.
 	KeyID string `json:"keyId,omitempty"`
+	// Fingerprint is the fingerprint of the certificate an fdroid
+	// repository signs with, which a client adds it by.
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // statuses are the statuses of the running repositories, by name. They are

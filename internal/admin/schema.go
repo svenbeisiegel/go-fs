@@ -347,7 +347,7 @@ func secret(name string) bool {
 	}
 	kind := material(name)
 	return kind == config.KindTLSKey || kind == config.KindSSHKey ||
-		kind == config.KindSessionSecret || kind == config.KindPGPKey
+		kind == config.KindSessionSecret || kind == config.KindPGPKey || kind == config.KindJARKey
 }
 
 // material reports the kind of key material a key holds, which is what gives

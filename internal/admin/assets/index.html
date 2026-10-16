@@ -83,8 +83,9 @@
 <dialog id="repository-dialog" aria-labelledby="repository-title">
   <form method="dialog">
     <h2 id="repository-title">Add repository</h2>
-    <p class="intro">The repository is a folder the http server serves. Packages put into it are signed with its key,
-      the oldest versions beyond keep are removed, and the metadata clients read is written anew. The folder is made
+    <p class="intro">The repository is a folder the http server serves. For packages put into it the oldest versions
+      beyond keep are removed, and the metadata clients read is written anew and signed with its key: rpms are signed
+      with it too, APKs keep the signature of their developer. The folder is made
       when it is not there yet. The repository is written to the file at once; nothing else on this page is.</p>
     <div class="dialog-fields">
       <label for="repository-name">name</label>
@@ -97,7 +98,7 @@
       <div class="key">
         <p class="summary"></p>
         <div class="buttons">
-          <input type="file" hidden accept=".asc,.gpg,.key,.pgp,.txt">
+          <input type="file" hidden accept=".asc,.gpg,.key,.pgp,.pem,.txt">
           <button class="plain" type="button" value="generate">Generate</button>
           <button class="plain" type="button" value="upload">Upload…</button>
         </div>
@@ -107,7 +108,13 @@
       <label for="repository-poll">look every</label>
       <input id="repository-poll" name="pollInterval" type="number" min="5" step="1" title="seconds between two looks at the folder">
       <label for="repository-url">address</label>
-      <input id="repository-url" name="url" type="text" spellcheck="false" autocomplete="off" placeholder="https://files.example.com/rpm/go-fs, for the .repo file">
+      <input id="repository-url" name="url" type="text" spellcheck="false" autocomplete="off">
+      <label for="repository-display-title" data-type="fdroid">title</label>
+      <input id="repository-display-title" name="title" type="text" maxlength="50" autocomplete="off" data-type="fdroid" placeholder="the name the F-Droid app shows; the name when empty">
+      <label for="repository-description" data-type="fdroid">description</label>
+      <textarea id="repository-description" name="description" rows="3" data-type="fdroid" placeholder="what the F-Droid app shows under the name"></textarea>
+      <label for="repository-icon" data-type="fdroid">icon</label>
+      <input id="repository-icon" name="icon" type="text" spellcheck="false" autocomplete="off" data-type="fdroid" placeholder="/icon.png, an image in the folder">
     </div>
     <p class="progress" role="status" aria-live="polite" hidden></p>
     <div class="row">
