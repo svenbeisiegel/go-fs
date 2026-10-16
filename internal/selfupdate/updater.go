@@ -58,9 +58,8 @@ var (
 	ErrPlatform = errors.New("the binary is built for another platform")
 	// ErrNotGoFS is a binary that did not answer -version as go-fs does.
 	ErrNotGoFS = errors.New("the binary does not run as go-fs")
-	// ErrManaged is an update to a binary an installer put in place, which
-	// the installer's next version replaces instead, or to a Windows service,
-	// which the restart into the update would leave.
+	// ErrManaged is an update to a binary a package manager put in place,
+	// which the package's next version replaces instead.
 	ErrManaged = errors.New("this go-fs is updated by its installer or its service manager, not over http")
 )
 
@@ -74,9 +73,8 @@ type Info struct {
 	Executable string   `json:"executable"`
 	PID        int      `json:"pid"`
 	Keys       []string `json:"keys"`
-	// ManagedBy names the installer that put the binary in place, rpm or
-	// msi, or is service for a Windows service installed by hand; empty when
-	// the update over http may replace the binary.
+	// ManagedBy names the package manager that put the binary in place,
+	// rpm; empty when the update over http may replace the binary.
 	ManagedBy string `json:"managedBy,omitempty"`
 }
 
@@ -164,7 +162,7 @@ func (u *Updater) Current() Info {
 	}
 }
 
-// SetManagedBy records that an installer put the executable in place, so
+// SetManagedBy records that a package manager put the executable in place, so
 // that every update is refused: the package manager keeps track of what it
 // installed, and a binary replaced behind its back is one it no longer
 // knows. It is called before the updater is handed to anything.

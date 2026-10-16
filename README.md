@@ -10,18 +10,18 @@ accounts.
 Requires Go 1.27 or newer.
 
 ```shell
-make build          # the same five binaries, stamped as a dev build
+make build          # the same three binaries, stamped as a dev build
 make test           # the test suite
 make race           # the test suite under the race detector
-make release        # all five release binaries into dist/ with checksums
+make release        # the signed .update files of a release into dist/ with checksums
 make sign           # signed .update files for the binaries in dist/
 make packages       # the rpm packages into dist/, and what the msi is built from
 ```
 
-`make release` cross compiles for linux and windows on amd64 and arm64, and for
-macOS on arm64. Builds use `CGO_ENABLED=0`, so the binary carries no host
-dependencies: on Linux and Windows it is fully static, on macOS it links only
-`libSystem` as the operating system requires.
+`make release` cross compiles for linux on amd64 and arm64 and for windows on
+amd64, the platforms a release has a package for. Builds use `CGO_ENABLED=0`,
+so the binary is fully static and carries no host dependencies. Any other
+platform Go supports builds with a plain `GOOS=… GOARCH=… go build .`.
 
 ## Versioning
 
@@ -30,23 +30,20 @@ it. The two build targets stamp it differently:
 
 | Target | Version stamped | Artifact |
 |---|---|---|
-| `make release` | `1.0.0` | `dist/go-fs_1.0.0_linux_amd64`, one per platform |
+| `make release` | `1.0.0` | `dist/go-fs_1.0.0_linux_amd64.update`, one per platform |
 | `make build` | `1.0.0-dev-20260904-222134` | `dist/go-fs_1.0.0-dev-20260904-222134_linux_amd64`, one per platform |
 
-The two targets differ only in the version they stamp: both cross compile the
-same five binaries into `dist/`, with checksums, after emptying it. `make build`
-appends `-dev-<YYYYmmdd-HHMMSS>`, so a locally built binary always says when it
-was built and can never be mistaken for a release.
+Both cross compile the same three binaries into `dist/`, with checksums, after
+emptying it. `make build` appends `-dev-<YYYYmmdd-HHMMSS>`, so a locally built
+binary always says when it was built and can never be mistaken for a release.
+`go-fs -init` writes the documented starter configuration next to one.
 
-Both also copy the documented starter configuration into `dist/go-fs.toml`,
-which is the name the binary reads when `-config` is not given, so an unpacked
-`dist/` is ready to edit and run. It is the same file the binary embeds and
-`-init` writes, so the shipped configuration always matches the build.
-
-With the signing key in `GOFS_SIGNING_KEY`, `make release` also writes a signed
-`dist/go-fs_1.0.0_linux_amd64.update` next to each binary: the file a running
-go-fs accepts as an update over HTTP (see [Updating over HTTP](#updating-over-http)).
-The release workflow refuses to run without the key.
+With the signing key in `GOFS_SIGNING_KEY`, `make release` writes a signed
+`dist/go-fs_1.0.0_linux_amd64.update` for each binary, the file a running go-fs
+accepts as an update over HTTP (see [Updating over HTTP](#updating-over-http)),
+and keeps only those: a release ships the installers and the `.update` files,
+not the plain binaries. Without the key the binaries stay. The release workflow
+refuses to run without the key.
 
 `go-fs -version` prints whichever version was stamped, and a plain `go build .`
 reports `1.0.0-dev`. Pass `VERSION=` to override for a single build, for example
@@ -54,7 +51,8 @@ reports `1.0.0-dev`. Pass `VERSION=` to override for a single build, for example
 
 ## Install
 
-Every release carries installers besides the plain binaries. They install go-fs
+Every release carries an rpm for x86_64 and aarch64 and an msi for x64, besides
+the `.update` files and `SHA256SUMS`. They install go-fs
 as a service that starts with the system, with a configuration that serves HTTP
 on `127.0.0.1:8080` alone, with the [container registry](#container-registry) on,
 and has one account, `admin` with the password `admin`, which may also push to
@@ -64,18 +62,35 @@ addresses they listen on. go-fs warns about that password at every start until
 it is changed. The rpm prints that address when it is installed or updated, and
 the msi offers to open it in the browser on its last page.
 
-An installed go-fs is updated by installing the package of the newer release,
-which keeps the configuration as it is. [Updating over HTTP](#updating-over-http)
-refuses to replace a binary that a package installed.
+An rpm install is updated through the package repository, which keeps the
+configuration as it is; [Updating over HTTP](#updating-over-http) refuses to
+replace a binary the rpm installed. An msi install updates itself from the
+GitHub releases, see [Windows: msi](#windows-msi).
 
 ### Linux: rpm
 
+The rpms are signed, and served as a zypper and dnf repository from GitHub
+Pages, which keeps the five newest releases:
+<https://svenbeisiegel.github.io/go-fs/>.
+
 ```shell
-dnf install ./go-fs-<version>-1.x86_64.rpm     # or .aarch64.rpm; also updates
+# openSUSE and SLES
+zypper addrepo https://svenbeisiegel.github.io/go-fs/rpm/go-fs.repo
+zypper refresh && zypper install go-fs
+zypper update go-fs                            # an update
+
+# Fedora, RHEL and Rocky Linux
+dnf config-manager addrepo --from-repofile=https://svenbeisiegel.github.io/go-fs/rpm/go-fs.repo
+dnf install go-fs
+
 systemctl status go-fs
 journalctl -u go-fs -f                         # the log
-dnf remove go-fs
+zypper remove go-fs                            # or dnf remove go-fs
 ```
+
+The first `zypper refresh` asks to trust the repository's key, `go-fs.asc` on
+the same page. A downloaded rpm of a release installs too, with
+`zypper install ./go-fs-<version>-1.x86_64.rpm` or `.aarch64.rpm`.
 
 | Path | What |
 |---|---|
@@ -102,7 +117,7 @@ move to 21, 22, 69, 80 or 443. It keeps `/usr` and `/etc` read-only, except
 ### Windows: msi
 
 ```powershell
-msiexec /i go-fs-<version>-x64.msi /qn            # or -arm64.msi; also updates
+msiexec /i go-fs-<version>-x64.msi /qn
 msiexec /i go-fs-<version>-x64.msi /qn FIREWALL=1 # and let go-fs through the firewall
 Get-Service go-fs
 msiexec /x go-fs-<version>-x64.msi /qn
@@ -119,12 +134,21 @@ msiexec /x go-fs-<version>-x64.msi /qn
 The service `go-fs` runs as LocalSystem. It starts with Windows and is restarted
 if it crashes. `C:\ProgramData\go-fs` is readable by SYSTEM and the
 Administrators only, because the configuration holds every password and key. An
-update stops the service, replaces the binary and starts the service again. An
 uninstall removes the binary and the service, and keeps everything in
 `C:\ProgramData\go-fs`. The firewall stays closed unless `FIREWALL=1` is
 given, since nothing listens beyond `127.0.0.1` as installed.
 
-The installers are not code signed yet, so Windows SmartScreen warns about the
+Once installed, go-fs updates itself: turn on `http.enableSelfUpdate`, and the
+**UPDATE** tab of the admin interface installs the latest GitHub release (see
+[Updating from GitHub](#updating-from-github)). go-fs replaces `go-fs.exe`,
+keeping the previous one as `go-fs.exe.old`, and ends the service with an
+error, which the service manager answers with a restart on the new binary a
+few seconds later. The msi of a newer release also updates, run like the first
+install. It compares its version with the msi installed, not with what go-fs
+updated itself to, so an msi older than the running go-fs puts that older
+version back.
+
+The installer is not code signed yet, so Windows SmartScreen warns about the
 msi when it is downloaded.
 
 ## Run
@@ -1088,10 +1112,8 @@ go-fs checks the file, replaces its executable, and restarts into the new
 version. The configuration file is not touched.
 
 It is off by default. Turn it on with `http.enableSelfUpdate = true`, and allow
-at least one client. A go-fs installed by the rpm or the msi refuses every
-update over HTTP, since its package owns the binary: install the package of the
-newer release instead. So does a go-fs that runs as a Windows service set up by
-hand, because the restart into the update would leave the service. The
+at least one client. A go-fs installed by the rpm refuses every update over
+HTTP, since its package owns the binary: update the package instead. The
 **UPDATE** tab then shows the latest release and how to install it.
 
 - **A bearer token** that sets `allowSelfUpdate = true`, for scripts. The token's
@@ -1130,7 +1152,7 @@ Before anything changes, the upload has to pass these checks, in this order:
 |---|---|
 | `202` | accepted; go-fs restarts right after answering |
 | `400` | the file carries no signature, e.g. a plain binary instead of the `.update` file |
-| `409` | another update is in progress, or a package or the Windows service manager owns the binary |
+| `409` | another update is in progress, or the rpm owns the binary |
 | `413` | larger than 256 MiB |
 | `422` | unknown key, bad signature, wrong platform, or not a go-fs binary |
 | `503` | this build trusts no signing key |
@@ -1150,7 +1172,9 @@ How the executable is replaced:
   keeps tracking it.
 - On Windows go-fs starts the new version as a new process and exits. Whatever
   started the old process sees it end. `pid` in the answer to `GET` shows the
-  new process.
+  new process. As a Windows service, go-fs instead ends the service with an
+  error, after making sure the service manager restarts it on one, and the
+  service manager starts the new version.
 - If the new binary cannot be moved into place, the previous one is restored
   and started again, so the servers come back either way.
 - Open connections are dropped by the restart, as they are by `SIGTERM`.

@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -35,9 +36,15 @@ var baseVersion string
 var version string
 
 // packaging names the installer a build is made for, rpm or msi, stamped with
-// -ldflags "-X main.packaging=...". The installer then owns the executable, so
-// the self update leaves it alone. Empty for the plain binaries.
+// -ldflags "-X main.packaging=...". The rpm owns the executable, so the self
+// update leaves it alone; an msi install updates itself from the releases.
+// Empty for the plain binaries.
 var packaging string
+
+// errRestartService is what run returns once an update is in place under the
+// Windows service manager: the service ends with an error, and the recovery
+// the service manager applies to that starts it again on the new binary.
+var errRestartService = errors.New("restarting the service into the new version")
 
 // errorOutput is where the error that ends the program is written: standard
 // error, or the log file when -logfile names one, since a Windows service has
@@ -144,25 +151,16 @@ func run(stop <-chan struct{}) error {
 		return err
 	}
 	updater := selfupdate.New(currentVersion(), keys)
-	switch {
-	case packaging != "":
+	if packaging == "rpm" {
 		updater.SetManagedBy(packaging)
-	case stop != nil:
-		// Windows has no exec, so the restart into an update starts a new
-		// process, which the service manager would not know as the service
-		updater.SetManagedBy("service")
 	}
 	// a staged update a crash never applied is removed
 	updater.CleanupOld()
 	switch {
-	case cfg.HTTP.EnableSelfUpdate && packaging != "":
+	case cfg.HTTP.EnableSelfUpdate && updater.Current().ManagedBy != "":
 		logger.Warn("http.enableSelfUpdate is set, but this go-fs was installed by the "+
-			packaging+" package, so every update over http is refused; install the "+
-			"package of the newer release instead", "installer", packaging)
-	case cfg.HTTP.EnableSelfUpdate && stop != nil:
-		logger.Warn("http.enableSelfUpdate is set, but go-fs runs as a Windows service, " +
-			"so every update over http is refused; stop the service, replace the " +
-			"executable and start it again instead")
+			packaging+" package, so every update over http is refused; update the "+
+			"package instead", "installer", packaging)
 	case cfg.HTTP.EnableSelfUpdate && len(keys) == 0:
 		logger.Warn("http.enableSelfUpdate is set, but this build trusts no update " +
 			"signing key, so every update will be refused")
@@ -217,6 +215,18 @@ func run(stop <-chan struct{}) error {
 	logger.Info("shutdown complete", "took", time.Since(started).Round(time.Millisecond))
 	if received != nil || stopped {
 		return nil
+	}
+	if stop != nil {
+		// Windows has no exec, and a process started from here would not be
+		// the service; the service manager starts the new binary instead
+		if err := updater.Apply(); err != nil {
+			logger.Error("the update could not be applied, restarting the previous version",
+				"error", err)
+		} else {
+			logger.Info("restarting into the new version through the service manager",
+				"executable", updater.Current().Executable)
+		}
+		return errRestartService
 	}
 	return restart(logger.Logger, updater)
 }

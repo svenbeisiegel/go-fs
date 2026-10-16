@@ -1,9 +1,8 @@
 BINARY  := go-fs
 DIST    := dist
 
-# The documented starter configuration, shipped next to the binaries under the
-# name the binary looks for when -config is not given. This is the same file
-# the binary embeds and -init writes, so what ships always matches the build.
+# The documented starter configuration, the same file the binary embeds and
+# -init writes; the installers ship it adjusted to their platform.
 TEMPLATE := internal/config/template.toml
 
 # VERSION is the released version and lives in ./VERSION so it is bumped in one
@@ -19,23 +18,24 @@ DEV_VERSION := $(VERSION)-dev-$(STAMP)
 GOFLAGS  := -trimpath
 BUILDENV := CGO_ENABLED=0
 
-# {linux,windows} x {amd64,arm64} plus darwin/arm64 (Apple silicon)
-PLATFORMS := linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/arm64
+# the platforms a release has a package for: the rpm on linux, the msi on
+# windows/amd64
+PLATFORMS := linux/amd64 linux/arm64 windows/amd64
 
 # crosscompile builds every platform in PLATFORMS at the version passed in.
-# build and release differ only in that version.
+# build and release differ only in that version. The Windows binary is the one
+# the msi installs, stamped as such, so that its .update keeps an msi install
+# an msi install.
 define crosscompile
 	@mkdir -p $(DIST)
 	@for platform in $(PLATFORMS); do \
 		os=$${platform%/*}; arch=$${platform#*/}; \
-		out=$(DIST)/$(BINARY)_$(1)_$${os}_$${arch}; \
-		if [ "$$os" = "windows" ]; then out=$$out.exe; fi; \
+		out=$(DIST)/$(BINARY)_$(1)_$${os}_$${arch}; stamp=; \
+		if [ "$$os" = "windows" ]; then out=$$out.exe; stamp="-X main.packaging=msi"; fi; \
 		echo "building $$out"; \
 		GOOS=$$os GOARCH=$$arch $(BUILDENV) go build $(GOFLAGS) \
-			-ldflags "-s -w -X main.version=$(1)" -o $$out . || exit 1; \
+			-ldflags "-s -w -X main.version=$(1) $$stamp" -o $$out . || exit 1; \
 	done
-	@cp $(TEMPLATE) $(DIST)/$(BINARY).toml
-	@echo "copied $(DIST)/$(BINARY).toml"
 	@$(MAKE) --no-print-directory checksums
 endef
 
@@ -104,13 +104,19 @@ version:
 clean:
 	rm -rf $(DIST) build $(BINARY) coverage.out
 
-# release cross compiles every supported platform at the released version and
-# writes the checksums. With the private key in GOFS_SIGNING_KEY it also writes
-# the signed .update files; the release workflow insists on the key.
+# release cross compiles every supported platform at the released version.
+# With the private key in GOFS_SIGNING_KEY it writes the signed .update files
+# and keeps only those: a release ships packages and updates, not the plain
+# binaries. Without the key the binaries stay; the release workflow insists on
+# the key.
 release: clean
 	$(call crosscompile,$(VERSION))
 	@if [ -n "$$GOFS_SIGNING_KEY" ]; then \
 		$(MAKE) --no-print-directory sign; \
+		for bin in $(DIST)/$(BINARY)_*; do \
+			case $$bin in *.update) ;; *) rm -f $$bin;; esac; \
+		done; \
+		$(MAKE) --no-print-directory checksums; \
 	else \
 		echo "GOFS_SIGNING_KEY is not set, no .update files were written"; \
 	fi
@@ -152,7 +158,9 @@ define installerconfig
 endef
 
 # nfpm takes its files from fixed paths, see packaging/linux/nfpm.yaml, so the
-# architectures are packaged one after the other.
+# architectures are packaged one after the other. With SIGNING_KEY_FILE naming
+# an armored PGP private key, and NFPM_RPM_PASSPHRASE unlocking it, the rpms
+# are signed, as the package repository needs them to be.
 rpm:
 	$(call installerconfig,$(LINUX_BASEFOLDER),$(PKG)/linux/go-fs.toml,$(LINUX_REGISTRY))
 	@mkdir -p $(DIST)
@@ -167,7 +175,7 @@ rpm:
 
 msi-inputs:
 	$(call installerconfig,$(WINDOWS_BASEFOLDER),$(PKG)/go-fs.windows.toml,$(WINDOWS_REGISTRY))
-	@for arch in amd64 arm64; do \
+	@for arch in amd64; do \
 		bin=$(PKG)/$(BINARY)_windows_$$arch.exe; \
 		echo "building $$bin"; \
 		GOOS=windows GOARCH=$$arch $(BUILDENV) go build $(GOFLAGS) \

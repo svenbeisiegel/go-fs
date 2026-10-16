@@ -2,26 +2,33 @@
 <!--
   The Windows installer: go-fs.exe in Program Files, run by the go-fs service,
   which starts with Windows, and the configuration in ProgramData. Built on
-  Windows by the WiX Toolset, once for each architecture:
+  Windows by the WiX Toolset, for x64:
 
     wix build packaging/windows/go-fs.wxs -arch x64 -ext WixToolset.Util.wixext
       -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext -d Version=0.10.0
       -d Bin=build/pkg/go-fs_windows_amd64.exe -d Config=build/pkg/go-fs.windows.toml
       -o dist/go-fs-0.10.0-x64.msi
 
-  Bin is the binary built with -X main.packaging=msi, which leaves updating to
-  this installer, and Config the template serving C:\ProgramData\go-fs\files,
-  with its container registry in C:\ProgramData\go-fs\registry; make msi-inputs
-  builds both.
+  Bin is the binary built with -X main.packaging=msi, and Config the template
+  serving C:\ProgramData\go-fs\files, with its container registry in
+  C:\ProgramData\go-fs\registry; make msi-inputs builds both.
 
   Run interactively, the installer shows a welcome page, a page to start the
   install and a last page whose ticked checkbox opens the admin interface in
   the default browser once Finish is pressed. A quiet install opens nothing.
 
-  An update is the msi of the newer release, run like the first one: the
+  Once installed, go-fs updates itself from the GitHub releases, through the
+  update page of its admin interface: it puts the .update of the release in
+  place of go-fs.exe, keeping the previous one as go-fs.exe.old, and ends the
+  service with an error, which the recovery below answers with a restart.
+
+  The msi of a newer release updates as well, run like the first one: the
   major upgrade stops and removes the service of the installed version,
-  installs the new one and starts it again. The configuration file is never
-  replaced, nor removed by an uninstall: it holds the accounts and the keys.
+  installs the new one and starts it again. It compares its version with the
+  msi installed, not with what go-fs updated itself to, so an msi older than
+  the running go-fs puts that older version back. The configuration file is
+  never replaced, nor removed by an uninstall: it holds the accounts and the
+  keys.
 
   msiexec /i go-fs-<version>-x64.msi /qn            installs or updates quietly
   msiexec /i go-fs-<version>-x64.msi /qn FIREWALL=1 also opens the firewall
@@ -124,8 +131,12 @@
                       ErrorControl="normal"
                       Account="LocalSystem"
                       Arguments="-config &quot;[DATAFOLDER]go-fs.toml&quot; -logfile &quot;[LOGFOLDER]go-fs.log&quot;">
-        <!-- a crash is followed by a restart; a configuration go-fs refuses
-             ends the service with an error, which is in the log -->
+        <!-- a crash, and the end of the service with an error, is followed by
+             a restart: that is how an update over http comes back, and a
+             configuration go-fs refuses is retried, with the error in the
+             log -->
+        <ServiceConfig OnInstall="yes" OnReinstall="yes"
+                       FailureActionsWhen="failedToStopOrReturnedError" />
         <util:ServiceConfig FirstFailureActionType="restart"
                             SecondFailureActionType="restart"
                             ThirdFailureActionType="restart"
@@ -138,6 +149,10 @@
                       Stop="both"
                       Remove="uninstall"
                       Wait="yes" />
+      <!-- what an update over http leaves beside the executable: the
+           previous binary, and a staged one a crash never applied -->
+      <RemoveFile Id="RemoveOldExe" Name="go-fs.exe.old" On="uninstall" />
+      <RemoveFile Id="RemoveStaged" Name=".go-fs-update-*" On="uninstall" />
     </Component>
 
     <!-- The configuration holds every password and key, and go-fs replaces it

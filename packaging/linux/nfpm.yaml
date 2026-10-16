@@ -80,6 +80,10 @@ scripts:
   preremove: packaging/linux/preremove.sh
   postremove: packaging/linux/postremove.sh
 
+# The rpm is signed when SIGNING_KEY_FILE names an armored private key, as in
+# the release workflow; NFPM_RPM_PASSPHRASE unlocks it. Unset, it is unsigned.
 rpm:
   summary: FTP, SFTP, HTTP, S3 and TFTP file server in one binary
   group: System Environment/Daemons
+  signature:
+    key_file: ${SIGNING_KEY_FILE}

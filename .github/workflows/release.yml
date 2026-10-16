@@ -35,6 +35,19 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # nfpm signs the rpms with the PGP key, written armored as it reads it;
+      # the repo job signs the repository. Before anything is committed, so a
+      # bad key commits nothing.
+      - name: package signing key
+        env:
+          PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
+          PACKAGE_SIGNING_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          bash packaging/repo/import-key.sh "$RUNNER_TEMP/signing.asc"
+          echo "SIGNING_KEY_FILE=$RUNNER_TEMP/signing.asc" >> "$GITHUB_ENV"
+
       # The released version is committed to the repository, not just baked
       # into this run's binaries, so the code matches what was released.
       - name: bump VERSION
@@ -61,10 +74,14 @@ jobs:
           GOFS_SIGNING_KEY: ${{ secrets.GOFS_SIGNING_KEY }}
         run: make release VERSION=${{ inputs.version }}
 
-      # the rpm packages into dist, and what the msi job below builds the
-      # Windows installers from into build/pkg
+      # the signed rpm packages into dist, and what the msi job below builds
+      # the Windows installer from into build/pkg
       - name: make packages
-        run: make packages VERSION=${{ inputs.version }}
+        env:
+          NFPM_RPM_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
+        run: |
+          make packages VERSION=${{ inputs.version }}
+          rm -f "$SIGNING_KEY_FILE"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -76,7 +93,7 @@ jobs:
         with:
           name: msi-inputs
           path: |
-            build/pkg/go-fs_windows_*.exe
+            build/pkg/go-fs_windows_amd64.exe
             build/pkg/go-fs.windows.toml
           if-no-files-found: error
 
@@ -108,23 +125,20 @@ jobs:
 
       # Code signing goes here once there is a certificate, for example with
       # Azure Trusted Signing (azure/trusted-signing-action): sign
-      # build/pkg/go-fs_windows_*.exe before the msi is built, so that the
-      # installed binary is signed, and the .msi files after.
+      # build/pkg/go-fs_windows_amd64.exe before the msi is built, so that the
+      # installed binary is signed, and the .msi after.
 
-      - name: build the msi files
+      - name: build the msi
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          foreach ($pair in @(@("x64", "amd64"), @("arm64", "arm64"))) {
-            $arch, $goarch = $pair
-            wix build packaging/windows/go-fs.wxs -arch $arch `
-              -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext `
-              -d Version=${{ inputs.version }} `
-              -d Bin="$PWD\build\pkg\go-fs_windows_$goarch.exe" `
-              -d Config="$PWD\build\pkg\go-fs.windows.toml" `
-              -o dist/go-fs-${{ inputs.version }}-$arch.msi
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
+          wix build packaging/windows/go-fs.wxs -arch x64 `
+            -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext `
+            -d Version=${{ inputs.version }} `
+            -d Bin="$PWD\build\pkg\go-fs_windows_amd64.exe" `
+            -d Config="$PWD\build\pkg\go-fs.windows.toml" `
+            -o dist/go-fs-${{ inputs.version }}-x64.msi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - uses: actions/upload-artifact@v7
         with:
@@ -146,7 +160,7 @@ jobs:
           name: msi
           path: dist
 
-      # the checksums cover the msi files as well, which the first job did
+      # the checksums cover the msi as well, which the first job did
       # not have yet
       - name: checksums
         run: cd dist && sha256sum $(ls | grep -vx SHA256SUMS) > SHA256SUMS
@@ -158,3 +172,42 @@ jobs:
           name: v${{ inputs.version }}
           generate_release_notes: true
           files: dist/*
+
+  # The zypper/dnf repository on GitHub Pages, rebuilt from the rpms of the
+  # five newest releases, so older versions drop out. Pages must be set to
+  # deploy from GitHub Actions.
+  repo:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: install createrepo_c and rpm
+        run: sudo apt-get update && sudo apt-get install -y createrepo-c rpm
+
+      - name: import the signing key
+        env:
+          PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
+          PACKAGE_SIGNING_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
+        run: bash packaging/repo/import-key.sh
+
+      - name: build the repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GPG_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
+          KEEP: 5
+        run: bash packaging/repo/build.sh site
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v5
