@@ -90,10 +90,15 @@ func (r *recorder) Handle(_ context.Context, record slog.Record) error {
 
 // dataPortBase hands each test its own passive port range, so tests can run in
 // parallel without fighting over ports.
+//
+// The ranges start below every system's ephemeral range (32768 and up on
+// Linux, 49152 and up on macOS and Windows): inside it, any socket the system
+// hands out, from this package or another one testing at the same time, can
+// take a port a test reserved, and its bind then fails.
 var dataPortBase = struct {
 	mu   sync.Mutex
 	next int
-}{next: 41000}
+}{next: 20100}
 
 func reserveDataPorts(count int) int {
 	dataPortBase.mu.Lock()
