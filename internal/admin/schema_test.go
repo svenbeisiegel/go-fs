@@ -253,7 +253,7 @@ func TestTokenTable(t *testing.T) {
 			table = section.Tables[0]
 		}
 		for _, other := range section.Tables {
-			if other.Create != "" && section.Key != "tokens" && section.Key != "servers" {
+			if other.Create != "" && section.Key != "tokens" && section.Key != "servers" && section.Key != "repositories" {
 				t.Errorf("%s.%s is created by the server", section.Key, other.Key)
 			}
 		}
@@ -268,6 +268,38 @@ func TestTokenTable(t *testing.T) {
 		wantSummary := field.Key == "name" || field.Key == "expires"
 		if field.Summary != wantSummary {
 			t.Errorf("tokens.%s summary is %v, want %v", field.Key, field.Summary, wantSummary)
+		}
+	}
+}
+
+// A repository is added and edited in a dialog that makes its folder and its
+// key, so its kind, folder and key are not typed into the list, and the tab is
+// called what the menus of the other servers call it.
+func TestRepositoryTable(t *testing.T) {
+	schema, _ := build()
+	var section Section
+	for _, s := range schema.Sections {
+		if s.Key == "repositories" {
+			section = s
+		}
+	}
+	if section.Label != "REPOSITORY" || !section.Direct {
+		t.Fatalf("the repositories tab is %q, direct %v", section.Label, section.Direct)
+	}
+	table := section.Tables[0]
+	if table.Create != KindRepository {
+		t.Errorf("repositories are created as %q, want %q", table.Create, KindRepository)
+	}
+	for _, field := range table.Fields {
+		readOnly := field.Key == "type" || field.Key == "folder" || field.Key == "signingKey"
+		if field.ReadOnly != readOnly {
+			t.Errorf("repositories.%s read-only is %v", field.Key, field.ReadOnly)
+		}
+		if field.Upload != "" {
+			t.Errorf("repositories.%s offers %s material in the list", field.Key, field.Upload)
+		}
+		if field.Key == "signingKey" && field.Kind != kindSecret {
+			t.Errorf("the signing key is a %s field, not a secret", field.Kind)
 		}
 	}
 }

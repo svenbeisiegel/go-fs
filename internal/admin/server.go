@@ -49,12 +49,16 @@ const (
 	// edits a remote server; see servers.go.
 	ActionServerHostKey = "admin-server-hostkey"
 	ActionServerSave    = "admin-server-save"
+	// ActionRepositorySave is the dialog that adds and edits a package
+	// repository; see repositories.go.
+	ActionRepositorySave = "admin-repository-save"
 )
 
 // IsAction reports whether a marker value is one of this interface's.
 func IsAction(value string) bool {
 	switch value {
-	case ActionPage, ActionConfig, ActionUpload, ActionGenerate, ActionServerHostKey, ActionServerSave:
+	case ActionPage, ActionConfig, ActionUpload, ActionGenerate, ActionServerHostKey, ActionServerSave,
+		ActionRepositorySave:
 		return true
 	}
 	return false
@@ -108,6 +112,10 @@ type state struct {
 	Summaries map[string]string `json:"summaries,omitempty"`
 	// Protocols are what the dialog of a remote server offers.
 	Protocols []config.ServerType `json:"protocols"`
+	// RepositoryTypes are what the dialog of a repository offers, and
+	// Repositories what the page shows of each stored one, by name.
+	RepositoryTypes []config.RepositoryType   `json:"repositoryTypes"`
+	Repositories    map[string]repositoryView `json:"repositories"`
 }
 
 // ServeHTTP dispatches on the marker. The caller has already decided that the
@@ -137,6 +145,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleServerHostKey(w, r)
 	case action == ActionServerSave && post:
 		h.handleServerSave(w, r)
+	case action == ActionRepositorySave && post:
+		h.handleRepositorySave(w, r)
 	default:
 		switch action {
 		case ActionPage:
@@ -280,6 +290,9 @@ func (h *Handler) handleState(w http.ResponseWriter) {
 		Reload:    cfg.General.ReloadConfig,
 		Summaries: h.schema.Summaries(values),
 		Protocols: config.ServerTypes,
+
+		RepositoryTypes: config.RepositoryTypes,
+		Repositories:    repositoryViews(cfg),
 	}
 	if err := h.writable(); err != nil {
 		body.WriteError = err.Error()

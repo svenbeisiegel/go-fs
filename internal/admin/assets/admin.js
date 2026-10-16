@@ -35,6 +35,13 @@ const newRecoveryKeys = new WeakMap();
 const storedServers = new WeakMap();
 // the protocols a remote server may be reached with
 let protocols = [];
+// the kinds a package repository may be, and what the server says of each
+// stored repository, by name: the key it signs with and how it is doing
+let repositoryTypes = [];
+let repositoryViews = {};
+// the name each repository has in the file, keyed by its record, for the
+// same reason as storedServers
+const storedRepositories = new WeakMap();
 // what the update endpoint says about the running binary, or null where it
 // does not answer this session: switched off, or not an admin. It is the one
 // tab the schema does not describe, since it edits no key of the file
@@ -70,9 +77,14 @@ async function load() {
   values = state.values;
   summaries = state.summaries || {};
   protocols = state.protocols || [];
+  repositoryTypes = state.repositoryTypes || [];
+  repositoryViews = state.repositories || {};
   schema.sections.forEach((section) => {
     if (section.direct && section.tables[0].create === "server") {
       (values[section.key] || []).forEach((record) => storedServers.set(record, record.name));
+    }
+    if (section.direct && section.tables[0].create === "repository") {
+      (values[section.key] || []).forEach((record) => storedRepositories.set(record, record.name));
     }
   });
 
@@ -528,6 +540,19 @@ function tableBlock(holder, key, table, heading) {
         });
         summary.append(edit);
       }
+      if (table.create === "repository") {
+        // the kind, the folder and the key are changed in the dialog
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.className = "plain edit";
+        edit.textContent = "Edit…";
+        edit.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          repositoryDialog.open(record, () => draw());
+        });
+        summary.append(edit);
+      }
 
       const remove = document.createElement("button");
       remove.type = "button";
@@ -552,6 +577,9 @@ function tableBlock(holder, key, table, heading) {
         card.append(tokenNotice(newRecoveryKeys.get(record), "Store this recovery key of the new vault somewhere "
           + "safe now: it is shown only until the page is read again, and it opens the vault whatever its "
           + "password. go-fs keeps it nowhere."));
+      }
+      if (table.create === "repository" && storedRepositories.has(record)) {
+        card.append(repositoryView(record, repositoryViews[storedRepositories.get(record)]));
       }
       card.append(fieldGrid(table.fields, record, ""));
       // the line the record folds up to follows what is typed into it
@@ -584,6 +612,15 @@ function tableBlock(holder, key, table, heading) {
   if (table.create === "server") {
     block.append(plainButton("Add server…", () =>
       serverDialog.open(table, null, (record) => {
+        append(record);
+        list.lastElementChild.scrollIntoView({ block: "nearest" });
+      })));
+    return block;
+  }
+
+  if (table.create === "repository") {
+    block.append(plainButton("Add repository…", () =>
+      repositoryDialog.open(null, (record) => {
         append(record);
         list.lastElementChild.scrollIntoView({ block: "nearest" });
       })));
@@ -906,6 +943,222 @@ const serverDialog = (() => {
     dialog.showModal();
     const first = protocol() && protocol().token ? "url" : "host";
     field(edited ? first : "name").focus();
+  }
+
+  return { open };
+})();
+
+// repositoryView is what a stored repository's record shows besides its
+// keys: the key it signs with, how it did the last time it looked at its
+// folder, and how a client adds it.
+function repositoryView(record, view) {
+  const box = document.createElement("div");
+  box.className = "token-notice repository-view";
+  view = view || {};
+  if (view.key) {
+    box.append(paragraph("Signs with " + view.key + ".", ""));
+  }
+  const status = view.status;
+  if (!status) {
+    box.append(paragraph("Not running yet: it starts once go-fs has read the file again.", ""));
+  } else {
+    const packages = status.packages === 1 ? "1 package" : status.packages + " packages";
+    let text = status.built
+      ? packages + ", metadata written " + when(status.built) + "."
+      : "No metadata written yet.";
+    if (status.checked) text += " Folder last looked at " + when(status.checked) + ".";
+    box.append(paragraph(text, ""));
+    if (status.error) {
+      box.append(paragraph(status.error, "bad"));
+    }
+    const skipped = Object.entries(status.skipped || {});
+    if (skipped.length > 0) {
+      box.append(paragraph("Left out:", ""));
+      const list = document.createElement("ul");
+      skipped.forEach(([file, reason]) => {
+        const item = document.createElement("li");
+        item.textContent = file + ": " + reason;
+        list.append(item);
+      });
+      box.append(list);
+    }
+  }
+  box.append(...clientCommands(record));
+  return box;
+}
+
+// clientCommands is how zypper and dnf add the repository: from the .repo
+// file the repository writes when it knows its address, or from the address
+// the page is served at otherwise.
+function clientCommands(record) {
+  const out = [];
+  if (record.type !== "rpm") return out;
+  const pre = (text) => {
+    const element = document.createElement("pre");
+    element.textContent = text;
+    return element;
+  };
+  if (record.url) {
+    const repo = record.url + "/" + record.name + ".repo";
+    out.push(paragraph("zypper (openSUSE, SLES):", ""), pre("sudo zypper addrepo " + repo));
+    out.push(paragraph("dnf (Fedora, RHEL, Rocky Linux):", ""),
+      pre("sudo dnf config-manager addrepo --from-repofile=" + repo));
+    return out;
+  }
+  const base = location.origin + record.folder;
+  out.push(paragraph("Without an address no .repo file is written; this is the address of this page:", ""));
+  out.push(paragraph("zypper (openSUSE, SLES):", ""),
+    pre("sudo zypper addrepo --gpgcheck-strict " + base + " " + record.name));
+  out.push(paragraph("dnf (Fedora, RHEL, Rocky Linux):", ""),
+    pre("sudo dnf config-manager addrepo --id=" + record.name + " --set=baseurl=" + base
+      + " --set=gpgcheck=1 --set=repo_gpgcheck=1 --set=gpgkey=" + base + "/repodata/repomd.xml.key"));
+  return out;
+}
+
+function when(timestamp) {
+  const date = new Date(timestamp);
+  return isNaN(date) ? timestamp : date.toLocaleString();
+}
+
+// repositoryDialog adds and edits a package repository. The key is made by
+// the server or uploaded to it, and the repository is written into the file
+// at once, with nothing else of the page, once the file it makes is one go-fs
+// starts with.
+const repositoryDialog = (() => {
+  const dialog = document.getElementById("repository-dialog");
+  const form = dialog.querySelector("form");
+  const title = dialog.querySelector("#repository-title");
+  const progress = dialog.querySelector(".progress");
+  const keySummary = dialog.querySelector(".key .summary");
+  const picker = dialog.querySelector(".key input[type='file']");
+  const generate = dialog.querySelector(".key button[value='generate']");
+  const upload = dialog.querySelector(".key button[value='upload']");
+  const save = form.querySelector("button[value='save']");
+  const field = (name) => form.elements[name];
+
+  let record = null;
+  let done = null;
+  // key is a new key the dialog made or was handed, "" to keep the one
+  // stored
+  let key = "";
+  let busy = false;
+
+  function tell(text, bad) {
+    progress.textContent = text;
+    progress.classList.toggle("bad", bad === true);
+    progress.hidden = text === "";
+  }
+
+  function working(on) {
+    busy = on;
+    Array.from(form.elements).forEach((element) => {
+      if (element.value !== "cancel") element.disabled = on;
+    });
+  }
+
+  function showKey(text) {
+    keySummary.textContent = text || "none yet: generate one, or upload an armored private key";
+    keySummary.classList.toggle("none", !text);
+  }
+
+  generate.addEventListener("click", async () => {
+    working(true);
+    tell("Generating a key, which takes a few seconds…");
+    try {
+      const result = await post("?go-fs=admin-generate",
+        { kind: "pgpkey", name: field("name").value.trim() || "go-fs" });
+      key = result.value;
+      showKey(result.summary);
+      tell("");
+    } catch (error) {
+      tell(String(error.message || error), true);
+    }
+    working(false);
+  });
+
+  upload.addEventListener("click", () => picker.click());
+  picker.addEventListener("change", async () => {
+    const file = picker.files[0];
+    picker.value = "";
+    if (!file) return;
+    working(true);
+    tell("");
+    try {
+      const result = await post("?go-fs=admin-upload",
+        { kind: "pgpkey", filename: file.name, content: await base64Of(file) });
+      key = result.value;
+      showKey(result.summary);
+    } catch (error) {
+      tell(String(error.message || error), true);
+    }
+    working(false);
+  });
+
+  form.addEventListener("submit", async (event) => {
+    const pressed = event.submitter ? event.submitter.value : "";
+    if (pressed === "cancel") {
+      return;
+    }
+    event.preventDefault();
+    if (busy) return;
+    working(true);
+    tell("Saving…");
+    try {
+      const result = await post("?go-fs=admin-repository-save", {
+        was: record ? storedRepositories.get(record) || "" : "",
+        repository: {
+          name: field("name").value.trim(),
+          type: field("type").value,
+          folder: field("folder").value.trim(),
+          signingKey: key,
+          keep: Number(field("keep").value) || 0,
+          pollInterval: Number(field("pollInterval").value) || 0,
+          url: field("url").value.trim(),
+        },
+      });
+      working(false);
+      const stored = record || {};
+      Object.assign(stored, result.record);
+      storedRepositories.set(stored, stored.name);
+      repositoryViews[stored.name] = result.view;
+      openRecords.add(stored);
+      dialog.close();
+      say("The repository " + stored.name + " was written to " + result.path
+        + (result.reload ? ", and starts at the next reload of the file." : "; it starts once go-fs is restarted."), true);
+      done(stored);
+    } catch (error) {
+      working(false);
+      tell(String(error.message || error), true);
+    }
+  });
+
+  dialog.addEventListener("close", () => working(false));
+
+  function open(edited, then) {
+    record = edited;
+    done = then;
+    key = "";
+    title.textContent = edited ? "Edit repository " + edited.name : "Add repository";
+    const select = field("type");
+    select.replaceChildren(...repositoryTypes.map((t) => {
+      const option = document.createElement("option");
+      option.value = t.id;
+      option.textContent = t.label;
+      return option;
+    }));
+    const from = edited || {};
+    select.value = from.type || (repositoryTypes[0] ? repositoryTypes[0].id : "");
+    field("name").value = from.name || "";
+    field("folder").value = from.folder || "";
+    field("keep").value = String(edited ? from.keep || 0 : 5);
+    field("pollInterval").value = String(from.pollInterval || 60);
+    field("url").value = from.url || "";
+    const view = edited ? repositoryViews[storedRepositories.get(edited)] : null;
+    showKey(view && view.key ? view.key + " (kept unless another is generated or uploaded)" : "");
+    tell("");
+    working(false);
+    dialog.showModal();
+    field(edited ? "folder" : "name").focus();
   }
 
   return { open };

@@ -326,6 +326,35 @@ isAdmin = true
 # username = "CORP\\backup"
 # password = "secret"
 
+# Package repositories go-fs keeps in folders the http server serves, one
+# table per repository. Put a package into the folder over any of the
+# servers, or copy it there, and at the next look at the folder go-fs signs
+# it with the repository's key, removes the oldest versions of it beyond
+# keep, and writes the metadata clients read the repository by anew, signed
+# too. They are added and edited in the admin interface, on the REPOSITORY
+# tab, which also generates the key.
+# [[repositories]]
+# Names the repository, and is the id clients give it: letters, digits,
+# dots, dashes and underscores. Unique, whatever its case.
+# name = "go-fs"
+# The kind of repository: rpm, an rpm-md repository for zypper and dnf.
+# type = "rpm"
+# The folder of the repository in http.basefolder, as the file listing shows
+# it. It has to exist.
+# folder = "/rpm/go-fs"
+# The OpenPGP private key packages and metadata are signed with, armored and
+# base64 encoded, without a passphrase; only RSA keys are accepted. It is
+# kept as it is, so keep this file private.
+# signingKey = "…"
+# How many versions of each package, by name and architecture, stay in the
+# folder; older ones are removed. 0 keeps every version.
+# keep = 5
+# How often the folder is looked at, in seconds. 60 when not set.
+# pollInterval = 60
+# Where clients reach the folder. When set, <name>.repo is written into it,
+# the definition zypper and dnf add.
+# url = "https://files.example.com/rpm/go-fs"
+
 [ftp]
 # Serve the plain control port. The TLS listener has its own switch in [ftps];
 # everything else in this section applies to both of them.

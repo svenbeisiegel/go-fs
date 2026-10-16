@@ -159,8 +159,14 @@ func build() (Schema, []string) {
 			table, missed := buildTable(field, key, i)
 			// the tab carries the description; the list under it is the tab
 			table.Help = ""
+			label := strings.ToUpper(key)
+			if key == "repositories" {
+				// the tab is the package repository, as the menus of
+				// other servers say
+				label = "REPOSITORY"
+			}
 			schema.Sections = append(schema.Sections, Section{
-				Key: key, Label: strings.ToUpper(key), Help: help(key, ""),
+				Key: key, Label: label, Help: help(key, ""),
 				Fields: []Field{}, Tables: []Table{table}, Direct: true,
 			})
 			skipped = append(skipped, missed...)
@@ -243,6 +249,12 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 	if isServer {
 		table.Create = KindServer
 	}
+	// nor is a repository: its dialog makes the key and the folder, so the
+	// kind, the folder and the key are not typed in here
+	isRepository := element == reflect.TypeOf(config.Repository{})
+	if isRepository {
+		table.Create = KindRepository
+	}
 	hasText := false
 	for i := range element.NumField() {
 		inner := element.Field(i)
@@ -273,6 +285,17 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 		// and is set here as an account's rights are
 		if isServer && inner.Name != "Name" && !strings.HasPrefix(inner.Name, "Allow") {
 			field.ReadOnly = true
+		}
+		if isRepository {
+			switch inner.Name {
+			case "Type", "Folder":
+				field.ReadOnly = true
+				field.Summary = true
+			case "SigningKey":
+				// shown masked, and replaced in the dialog alone
+				field.ReadOnly = true
+				field.Upload = ""
+			}
 		}
 		if kind == kindText {
 			hasText = true
@@ -324,7 +347,7 @@ func secret(name string) bool {
 	}
 	kind := material(name)
 	return kind == config.KindTLSKey || kind == config.KindSSHKey ||
-		kind == config.KindSessionSecret
+		kind == config.KindSessionSecret || kind == config.KindPGPKey
 }
 
 // material reports the kind of key material a key holds, which is what gives
@@ -343,6 +366,8 @@ func material(name string) string {
 		return config.KindSSHKey
 	case "httpsessiontokensecret":
 		return config.KindSessionSecret
+	case "signingkey":
+		return config.KindPGPKey
 	}
 	return ""
 }

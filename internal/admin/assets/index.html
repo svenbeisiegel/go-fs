@@ -80,6 +80,43 @@
   </form>
 </dialog>
 
+<dialog id="repository-dialog" aria-labelledby="repository-title">
+  <form method="dialog">
+    <h2 id="repository-title">Add repository</h2>
+    <p class="intro">The repository is a folder the http server serves. Packages put into it are signed with its key,
+      the oldest versions beyond keep are removed, and the metadata clients read is written anew. The folder is made
+      when it is not there yet. The repository is written to the file at once; nothing else on this page is.</p>
+    <div class="dialog-fields">
+      <label for="repository-name">name</label>
+      <input id="repository-name" name="name" type="text" required spellcheck="false" autocomplete="off" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" placeholder="the id clients give it, e.g. go-fs">
+      <label for="repository-type">type</label>
+      <select id="repository-type" name="type"></select>
+      <label for="repository-folder">folder</label>
+      <input id="repository-folder" name="folder" type="text" required spellcheck="false" autocomplete="off" placeholder="/rpm/go-fs, in the served folder">
+      <span class="label">signing key</span>
+      <div class="key">
+        <p class="summary"></p>
+        <div class="buttons">
+          <input type="file" hidden accept=".asc,.gpg,.key,.pgp,.txt">
+          <button class="plain" type="button" value="generate">Generate</button>
+          <button class="plain" type="button" value="upload">Upload…</button>
+        </div>
+      </div>
+      <label for="repository-keep">keep</label>
+      <input id="repository-keep" name="keep" type="number" min="0" step="1" title="versions of each package that stay; 0 keeps all">
+      <label for="repository-poll">look every</label>
+      <input id="repository-poll" name="pollInterval" type="number" min="5" step="1" title="seconds between two looks at the folder">
+      <label for="repository-url">address</label>
+      <input id="repository-url" name="url" type="text" spellcheck="false" autocomplete="off" placeholder="https://files.example.com/rpm/go-fs, for the .repo file">
+    </div>
+    <p class="progress" role="status" aria-live="polite" hidden></p>
+    <div class="row">
+      <button class="primary" type="submit" value="save">Save</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <footer id="footer" hidden>
   <span id="status" class="status"></span>
   <button id="apply" type="button">Apply</button>

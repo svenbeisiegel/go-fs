@@ -60,6 +60,8 @@ func Decode(kind, value string) ([]byte, error) {
 		return DecodeHostKey(value)
 	case KindSessionSecret:
 		return DecodeSessionSecret(value)
+	case KindPGPKey:
+		return DecodePGPKey(value)
 	default:
 		return nil, fmt.Errorf("%q is not a kind of key material", kind)
 	}
@@ -297,6 +299,8 @@ func Describe(kind, value string) string {
 		return describeHostKey(value)
 	case KindSessionSecret:
 		return describeSessionSecret(value)
+	case KindPGPKey:
+		return describePGPKey(value)
 	default:
 		return describePrivateKey(value)
 	}

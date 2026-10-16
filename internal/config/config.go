@@ -49,6 +49,9 @@ type Config struct {
 	TFTP    TFTP    `toml:"tftp"`
 	// Servers are the remote hosts the file listing sends files to by name.
 	Servers []Server `toml:"servers"`
+	// Repositories are the package repositories go-fs keeps in folders the
+	// http server serves.
+	Repositories []Repository `toml:"repositories"`
 }
 
 // General holds what every server shares.
@@ -1162,6 +1165,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.validateServers(); err != nil {
+		return err
+	}
+	if err := c.validateRepositories(); err != nil {
 		return err
 	}
 	if c.FTP.Enabled || c.FTPS.Enabled {

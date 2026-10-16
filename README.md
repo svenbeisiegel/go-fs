@@ -1104,6 +1104,66 @@ swept as the hourly cleanup sweeps them.
 - **`http.writeTimeout`** caps how long a pull of a large layer may take, as
   it caps any download.
 
+### Package repository
+
+go-fs can host an rpm repository for zypper and dnf in a folder it serves over
+HTTP, and keep it up to date by itself. Put an rpm into the folder over any of
+the servers (an HTTP `PUT`, S3, FTP, SFTP, TFTP) or copy it there on disk. At
+the next look at the folder, go-fs:
+
+1. **checks** the package against the digests it carries. A package still being
+   uploaded fails that check, is left out and is tried again at the next look.
+2. **removes old versions**: per package name and architecture, only the newest
+   `keep` versions by epoch, version and release stay, and older files are
+   deleted. Each removal is logged.
+3. **signs** each package that is not signed with the repository's key yet. It
+   replaces any other signature and writes the file anew in place, leaving the
+   header and payload untouched.
+4. **writes the metadata**, as `createrepo_c` does: `repodata/` with
+   `primary.xml.gz`, `filelists.xml.gz`, `other.xml.gz` and `repomd.xml`,
+   signed as `repomd.xml.asc`, with the public key as `repomd.xml.key`.
+
+The metadata is written only when the set of packages changed. The lists are
+named by their checksum and `repomd.xml` is replaced last, so a client never
+reads half a repository. The lists of the build before are kept for one more
+build, for a client that read the old `repomd.xml` a moment earlier.
+Subfolders are looked into, except `repodata` and those whose name starts
+with a dot. Source rpms are left out.
+
+```toml
+[[repositories]]
+name = "go-fs"                  # the id clients give it
+type = "rpm"
+folder = "/rpm/go-fs"           # in http.basefolder, as the listing shows it
+signingKey = "…"                # armored OpenPGP private key, base64, no passphrase
+keep = 5                        # versions per package and architecture; 0 keeps all
+pollInterval = 60               # seconds between two looks at the folder
+url = "https://files.example.com/rpm/go-fs"   # optional, see below
+```
+
+They are added and edited on the **REPOSITORY** tab of the admin interface. Its
+dialog makes the folder when it is not there yet, and generates an RSA 4096
+signing key or takes an uploaded one. An uploaded key has to be armored
+(`gpg --armor --export-secret-keys <id>`) and have no passphrase, because go-fs
+signs with nobody there to type one. Only RSA keys are accepted, because older
+rpm versions still in use do not verify EdDSA signatures. The repository is
+written to the file at once and starts at the next reload. Its record shows how
+many packages it lists, when it last looked, the files it left out and why, and
+the commands a client adds it with.
+
+With `url` set, the repository also writes `<name>.repo` into its folder:
+
+```shell
+# openSUSE and SLES
+sudo zypper addrepo https://files.example.com/rpm/go-fs/go-fs.repo
+# Fedora, RHEL and Rocky Linux
+sudo dnf config-manager addrepo --from-repofile=https://files.example.com/rpm/go-fs/go-fs.repo
+```
+
+zypper and dnf read the folder without logging in, so it has to be public: not
+in `pathsRequireAuth`, and with `GET` not in `methodsRequireAuth`. Uploading to
+it is protected as any upload is.
+
 ### Updating over HTTP
 
 A running go-fs can be updated through its own HTTP or HTTPS port. The upload is

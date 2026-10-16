@@ -23,6 +23,7 @@ import (
 	"go-fs/internal/ftp"
 	"go-fs/internal/httpd"
 	"go-fs/internal/logging"
+	"go-fs/internal/repository"
 	"go-fs/internal/service"
 	"go-fs/internal/sftp"
 	"go-fs/internal/tftp"
@@ -103,11 +104,30 @@ var services = []entry{
 			return s.(*cleanup.Sweeper).Reload(e.cfg.General)
 		},
 	},
+	{
+		name:    repositories,
+		enabled: func(e env) bool { return len(e.cfg.Repositories) > 0 },
+		create: func(e env, log *slog.Logger) (service.Server, error) {
+			return repository.New(e.cfg, log)
+		},
+		reload: func(s service.Server, e env) error {
+			return s.(*repository.Manager).Reload(e.cfg)
+		},
+	},
 }
 
-// sweeper is the service that runs [[general.cleanup]]. It serves no client,
-// so it alone does not count as a server being enabled.
-const sweeper = "cleanup"
+// sweeper is the service that runs [[general.cleanup]], and repositories the
+// one that keeps [[repositories]]. They serve no client, so they alone do not
+// count as a server being enabled.
+const (
+	sweeper      = "cleanup"
+	repositories = "repositories"
+)
+
+// background reports whether a service is one of those.
+func background(name string) bool {
+	return name == sweeper || name == repositories
+}
 
 // Supervisor holds what is running.
 type Supervisor struct {
@@ -213,7 +233,13 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 		s.current = cfg
 		s.applied = true
 	}
-	if _, sweeping := s.running[sweeper]; len(s.running) == 0 || sweeping && len(s.running) == 1 {
+	serving := 0
+	for name := range s.running {
+		if !background(name) {
+			serving++
+		}
+	}
+	if serving == 0 {
 		return errors.New("no server is enabled, nothing to do")
 	}
 	s.log.Debug("configuration applied", "running", strings.Join(s.runningLocked(), ","),

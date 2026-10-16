@@ -100,7 +100,8 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	var posted struct {
 		Kind string `json:"kind"`
 		// Days is how long a new token lives, 0 for forever, and Name what
-		// it is called, for the record only. Both are read for a token alone.
+		// it is called, for the record only. Both are read for a token; Name
+		// is also the name an OpenPGP key is made for.
 		Days int    `json:"days"`
 		Name string `json:"name"`
 	}
@@ -144,6 +145,18 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			h.log.Error("the admin interface cannot generate a signing key", "error", err)
 			http.Error(w, "the signing key could not be generated: "+err.Error(),
+				http.StatusInternalServerError)
+			return
+		}
+		answer["value"] = key
+
+	case config.KindPGPKey:
+		// named after the repository it signs for, which is what a client
+		// shows when it asks whether to trust the key
+		key, err := config.GeneratePGPKey(posted.Name)
+		if err != nil {
+			h.log.Error("the admin interface cannot generate an OpenPGP key", "error", err)
+			http.Error(w, "the key could not be generated: "+err.Error(),
 				http.StatusInternalServerError)
 			return
 		}
