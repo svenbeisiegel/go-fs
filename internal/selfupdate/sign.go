@@ -7,7 +7,6 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/sha512"
-	_ "embed"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -38,13 +37,6 @@ const (
 )
 
 var signOptions = &ed25519.Options{Hash: crypto.SHA512, Context: signContext}
-
-// keysFile holds the public keys every build trusts, one base64 key per line.
-// It is compiled in, so nothing at runtime — not the configuration file, not
-// the admin interface — can add a key.
-//
-//go:embed keys.txt
-var keysFile string
 
 // buildKeys adds keys at build time, comma separated, for a fork that signs
 // its own builds and for the tests that build go-fs:
@@ -135,8 +127,9 @@ func Verify(file io.ReaderAt, size int64, keys []ed25519.PublicKey) (int64, stri
 	return payload, KeyID(public), nil
 }
 
-// TrustedKeys are the keys this build accepts updates from: those in keys.txt
-// and those stamped in with buildKeys. A key that does not parse is an error
+// TrustedKeys are the keys this build accepts updates from: those in the keys
+// file of its product (keys.txt for go-fs, keys_light.txt for go-fs-light) and
+// those stamped in with buildKeys. A key that does not parse is an error
 // rather than skipped, since it can only be a mistake made at build time.
 func TrustedKeys() ([]ed25519.PublicKey, error) {
 	return parseKeys(keysFile + "\n" + strings.ReplaceAll(buildKeys, ",", "\n"))

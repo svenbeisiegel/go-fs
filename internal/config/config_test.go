@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/ssh"
+
+	"go-fs/internal/features"
 )
 
 // authorizedKey is one line as ssh-keygen would write it, for a fresh key.
@@ -53,6 +55,7 @@ func writeConfig(t *testing.T, body string) (path string, folder string) {
 }
 
 func TestLoadAppliesDefaults(t *testing.T) {
+	skipWithout(t, features.FTP)
 	path, _ := writeConfig(t, `
 [http]
 enabled = false
@@ -135,6 +138,7 @@ func TestTheDefaultsServeHTTPOnLocalhostOnly(t *testing.T) {
 }
 
 func TestUserPermissionDefaults(t *testing.T) {
+	skipWithout(t, features.FTP)
 	path, _ := writeConfig(t, `
 [http]
 enabled = false
@@ -190,6 +194,7 @@ basefolder = "{{folder}}"
 }
 
 func TestValidateRejectsBadConfiguration(t *testing.T) {
+	skipWithout(t, features.FTP, features.SFTP, features.TFTP)
 	folder := t.TempDir()
 	cases := []struct {
 		name   string
@@ -612,18 +617,15 @@ func TestSaveKeepsExplicitUserFlags(t *testing.T) {
 
 func TestDecodeHostKey(t *testing.T) {
 	// a real key, because the value is now parsed rather than only recognised
-	encoded, err := GenerateHostKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	decodedPEM, err := DecodeHostKey(encoded)
+	encoded := generateHostKey(t)
+	decodedPEM, err := Decode(KindSSHKey, encoded)
 	if err != nil {
 		t.Fatal(err)
 	}
 	pem := string(decodedPEM)
 
 	for _, value := range []string{encoded, pem, encoded[:20] + "\n" + encoded[20:]} {
-		decoded, err := DecodeHostKey(value)
+		decoded, err := Decode(KindSSHKey, value)
 		if err != nil {
 			t.Fatalf("%.20q: %v", value, err)
 		}
@@ -633,7 +635,7 @@ func TestDecodeHostKey(t *testing.T) {
 	}
 
 	for _, value := range []string{"", "not base64 !!", base64.StdEncoding.EncodeToString([]byte("hello"))} {
-		if _, err := DecodeHostKey(value); err == nil {
+		if _, err := Decode(KindSSHKey, value); err == nil {
 			t.Errorf("%q has to be refused", value)
 		}
 	}
@@ -778,6 +780,7 @@ func TestTokens(t *testing.T) {
 }
 
 func TestServers(t *testing.T) {
+	skipWithout(t, features.SFTPRemote, features.SMB)
 	valid := Server{Name: "backup", Type: ServerTypeSFTP, Host: "sftp.example.com", Port: 2222,
 		Username: "alice", Password: "secret", HostKeyFingerprint: "SHA256:abc"}
 	check := func(servers ...Server) error {

@@ -1,3 +1,5 @@
+//go:build !light && !no_rpm
+
 package repository
 
 import (

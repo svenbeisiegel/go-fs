@@ -1,5 +1,6 @@
 // Command go-fs serves FTP, FTPS, SFTP, HTTP, HTTPS and TFTP from a single
-// configuration file.
+// configuration file. Built with the tag light it is go-fs-light, which serves
+// HTTP and HTTPS only; see internal/features.
 package main
 
 import (
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"go-fs/internal/config"
+	"go-fs/internal/features"
 	"go-fs/internal/logging"
 	"go-fs/internal/selfupdate"
 	"go-fs/internal/supervisor"
@@ -51,6 +53,15 @@ var errRestartService = errors.New("restarting the service into the new version"
 // no standard error that anybody reads.
 var errorOutput io.Writer = os.Stderr
 
+// featureList is the optional parts this build has, as -version and the first
+// record of the log say them.
+func featureList() string {
+	if list := features.List(); len(list) > 0 {
+		return strings.Join(list, ", ")
+	}
+	return "none"
+}
+
 func currentVersion() string {
 	if version != "" {
 		return version
@@ -80,7 +91,8 @@ func run(stop <-chan struct{}) error {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println("go-fs", currentVersion())
+		fmt.Println(selfupdate.Product, currentVersion())
+		fmt.Println("features:", featureList())
 		return nil
 	}
 
@@ -119,7 +131,9 @@ func run(stop <-chan struct{}) error {
 	// the first record says what is running, so that a log handed over for
 	// analysis carries the build it came from and the file it was configured by
 	logger.Info("go-fs starting",
+		"product", selfupdate.Product,
 		"version", currentVersion(),
+		"features", featureList(),
 		"go", runtime.Version(),
 		"os", runtime.GOOS,
 		"arch", runtime.GOARCH,
@@ -264,6 +278,12 @@ func warnAboutSecrets(logger *slog.Logger, path string, cfg config.Config) {
 			logger.Warn("the configuration file sets a key this version no longer reads",
 				"key", retired)
 		}
+	}
+	// a part this build was built without is ignored rather than refused, so
+	// that go-fs-light starts on the file of go-fs
+	for _, ignored := range cfg.Ignored() {
+		logger.Warn("the configuration file switches on what this build does not have, "+
+			"so it is ignored", "product", selfupdate.Product, "ignored", ignored)
 	}
 	if accounts := cfg.ExampleAccounts(); len(accounts) > 0 {
 		logger.Warn("an account still has the password this project's own documentation "+

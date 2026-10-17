@@ -133,9 +133,11 @@ func (u *Updater) lookup(ctx context.Context) (Release, error) {
 	return release, nil
 }
 
-// assetName is the update file make release writes for a platform.
+// assetName is the update file make release writes for a platform. It starts
+// with the product, so go-fs and go-fs-light can share a release and each finds
+// only its own files in it.
 func assetName(version, goos, goarch string) string {
-	name := "go-fs_" + version + "_" + goos + "_" + goarch
+	name := Product + "_" + version + "_" + goos + "_" + goarch
 	if goos == "windows" {
 		name += ".exe"
 	}

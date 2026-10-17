@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go-fs/internal/config"
+	"go-fs/internal/features"
 	"go-fs/internal/tlsconf"
 )
 
@@ -56,6 +57,8 @@ func uploadFile(t *testing.T, front *httptest.Server, kind, name string,
 // The six keys that hold key material get the buttons, and nothing else
 // does. authorizedKeys in particular stays a plain list of pasted lines.
 func TestSchemaMarksTheKeyMaterial(t *testing.T) {
+	// the whole file is on the page of a binary with every part
+	skipWithout(t, features.All()...)
 	schema, _ := build()
 
 	want := map[string]string{
@@ -190,6 +193,7 @@ func TestUploadRefusesTheWrongFile(t *testing.T) {
 }
 
 func TestGenerateProducesMaterialTheServerAccepts(t *testing.T) {
+	skipWithout(t, features.SFTP)
 	_, front := testServer(t, testConfig(t))
 
 	status, answer, body := send(t, front, "/?go-fs=admin-generate",
@@ -215,7 +219,7 @@ func TestGenerateProducesMaterialTheServerAccepts(t *testing.T) {
 		t.Fatalf("generating a host key: %d %s", status, body)
 	}
 	hostKey, _ := answer["value"].(string)
-	if _, err := config.DecodeHostKey(hostKey); err != nil {
+	if _, err := config.Decode(config.KindSSHKey, hostKey); err != nil {
 		t.Errorf("the generated host key does not load: %v", err)
 	}
 
@@ -230,6 +234,8 @@ func TestGenerateProducesMaterialTheServerAccepts(t *testing.T) {
 // A generated certificate is stored and applied like any other change: it goes
 // into the file, and the file still validates.
 func TestGeneratedMaterialSurvivesApply(t *testing.T) {
+	// the whole file is on the page of a binary with every part
+	skipWithout(t, features.All()...)
 	path := testConfig(t)
 	_, front := testServer(t, path)
 
@@ -266,6 +272,7 @@ func TestGeneratedMaterialSurvivesApply(t *testing.T) {
 // A pair that does not belong together is refused before the file is written,
 // the way every other invalid change is.
 func TestApplyRefusesAMismatchedPair(t *testing.T) {
+	skipWithout(t, features.FTP)
 	path := testConfig(t)
 	_, front := testServer(t, path)
 

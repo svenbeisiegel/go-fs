@@ -1,7 +1,6 @@
 package config
 
 import (
-	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
@@ -10,8 +9,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"golang.org/x/crypto/ssh"
 )
 
 // Key material — certificates, private keys and the SSH host key — is held in
@@ -56,17 +53,47 @@ func Decode(kind, value string) ([]byte, error) {
 		return DecodeCertificate(value)
 	case KindTLSKey:
 		return DecodePrivateKey(value)
-	case KindSSHKey:
-		return DecodeHostKey(value)
 	case KindSessionSecret:
 		return DecodeSessionSecret(value)
-	case KindPGPKey:
-		return DecodePGPKey(value)
-	case KindJARKey:
-		return DecodeJARKey(value)
 	default:
+		if k, ok := keyKinds[kind]; ok {
+			return k.decode(value)
+		}
 		return nil, fmt.Errorf("%q is not a kind of key material", kind)
 	}
+}
+
+// keyKind is a kind of key material that one of the optional parts of go-fs
+// brings, the signing key of a kind of repository for one. It is registered
+// from the file of the part, which a build tag leaves out together with the
+// module that reads the key, so that a binary built without the part does
+// not know the kind at all.
+type keyKind struct {
+	// decode is what Decode does for the kind.
+	decode func(value string) ([]byte, error)
+	// describe is what Describe does for the kind.
+	describe func(value string) string
+	// generate makes a new key as the value the file holds, named name
+	// where the kind names its keys.
+	generate func(name string) (string, error)
+}
+
+// keyKinds are the kinds the optional parts registered, by their name.
+var keyKinds = map[string]keyKind{}
+
+func registerKeyKind(kind string, k keyKind) { keyKinds[kind] = k }
+
+// Generate makes a new key of one of the kinds an optional part brings, named
+// name where the kind names its keys, as the value the file holds. known is
+// false for a kind that is not one of them, or whose part the binary was
+// built without.
+func Generate(kind, name string) (value string, known bool, err error) {
+	k, ok := keyKinds[kind]
+	if !ok {
+		return "", false, nil
+	}
+	value, err = k.generate(name)
+	return value, true, err
 }
 
 // DecodePEM turns a configured value into the PEM bytes it stands for. The
@@ -180,11 +207,18 @@ func parsePrivateKey(block *pem.Block) (any, error) {
 	case "EC PRIVATE KEY":
 		return x509.ParseECPrivateKey(block.Bytes)
 	case "OPENSSH PRIVATE KEY":
-		return ssh.ParseRawPrivateKey(pem.EncodeToMemory(block))
+		if parseOpenSSHKey != nil {
+			return parseOpenSSHKey(block)
+		}
+		return nil, errors.New("is an OpenSSH key, which this binary does not read")
 	default:
 		return x509.ParsePKCS8PrivateKey(block.Bytes)
 	}
 }
+
+// parseOpenSSHKey reads a private key in the encoding of ssh-keygen. It is set
+// by material_ssh.go, which only a binary that speaks SSH has.
+var parseOpenSSHKey func(block *pem.Block) (any, error)
 
 // encrypted reports a key that openssl encrypted the old way. A modern one
 // carries no header and fails to parse instead, which the caller reports.
@@ -200,39 +234,6 @@ func describeBlock(blockType string) string {
 		return "an unnamed PEM block"
 	}
 	return "a " + strings.ToLower(blockType) + " block"
-}
-
-// DecodeHostKey turns the configured sftp.hostkey value into the PEM bytes of
-// an SSH private key.
-func DecodeHostKey(value string) ([]byte, error) {
-	decoded, err := DecodePrivateKey(value)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := ssh.ParsePrivateKey(decoded); err != nil {
-		var passphraseNeeded *ssh.PassphraseMissingError
-		if errors.As(err, &passphraseNeeded) {
-			return nil, errors.New("is protected by a passphrase, which is not supported")
-		}
-		return nil, fmt.Errorf("cannot be used as an SSH host key: %w", err)
-	}
-	return decoded, nil
-}
-
-// GenerateHostKey produces an ed25519 host key as the value the file holds. It
-// is what the SFTP server falls back to when no key is configured and what the
-// web interface stores when Generate is pressed, so a generated key and a
-// configured one are the same thing.
-func GenerateHostKey() (string, error) {
-	_, key, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return "", err
-	}
-	block, err := ssh.MarshalPrivateKey(key, "")
-	if err != nil {
-		return "", err
-	}
-	return Encode(pem.EncodeToMemory(block)), nil
 }
 
 // DecodeSessionSecret turns the configured http.httpSessionTokenSecret into the
@@ -297,15 +298,12 @@ func Describe(kind, value string) string {
 	switch kind {
 	case KindCertificate:
 		return describeCertificate(value)
-	case KindSSHKey:
-		return describeHostKey(value)
 	case KindSessionSecret:
 		return describeSessionSecret(value)
-	case KindPGPKey:
-		return describePGPKey(value)
-	case KindJARKey:
-		return describeJARKey(value)
 	default:
+		if k, ok := keyKinds[kind]; ok {
+			return k.describe(value)
+		}
 		return describePrivateKey(value)
 	}
 }
@@ -343,17 +341,4 @@ func describePrivateKey(value string) string {
 	}
 	block, _ := pem.Decode(decoded)
 	return strings.ToLower(block.Type)
-}
-
-func describeHostKey(value string) string {
-	decoded, err := DecodeHostKey(value)
-	if err != nil {
-		return "this value " + err.Error()
-	}
-	signer, err := ssh.ParsePrivateKey(decoded)
-	if err != nil {
-		return "this value cannot be parsed: " + err.Error()
-	}
-	return fmt.Sprintf("%s host key, %s",
-		signer.PublicKey().Type(), ssh.FingerprintSHA256(signer.PublicKey()))
 }

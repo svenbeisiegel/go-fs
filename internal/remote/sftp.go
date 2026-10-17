@@ -1,3 +1,5 @@
+//go:build !light && !no_sftp_remote
+
 package remote
 
 import (
@@ -20,9 +22,10 @@ import (
 	"go-fs/internal/config"
 )
 
-// HandshakeTimeout bounds the connection and the handshake with a host, which
-// one that does not answer would hold.
-const HandshakeTimeout = 30 * time.Second
+// Sending by SFTP is left out by the tag no_sftp_remote, and by light.
+func init() {
+	registerProtocol(protocol{id: config.ServerTypeSFTP, open: openSFTPFS, hostKey: sshHostKey})
+}
 
 // errHostKeyShown ends the handshake that only asks for the key of a host.
 var errHostKeyShown = errors.New("host key shown")
@@ -239,19 +242,4 @@ func (s *sftpFS) Close() error {
 		err = closeErr
 	}
 	return err
-}
-
-// linkInfo is what a link leads to, under the name of the link.
-type linkInfo struct {
-	fs.FileInfo
-	name string
-}
-
-func (l linkInfo) Name() string { return l.name }
-
-// IsLink reports an entry of ReadDir that is a link, listed as what it leads
-// to: a walk that goes into it might never come out again.
-func IsLink(info fs.FileInfo) bool {
-	_, ok := info.(linkInfo)
-	return ok
 }

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"go-fs/internal/features"
 )
 
 // testSigningKey is the key the tests of internal/rpm sign with, as the file
@@ -20,6 +22,7 @@ func testSigningKey(t *testing.T) string {
 }
 
 func TestRepositories(t *testing.T) {
+	skipWithout(t, features.RPM)
 	folder := t.TempDir()
 	mkdir(t, folder, "rpm")
 	mkdir(t, filepath.Join(folder, "rpm"), "inner")
@@ -94,6 +97,7 @@ func TestRepositoryInterval(t *testing.T) {
 }
 
 func TestPGPKeyMaterial(t *testing.T) {
+	skipWithout(t, features.RPM)
 	key := testSigningKey(t)
 	if _, err := Decode(KindPGPKey, key); err != nil {
 		t.Fatal(err)
@@ -108,9 +112,13 @@ func TestPGPKeyMaterial(t *testing.T) {
 
 // testJARKey is one signing key of an fdroid repository for every test,
 // since making one takes a while.
-var testJARKey = sync.OnceValues(func() (string, error) { return GenerateJARKey("test") })
+var testJARKey = sync.OnceValues(func() (string, error) {
+	key, _, err := Generate(KindJARKey, "test")
+	return key, err
+})
 
 func TestFDroidRepositories(t *testing.T) {
+	skipWithout(t, features.FDroid, features.RPM)
 	folder := t.TempDir()
 	mkdir(t, folder, "android/repo")
 	key, err := testJARKey()
@@ -158,6 +166,7 @@ func TestFDroidRepositories(t *testing.T) {
 }
 
 func TestJARKeyMaterial(t *testing.T) {
+	skipWithout(t, features.FDroid)
 	key, err := testJARKey()
 	if err != nil {
 		t.Fatal(err)

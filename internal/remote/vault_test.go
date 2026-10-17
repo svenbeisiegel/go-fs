@@ -15,6 +15,7 @@ import (
 
 	"go-fs/internal/config"
 	"go-fs/internal/cryptomator"
+	"go-fs/internal/features"
 	"go-fs/internal/remote"
 	"go-fs/internal/remote/remotetest"
 )
@@ -29,12 +30,19 @@ type vaultHost struct {
 func vaultHosts(t *testing.T) map[string]vaultHost {
 	sftp := remotetest.NewSFTPHost(t, "alice", "secret")
 	artifactory := remotetest.NewArtifactoryHost(t, "secret", "libs")
-	return map[string]vaultHost{
+	hosts := map[string]vaultHost{
 		"sftp": {remote.Login{Type: config.ServerTypeSFTP, Host: sftp.Host, Port: sftp.Port,
 			Username: "alice", Password: "secret", HostKey: sftp.Fingerprint, VaultPath: "vault", VaultPassword: "pw"}, sftp.Dir},
 		"artifactory": {remote.Login{Type: config.ServerTypeArtifactory, URL: artifactory.URL,
 			Token: artifactory.Token, VaultPath: "/libs/vault", VaultPassword: "pw"}, artifactory.Dir},
 	}
+	// a binary built without a protocol tries the vault on the others
+	for name, host := range hosts {
+		if _, built := config.ServerTypeOf(host.login.Type); !built {
+			delete(hosts, name)
+		}
+	}
+	return hosts
 }
 
 func openTestVault(t *testing.T, login remote.Login) remote.FS {
@@ -240,6 +248,7 @@ func withVaultPassword(l remote.Login, password string) remote.Login {
 }
 
 func TestVaultLoginIsChecked(t *testing.T) {
+	skipWithout(t, features.SFTPRemote)
 	base := remote.Login{Host: "example.com", Username: "alice", HostKey: "SHA256:x"}
 	for name, l := range map[string]remote.Login{
 		"a vault without a password": {VaultPath: "/vault"},

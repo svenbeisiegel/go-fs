@@ -13,6 +13,17 @@
   serving C:\ProgramData\go-fs\files, with its container registry in
   C:\ProgramData\go-fs\registry; make msi-inputs builds both.
 
+  The same file builds the msi of go-fs-light, given -d Product=go-fs-light
+  and the light binary as Bin:
+
+      -d Product=go-fs-light -d Bin=build/pkg/go-fs-light_windows_amd64.exe
+      -o dist/go-fs-light-0.10.0-x64.msi
+
+  It installs to the same folders and as the same service, under an
+  UpgradeCode of its own, and each msi removes the other product before it
+  installs: only one of them is ever installed. The configuration stays, as
+  it does on an update.
+
   Run interactively, the installer shows a welcome page, a page to start the
   install and a last page whose ticked checkbox opens the admin interface in
   the default browser once Finish is pressed. A quiet install opens nothing.
@@ -33,17 +44,40 @@
   msiexec /i go-fs-<version>-x64.msi /qn            installs or updates quietly
   msiexec /i go-fs-<version>-x64.msi /qn FIREWALL=1 also opens the firewall
 -->
+<!-- Product names what is built, go-fs unless given. UpgradeCode is that
+     product's for good, OtherUpgradeCode the other product's, which the
+     Upgrade below removes; Serves is what its service description lists. -->
+<?ifndef Product?>
+  <?define Product = go-fs?>
+<?endif?>
+<?if $(Product) = go-fs?>
+  <?define UpgradeCode = 703FFA44-28B3-48C3-AB59-2D180F83AAD9?>
+  <?define OtherUpgradeCode = 9E605789-09D0-4960-8BC1-3EFD8753FE84?>
+  <?define Serves = FTP, FTPS, SFTP, HTTP, HTTPS, S3 and TFTP?>
+<?elseif $(Product) = go-fs-light?>
+  <?define UpgradeCode = 9E605789-09D0-4960-8BC1-3EFD8753FE84?>
+  <?define OtherUpgradeCode = 703FFA44-28B3-48C3-AB59-2D180F83AAD9?>
+  <?define Serves = HTTP, HTTPS, S3 and an OCI registry?>
+<?else?>
+  <?error Product is go-fs or go-fs-light?>
+<?endif?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
      xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall">
-  <Package Name="go-fs"
+  <Package Name="$(Product)"
            Manufacturer="Sven Beisiegel"
            Version="$(Version)"
-           UpgradeCode="703FFA44-28B3-48C3-AB59-2D180F83AAD9"
+           UpgradeCode="$(UpgradeCode)"
            Scope="perMachine"
            Compressed="yes">
-    <SummaryInformation Description="go-fs file server" />
-    <MajorUpgrade DowngradeErrorMessage="A newer version of go-fs is already installed." />
+    <SummaryInformation Description="$(Product) file server" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of $(Product) is already installed." />
+    <!-- the other product, in any version, is removed along with an older
+         version of this one: both install the same files and service -->
+    <Upgrade Code="$(OtherUpgradeCode)">
+      <UpgradeVersion Minimum="0.0.0" IncludeMinimum="yes" OnlyDetect="no"
+                      Property="OTHERPRODUCTFOUND" />
+    </Upgrade>
     <MediaTemplate EmbedCab="yes" />
 
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/svenbeisiegel/go-fs" />
@@ -110,7 +144,7 @@
       </Directory>
     </StandardDirectory>
 
-    <Feature Id="Main" Title="go-fs" AllowAbsent="no">
+    <Feature Id="Main" Title="$(Product)" AllowAbsent="no">
       <ComponentRef Id="Executable" />
       <ComponentRef Id="DataFolder" />
       <ComponentRef Id="FilesFolder" />
@@ -124,8 +158,8 @@
       <File Id="GoFsExe" Name="go-fs.exe" Source="$(Bin)" KeyPath="yes" />
       <ServiceInstall Id="Service"
                       Name="go-fs"
-                      DisplayName="go-fs file server"
-                      Description="Serves FTP, FTPS, SFTP, HTTP, HTTPS, S3 and TFTP as configured in C:\ProgramData\go-fs\go-fs.toml."
+                      DisplayName="$(Product) file server"
+                      Description="Serves $(Serves) as configured in C:\ProgramData\go-fs\go-fs.toml."
                       Type="ownProcess"
                       Start="auto"
                       ErrorControl="normal"

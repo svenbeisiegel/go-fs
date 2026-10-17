@@ -1,3 +1,5 @@
+//go:build !light && !no_sftp_remote
+
 package remote_test
 
 import (
@@ -13,10 +15,6 @@ import (
 	"go-fs/internal/remote"
 	"go-fs/internal/remote/remotetest"
 )
-
-func sshConfig() config.SSH {
-	return config.Default().General.SSH
-}
 
 func TestLoginIsChecked(t *testing.T) {
 	login, err := remote.Login{Host: " [2001:db8::1] ", Username: " alice ", HostKey: "SHA256:x"}.Checked(false)

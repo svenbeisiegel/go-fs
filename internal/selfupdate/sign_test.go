@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha512"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
@@ -148,7 +149,84 @@ func TestParseKeys(t *testing.T) {
 // refuse to start.
 func TestTrustedKeysParse(t *testing.T) {
 	if _, err := TrustedKeys(); err != nil {
-		t.Fatalf("keys.txt: %v", err)
+		t.Fatalf("keys file of %s: %v", Product, err)
+	}
+}
+
+// productKeys reads the keys file of each product from the source tree, not
+// from what this build embedded, so both are checked whichever tag the tests
+// run with.
+func productKeys(t *testing.T) map[string][]ed25519.PublicKey {
+	t.Helper()
+	files := map[string]string{"go-fs": "keys.txt", "go-fs-light": "keys_light.txt"}
+	keys := make(map[string][]ed25519.PublicKey)
+	for product, name := range files {
+		text, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := parseKeys(string(text))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		keys[product] = parsed
+	}
+	return keys
+}
+
+// A key both products trusted would let one install the update files of the
+// other, which share its release.
+func TestProductKeysAreDisjoint(t *testing.T) {
+	keys := productKeys(t)
+	for _, full := range keys["go-fs"] {
+		for _, light := range keys["go-fs-light"] {
+			if full.Equal(light) {
+				t.Errorf("key %s is trusted by go-fs and go-fs-light", KeyID(full))
+			}
+		}
+	}
+}
+
+// This build trusts the keys of its own product and none of the other's, so
+// an update signed for the other product is refused as signed with an unknown
+// key.
+func TestTrustedKeysAreTheProductsOwn(t *testing.T) {
+	saved := buildKeys
+	t.Cleanup(func() { buildKeys = saved })
+	buildKeys = ""
+
+	trusted, err := TrustedKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := productKeys(t)
+	own := keys[Product]
+	if len(trusted) != len(own) {
+		t.Fatalf("%s trusts %d keys, its keys file holds %d", Product, len(trusted), len(own))
+	}
+	for i := range own {
+		if !trusted[i].Equal(own[i]) {
+			t.Errorf("trusted key %d is %s, want %s", i, KeyID(trusted[i]), KeyID(own[i]))
+		}
+	}
+	for product, set := range keys {
+		if product == Product {
+			continue
+		}
+		for _, key := range set {
+			for _, mine := range trusted {
+				if key.Equal(mine) {
+					t.Errorf("%s trusts key %s of %s", Product, KeyID(key), product)
+				}
+			}
+		}
+	}
+
+	// The other product's keys file may hold no key yet, so a fresh key
+	// stands in for it when signing.
+	_, otherPrivate := newKey(t)
+	if _, _, err := verify(signed(t, otherPrivate, []byte("binary")), trusted...); !errors.Is(err, ErrUnknownKey) {
+		t.Errorf("update signed for the other product: %v, want %v", err, ErrUnknownKey)
 	}
 }
 

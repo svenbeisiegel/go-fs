@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"go-fs/internal/config"
+	"go-fs/internal/features"
 	"go-fs/internal/httpd"
 )
 
@@ -141,6 +142,7 @@ func fetch(t *testing.T, port int, path, name, password string) *http.Response {
 }
 
 func TestApplyStartsStopsAndRestarts(t *testing.T) {
+	skipWithout(t, features.TFTP)
 	sup, logs, ctx := newSupervisor(t)
 	cfg := baseConfig(t)
 

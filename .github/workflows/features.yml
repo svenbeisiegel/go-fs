@@ -1,0 +1,66 @@
+name: Features
+
+# go-fs-light is go-fs built with the tag light, and every optional part can be
+# left out on its own by a tag of its own (see internal/features). A part is
+# only ever left out by a tag, so what breaks a build without it does not show
+# in the jobs of test.yml, which build go-fs whole; it is checked here.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: features-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  light:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: vet go-fs-light
+        run: |
+          go vet -tags light ./...
+          GOOS=windows go vet -tags light ./...
+
+      - name: test go-fs-light
+        run: go test -tags light ./... -race -count=1 -timeout 15m
+
+      # what go-fs-light is reviewed for is the modules it links; one more
+      # fails here rather than slipping into a release
+      - name: modules of go-fs-light
+        run: tools/features/check-modules.sh
+
+      - name: version of go-fs-light
+        run: |
+          go build -tags light -o go-fs-light .
+          ./go-fs-light -version
+          ./go-fs-light -version | grep -qx "features: none"
+
+  tags:
+    # each part on its own, and the two that speak SSH together, which is
+    # what takes golang.org/x/crypto/ssh out
+    strategy:
+      fail-fast: false
+      matrix:
+        tags: [no_tftp, no_ftp, no_sftpd, no_sftp_remote, no_smb, no_rpm, no_fdroid, "no_sftpd,no_sftp_remote"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: vet
+        run: go vet -tags "${{ matrix.tags }}" ./...
+
+      - name: test
+        run: go test -tags "${{ matrix.tags }}" ./... -count=1 -timeout 15m

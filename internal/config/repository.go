@@ -9,8 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"go-fs/internal/fdroid"
-	"go-fs/internal/pgp"
+	"go-fs/internal/features"
 )
 
 // Repository is a package repository go-fs keeps in a folder it serves over
@@ -53,13 +52,13 @@ type Repository struct {
 	URL string `toml:"url,omitempty"`
 	// Title is the name the F-Droid app shows of an fdroid repository, the
 	// name when not set.
-	Title string `toml:"title,omitempty"`
+	Title string `toml:"title,omitempty" feature:"fdroid"`
 	// Description is the text the F-Droid app shows of an fdroid
 	// repository.
-	Description string `toml:"description,omitempty"`
+	Description string `toml:"description,omitempty" feature:"fdroid"`
 	// Icon is the image the F-Droid app shows of an fdroid repository, a
 	// file in its folder by its path in it, such as /icon.png.
-	Icon string `toml:"icon,omitempty"`
+	Icon string `toml:"icon,omitempty" feature:"fdroid"`
 }
 
 // DisplayName is the name a client shows of the repository.
@@ -90,6 +89,9 @@ func (r Repository) Interval() int {
 type RepositoryType struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
+
+	// feature is the part of go-fs the kind is.
+	feature string
 }
 
 // RepositoryTypeRPM is an rpm-md repository, read by zypper and dnf.
@@ -99,11 +101,50 @@ const RepositoryTypeRPM = "rpm"
 // app on Android.
 const RepositoryTypeFDroid = "fdroid"
 
-// RepositoryTypes are the kinds a repository may be. Another one is added here
-// and given an implementation in internal/repository.
-var RepositoryTypes = []RepositoryType{
-	{ID: RepositoryTypeRPM, Label: "rpm (zypper, dnf)"},
-	{ID: RepositoryTypeFDroid, Label: "F-Droid (Android)"},
+// allRepositoryTypes are the kinds a repository may be, whether the binary was
+// built with them or not. Another one is added here and given an
+// implementation in internal/repository.
+var allRepositoryTypes = []RepositoryType{
+	{ID: RepositoryTypeRPM, Label: "rpm (zypper, dnf)", feature: features.RPM},
+	{ID: RepositoryTypeFDroid, Label: "F-Droid (Android)", feature: features.FDroid},
+}
+
+// RepositoryTypes are the kinds a repository may be in this binary: those of
+// allRepositoryTypes it was built with.
+var RepositoryTypes = builtRepositoryTypes()
+
+func builtRepositoryTypes() []RepositoryType {
+	var built []RepositoryType
+	for _, t := range allRepositoryTypes {
+		if features.Has(t.feature) {
+			built = append(built, t)
+		}
+	}
+	return built
+}
+
+// absentRepositoryType reports a kind of repository go-fs knows but this
+// binary was built without. A repository of one is kept in the file and
+// otherwise ignored, so that go-fs-light reads the file of go-fs.
+func absentRepositoryType(id string) bool {
+	for _, t := range allRepositoryTypes {
+		if t.ID == id {
+			return !features.Has(t.feature)
+		}
+	}
+	return false
+}
+
+// UsableRepositories are the repositories of the file the binary can keep:
+// those whose kind it was built with.
+func (c Config) UsableRepositories() []Repository {
+	var usable []Repository
+	for _, repo := range c.Repositories {
+		if _, ok := RepositoryTypeOf(repo.Type); ok {
+			usable = append(usable, repo)
+		}
+	}
+	return usable
 }
 
 // SigningKeyKind is the kind of key material a repository of type typ signs
@@ -208,6 +249,10 @@ func (c Config) validateRepositories() error {
 		}
 		names[strings.ToLower(repo.Name)] = true
 		where = fmt.Sprintf("%s %q", where, repo.Name)
+		if absentRepositoryType(repo.Type) {
+			// what this binary cannot keep it does not check either
+			continue
+		}
 
 		if _, ok := RepositoryTypeOf(repo.Type); !ok {
 			known := make([]string, len(RepositoryTypes))
@@ -303,88 +348,8 @@ func (r Repository) validateFDroid() error {
 	return nil
 }
 
-// KindPGPKey is the OpenPGP signing key of a repository.
+// KindPGPKey is the OpenPGP signing key of an rpm repository.
 const KindPGPKey = "pgpkey"
-
-// DecodePGPKey turns a configured signing key into the armored key it
-// stands for, checked to be one go-fs can sign with.
-func DecodePGPKey(value string) ([]byte, error) {
-	decoded, err := DecodePEM(value)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := pgp.Parse(decoded); err != nil {
-		return nil, err
-	}
-	return decoded, nil
-}
-
-// PGPKey parses a configured signing key.
-func PGPKey(value string) (*pgp.Key, error) {
-	decoded, err := DecodePEM(value)
-	if err != nil {
-		return nil, err
-	}
-	return pgp.Parse(decoded)
-}
-
-// GeneratePGPKey makes a new signing key for the repository called name, as
-// the value the file holds.
-func GeneratePGPKey(name string) (string, error) {
-	armored, err := pgp.Generate(name)
-	if err != nil {
-		return "", err
-	}
-	return Encode(armored), nil
-}
 
 // KindJARKey is the key the index of an fdroid repository is signed with.
 const KindJARKey = "jarkey"
-
-// DecodeJARKey turns a configured signing key of an fdroid repository into
-// the PEM it stands for, checked to be one go-fs can sign with.
-func DecodeJARKey(value string) ([]byte, error) {
-	decoded, err := DecodePEM(value)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := fdroid.Parse(decoded); err != nil {
-		return nil, err
-	}
-	return decoded, nil
-}
-
-// JARKey parses a configured signing key of an fdroid repository.
-func JARKey(value string) (*fdroid.Key, error) {
-	decoded, err := DecodePEM(value)
-	if err != nil {
-		return nil, err
-	}
-	return fdroid.Parse(decoded)
-}
-
-// GenerateJARKey makes a new signing key for the fdroid repository called
-// name, as the value the file holds.
-func GenerateJARKey(name string) (string, error) {
-	pemBytes, err := fdroid.Generate(name)
-	if err != nil {
-		return "", err
-	}
-	return Encode(pemBytes), nil
-}
-
-func describeJARKey(value string) string {
-	key, err := JARKey(value)
-	if err != nil {
-		return "this value " + err.Error()
-	}
-	return key.Describe()
-}
-
-func describePGPKey(value string) string {
-	key, err := PGPKey(value)
-	if err != nil {
-		return "this value " + err.Error()
-	}
-	return key.Describe()
-}

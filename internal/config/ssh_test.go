@@ -1,3 +1,5 @@
+//go:build !light && (!no_sftpd || !no_sftp_remote)
+
 package config
 
 import (
@@ -6,6 +8,8 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/ssh"
+
+	"go-fs/internal/features"
 )
 
 func TestEmptyAlgorithmListsAreTheSecureDefault(t *testing.T) {
@@ -107,6 +111,7 @@ func TestTheSSHSectionIsDocumented(t *testing.T) {
 }
 
 func TestAFileWithoutTheSSHSectionGetsTheDefaults(t *testing.T) {
+	skipWithout(t, features.FTP)
 	path, _ := writeConfig(t, `
 [http]
 enabled = false

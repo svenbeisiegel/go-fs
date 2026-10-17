@@ -1,0 +1,14 @@
+# The third-party modules go-fs-light may link, one per line. The binary built
+# with -tags light is checked against this list by check-modules.sh, so that a
+# change that imports another module into go-fs-light fails instead of
+# quietly adding to what has to be reviewed for it. Add a module here only
+# on purpose.
+github.com/golang-jwt/jwt/v5
+github.com/klauspost/compress
+github.com/opencontainers/go-digest
+github.com/opencontainers/image-spec
+github.com/pelletier/go-toml/v2
+github.com/ulikunitz/xz
+golang.org/x/crypto
+golang.org/x/sys
+golang.org/x/text

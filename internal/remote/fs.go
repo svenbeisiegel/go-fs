@@ -74,13 +74,46 @@ func CreateVault(ctx context.Context, l Login, sshCfg config.SSH) (string, error
 
 // openHost logs in to a host, without regard to its vault.
 func openHost(ctx context.Context, l Login, sshCfg config.SSH) (FS, error) {
-	switch l.Type {
-	case config.ServerTypeSFTP:
-		return openSFTPFS(ctx, l, sshCfg)
-	case config.ServerTypeSMB:
-		return openSMB(ctx, l)
-	case config.ServerTypeArtifactory:
-		return openArtifactory(ctx, l), nil
+	if p, ok := protocols[l.Type]; ok {
+		return p.open(ctx, l, sshCfg)
 	}
 	return nil, fmt.Errorf("%q is not a protocol go-fs knows", l.Type)
+}
+
+// protocol is how a host of one of config.ServerTypes is reached.
+type protocol struct {
+	id string
+	// open logs in to a host.
+	open func(ctx context.Context, l Login, sshCfg config.SSH) (FS, error)
+	// hostKey asks a host for the type and the fingerprint of its key, nil
+	// for a protocol whose hosts show none.
+	hostKey func(ctx context.Context, l Login, sshCfg config.SSH) (string, string, error)
+}
+
+// protocols are the protocols the binary was built with, by their ID. Those
+// that are optional, SFTP and SMB, add themselves from their own file, which
+// a build tag leaves out together with the module it imports.
+var protocols = map[string]protocol{
+	config.ServerTypeArtifactory: {id: config.ServerTypeArtifactory,
+		open: func(ctx context.Context, l Login, _ config.SSH) (FS, error) {
+			return openArtifactory(ctx, l), nil
+		}},
+}
+
+// registerProtocol adds an optional protocol.
+func registerProtocol(p protocol) { protocols[p.id] = p }
+
+// linkInfo is what a link leads to, under the name of the link.
+type linkInfo struct {
+	fs.FileInfo
+	name string
+}
+
+func (l linkInfo) Name() string { return l.name }
+
+// IsLink reports an entry of ReadDir that is a link, listed as what it leads
+// to: a walk that goes into it might never come out again.
+func IsLink(info fs.FileInfo) bool {
+	_, ok := info.(linkInfo)
+	return ok
 }

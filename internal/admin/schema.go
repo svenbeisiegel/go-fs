@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"go-fs/internal/config"
+	"go-fs/internal/features"
 )
 
 // The form is generated rather than written. Every field of config.Config
@@ -38,7 +39,9 @@ type Section struct {
 	// keys; a section without any has no such row.
 	Subsections []Section `json:"subsections,omitempty"`
 
-	// index locates a subsection in its section, as it does for a field.
+	// index locates the section in config.Config, and a subsection in its
+	// section, as it does for a field: sections the binary was built without
+	// are left out, so the place in Sections is not the place in the struct.
 	index int
 }
 
@@ -149,6 +152,11 @@ func build() (Schema, []string) {
 		field := configType.Field(i)
 		key := tomlName(field)
 		switch {
+		case !built(field):
+			// a section of a part the binary was built without is not
+			// shown, and a save leaves it at its defaults
+			continue
+
 		case key == "":
 			skipped = append(skipped, field.Name)
 			continue
@@ -167,7 +175,7 @@ func build() (Schema, []string) {
 			}
 			schema.Sections = append(schema.Sections, Section{
 				Key: key, Label: label, Help: help(key, ""),
-				Fields: []Field{}, Tables: []Table{table}, Direct: true,
+				Fields: []Field{}, Tables: []Table{table}, Direct: true, index: i,
 			})
 			skipped = append(skipped, missed...)
 			continue
@@ -177,12 +185,20 @@ func build() (Schema, []string) {
 			continue
 		}
 		section, missed := buildSection(field.Type, key, true)
+		section.index = i
 		section.Label = strings.ToUpper(key)
 		section.Help = help(key, "")
 		schema.Sections = append(schema.Sections, section)
 		skipped = append(skipped, missed...)
 	}
 	return schema, skipped
+}
+
+// built reports whether the binary has the part of go-fs a field of the
+// configuration is for, as its feature tag names it. A field without one is
+// in every binary.
+func built(field reflect.StructField) bool {
+	return features.Any(field.Tag.Get("feature"))
 }
 
 // buildSection walks the keys of one table of the file, path being its name
@@ -196,7 +212,7 @@ func buildSection(structure reflect.Type, path string, nested bool) (Section, []
 	for k := range structure.NumField() {
 		inner := structure.Field(k)
 		name := tomlName(inner)
-		if name == "" {
+		if name == "" || !built(inner) {
 			continue
 		}
 		switch kind, ok := kindOf(inner.Type); {
@@ -259,7 +275,7 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 	for i := range element.NumField() {
 		inner := element.Field(i)
 		name := tomlName(inner)
-		if name == "" {
+		if name == "" || !built(inner) {
 			continue
 		}
 		kind, ok := kindOf(inner.Type)
@@ -412,14 +428,19 @@ func tomlName(field reflect.StructField) string {
 // Values renders a configuration as the tree the page edits: the toml keys of
 // the schema, with the values the file holds.
 func (s Schema) Values(cfg config.Config) map[string]any {
+	// a stored server or a repository of a part the binary was built without
+	// is not shown either; handleApply carries it over into the file as it
+	// was
+	cfg.Servers = cfg.UsableServers()
+	cfg.Repositories = cfg.UsableRepositories()
 	root := reflect.ValueOf(cfg)
 	values := make(map[string]any, len(s.Sections))
-	for i, section := range s.Sections {
+	for _, section := range s.Sections {
 		if section.Direct {
-			values[section.Key] = section.Tables[0].records(root.Field(i))
+			values[section.Key] = section.Tables[0].records(root.Field(section.index))
 			continue
 		}
-		values[section.Key] = section.values(root.Field(i))
+		values[section.Key] = section.values(root.Field(section.index))
 	}
 	return values
 }
@@ -515,13 +536,13 @@ func read(value reflect.Value) any {
 func (s Schema) Apply(values map[string]any) (config.Config, error) {
 	cfg := config.Default()
 	root := reflect.ValueOf(&cfg).Elem()
-	for i, section := range s.Sections {
+	for _, section := range s.Sections {
 		if section.Direct {
 			raw, ok := values[section.Key]
 			if !ok {
 				continue
 			}
-			if err := section.Tables[0].apply(root.Field(i), raw, section.Key); err != nil {
+			if err := section.Tables[0].apply(root.Field(section.index), raw, section.Key); err != nil {
 				return cfg, err
 			}
 			continue
@@ -530,7 +551,7 @@ func (s Schema) Apply(values map[string]any) (config.Config, error) {
 		if !ok {
 			continue
 		}
-		if err := section.apply(root.Field(i), posted, section.Key); err != nil {
+		if err := section.apply(root.Field(section.index), posted, section.Key); err != nil {
 			return cfg, err
 		}
 	}

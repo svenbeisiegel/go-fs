@@ -25,7 +25,8 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
-	"golang.org/x/crypto/ssh"
+
+	"go-fs/internal/features"
 )
 
 //go:embed template.toml
@@ -37,21 +38,26 @@ func Template() []byte {
 }
 
 // Config is the whole configuration file.
+//
+// A field tagged feature belongs to the optional parts of go-fs it names, any
+// of a comma separated list (see internal/features): the admin interface
+// leaves it out in a binary built without them. The field itself is there in
+// every binary, so that each reads the file of the other.
 type Config struct {
 	General General `toml:"general"`
 	Users   []User  `toml:"users"`
 	Tokens  []Token `toml:"tokens"`
-	FTP     FTP     `toml:"ftp"`
-	FTPS    FTPS    `toml:"ftps"`
-	SFTP    SFTP    `toml:"sftp"`
+	FTP     FTP     `toml:"ftp" feature:"ftp"`
+	FTPS    FTPS    `toml:"ftps" feature:"ftp"`
+	SFTP    SFTP    `toml:"sftp" feature:"sftp"`
 	HTTP    HTTP    `toml:"http"`
 	HTTPS   HTTPS   `toml:"https"`
-	TFTP    TFTP    `toml:"tftp"`
+	TFTP    TFTP    `toml:"tftp" feature:"tftp"`
 	// Servers are the remote hosts the file listing sends files to by name.
 	Servers []Server `toml:"servers"`
 	// Repositories are the package repositories go-fs keeps in folders the
 	// http server serves.
-	Repositories []Repository `toml:"repositories"`
+	Repositories []Repository `toml:"repositories" feature:"rpm,fdroid"`
 }
 
 // General holds what every server shares.
@@ -77,7 +83,7 @@ type General struct {
 
 	// SSH is the SSH transport under the SFTP server and under sending a file
 	// to another host from the listing.
-	SSH SSH `toml:"ssh"`
+	SSH SSH `toml:"ssh" feature:"sftp,sftp-remote"`
 
 	// Cleanup are the folders kept from growing without bound, relative to
 	// Basefolder. They are swept whichever servers are enabled.
@@ -180,8 +186,8 @@ type User struct {
 	// FTP, SFTP and HTTP are the servers this account may log in to, each off
 	// unless it is switched on. An entry that enables none is an account
 	// nobody can use, which is a way to keep one without serving it.
-	FTP  bool `toml:"ftp,omitempty"`
-	SFTP bool `toml:"sftp,omitempty"`
+	FTP  bool `toml:"ftp,omitempty" feature:"ftp"`
+	SFTP bool `toml:"sftp,omitempty" feature:"sftp"`
 	HTTP bool `toml:"http,omitempty"`
 	// S3 lets the account use the S3 API of the HTTP server, with its username
 	// as the access key and its password as the secret key. It is independent
@@ -197,7 +203,7 @@ type User struct {
 	// Basefolder is the folder this account sees on FTP and SFTP instead of
 	// the server's own. HTTP scopes an account by Paths instead and ignores
 	// it.
-	Basefolder string `toml:"basefolder,omitempty"`
+	Basefolder string `toml:"basefolder,omitempty" feature:"ftp,sftp"`
 	// Paths are regular expressions matched against an HTTP request path,
 	// after it has been normalized, so that ".." cannot be used to slip past
 	// one. An HTTP account with no pattern can reach nothing; FTP and SFTP
@@ -207,11 +213,11 @@ type User struct {
 	// AllowLoginWithoutPassword accepts the account on FTP with any password
 	// or none. SSH and HTTP have no anonymous login, so it means nothing
 	// there.
-	AllowLoginWithoutPassword *bool `toml:"allowLoginWithoutPassword,omitempty"`
+	AllowLoginWithoutPassword *bool `toml:"allowLoginWithoutPassword,omitempty" feature:"ftp"`
 	// AuthorizedKeys are SSH public keys in authorized_keys format, one entry
 	// per line as ssh-keygen writes them. They are how an SFTP account logs in
 	// with a key instead of a password; the other servers ignore them.
-	AuthorizedKeys []string `toml:"authorizedKeys,omitempty"`
+	AuthorizedKeys []string `toml:"authorizedKeys,omitempty" feature:"sftp"`
 
 	AllowUserFileCreate    *bool `toml:"allowUserFileCreate,omitempty"`
 	AllowUserFileRetrieve  *bool `toml:"allowUserFileRetrieve,omitempty"`
@@ -349,7 +355,7 @@ type Server struct {
 	// HostKeyFingerprint is the SHA-256 fingerprint of the key the server
 	// showed when it was stored. A server that shows another is not logged in
 	// to until it is edited and its new key accepted.
-	HostKeyFingerprint string `toml:"hostKeyFingerprint,omitempty"`
+	HostKeyFingerprint string `toml:"hostKeyFingerprint,omitempty" feature:"sftp-remote"`
 	// URL is the address of a server of a type reached by one and a token,
 	// as ArtifactoryURL reads it: https://acme.jfrog.io/artifactory.
 	URL string `toml:"url,omitempty"`
@@ -444,6 +450,10 @@ type ServerType struct {
 	// Token says the server is reached by a URL and logged in to with a
 	// Bearer token, rather than by a host, a port, a username and a password.
 	Token bool `json:"token"`
+
+	// feature is the part of go-fs the protocol is, "" for one every binary
+	// has.
+	feature string
 }
 
 const (
@@ -461,15 +471,32 @@ const (
 // no server may have.
 const ManualServer = "Manual"
 
-// ServerTypes are the protocols a server may name. Another one is added here
-// and given an implementation in internal/remote.
-var ServerTypes = []ServerType{
-	{ID: ServerTypeSFTP, Label: "SFTP", DefaultPort: 22, HostKey: true},
+// allServerTypes are the protocols a server may name, whether the binary was
+// built with them or not. Another one is added here and given an
+// implementation in internal/remote.
+var allServerTypes = []ServerType{
+	{ID: ServerTypeSFTP, Label: "SFTP", DefaultPort: 22, HostKey: true, feature: features.SFTPRemote},
 	{ID: ServerTypeArtifactory, Label: "Artifactory", Token: true},
-	{ID: ServerTypeSMB, Label: "SMB", DefaultPort: 445},
+	{ID: ServerTypeSMB, Label: "SMB", DefaultPort: 445, feature: features.SMB},
 }
 
-// ServerTypeOf looks a protocol up by its ID.
+// ServerTypes are the protocols a server may name in this binary: those of
+// allServerTypes it was built with. The features package is initialized
+// before this one, so what it says is known here.
+var ServerTypes = builtServerTypes()
+
+func builtServerTypes() []ServerType {
+	var built []ServerType
+	for _, t := range allServerTypes {
+		if t.feature == "" || features.Has(t.feature) {
+			built = append(built, t)
+		}
+	}
+	return built
+}
+
+// ServerTypeOf looks a protocol up by its ID, among those the binary was
+// built with.
 func ServerTypeOf(id string) (ServerType, bool) {
 	for _, t := range ServerTypes {
 		if t.ID == id {
@@ -477,6 +504,30 @@ func ServerTypeOf(id string) (ServerType, bool) {
 		}
 	}
 	return ServerType{}, false
+}
+
+// absentServerType reports a protocol go-fs knows but this binary was built
+// without. A server of one is kept in the file and otherwise ignored, so that
+// go-fs-light reads the file of go-fs.
+func absentServerType(id string) bool {
+	for _, t := range allServerTypes {
+		if t.ID == id {
+			return t.feature != "" && !features.Has(t.feature)
+		}
+	}
+	return false
+}
+
+// UsableServers are the servers of the file the binary can reach: those whose
+// protocol it was built with.
+func (c Config) UsableServers() []Server {
+	var usable []Server
+	for _, s := range c.Servers {
+		if _, ok := ServerTypeOf(s.Type); ok {
+			usable = append(usable, s)
+		}
+	}
+	return usable
 }
 
 // RemoteHost reads the host of a remote server: trimmed, and out of the
@@ -1126,10 +1177,14 @@ func (c Config) Validate() error {
 	if c.General.ReloadInterval < 1 {
 		return errors.New("general.reloadInterval has to be at least 1")
 	}
-	if err := c.General.SSH.validate(); err != nil {
-		return err
+	// general.ssh means nothing to a binary that speaks no SSH, and is not
+	// checked by one
+	if features.SSH() {
+		if err := c.General.SSH.validate(); err != nil {
+			return err
+		}
 	}
-	if c.SFTP.Enabled && c.General.SSH.LoginGraceTime > 0 &&
+	if c.sftpOn() && c.General.SSH.LoginGraceTime > 0 &&
 		c.General.SSH.LoginGraceTime <= c.SFTP.LoginFailureDelay {
 		return errors.New("general.ssh.loginGraceTime has to be longer than sftp.loginFailureDelay, " +
 			"or every wrong password would end the login")
@@ -1154,8 +1209,7 @@ func (c Config) Validate() error {
 			return fmt.Errorf("general.cleanup[%d].keep cannot be negative", i)
 		}
 	}
-	if !c.FTP.Enabled && !c.FTPS.Enabled && !c.SFTP.Enabled &&
-		!c.HTTP.Enabled && !c.HTTPS.Enabled && !c.TFTP.Enabled {
+	if !c.ftpOn() && !c.sftpOn() && !c.HTTP.Enabled && !c.HTTPS.Enabled && !c.tftpOn() {
 		return errors.New("no server is enabled, nothing to do")
 	}
 	if err := c.validateUsers(); err != nil {
@@ -1170,12 +1224,12 @@ func (c Config) Validate() error {
 	if err := c.validateRepositories(); err != nil {
 		return err
 	}
-	if c.FTP.Enabled || c.FTPS.Enabled {
+	if c.ftpOn() {
 		if err := c.validateFTP(); err != nil {
 			return err
 		}
 	}
-	if c.SFTP.Enabled {
+	if c.sftpOn() {
 		if err := c.SFTP.validate(); err != nil {
 			return err
 		}
@@ -1185,13 +1239,21 @@ func (c Config) Validate() error {
 			return err
 		}
 	}
-	if c.TFTP.Enabled {
+	if c.tftpOn() {
 		if err := c.TFTP.validate(); err != nil {
 			return err
 		}
 	}
 	return nil
 }
+
+// ftpOn, sftpOn and tftpOn report a server that is enabled and that the
+// binary was built with. One it was built without is ignored, enabled or not,
+// so that go-fs-light reads the file of go-fs; nothing of it is checked
+// either.
+func (c Config) ftpOn() bool  { return (c.FTP.Enabled || c.FTPS.Enabled) && features.Has(features.FTP) }
+func (c Config) sftpOn() bool { return c.SFTP.Enabled && features.Has(features.SFTP) }
+func (c Config) tftpOn() bool { return c.TFTP.Enabled && features.Has(features.TFTP) }
 
 // validateUsers checks the account list. The rules that hold for every entry
 // are checked first; what a server needs of its accounts is checked only for
@@ -1214,16 +1276,20 @@ func (c Config) validateUsers() error {
 		}
 		seen[user.Username] = true
 
-		if (user.FTP || user.SFTP) && user.Basefolder != "" {
+		// what an account says of a server the binary was built without is
+		// ignored
+		ftp := user.FTP && features.Has(features.FTP)
+		sftp := user.SFTP && features.Has(features.SFTP)
+		if (ftp || sftp) && user.Basefolder != "" {
 			if err := checkFolder(where+".basefolder", user.Basefolder); err != nil {
 				return err
 			}
 		}
-		if user.SFTP {
+		if sftp {
 			// the keys are parsed here as well as at startup, so that -check
 			// reports a key that would stop the server rather than passing it
 			for k, entry := range user.AuthorizedKeys {
-				if _, _, _, _, err := ssh.ParseAuthorizedKey([]byte(entry)); err != nil {
+				if err := checkAuthorizedKey(entry); err != nil {
 					return fmt.Errorf("%s.authorizedKeys[%d]: %w", where, k, err)
 				}
 			}
@@ -1351,6 +1417,10 @@ func (c Config) validateServers() error {
 		}
 		if (server.VaultPath == "") != (server.VaultPassword == "") {
 			return fmt.Errorf("%s %q: vaultPath and vaultPassword are set together or not at all", where, server.Name)
+		}
+		if absentServerType(server.Type) {
+			// what this binary cannot reach it does not check either
+			continue
 		}
 		kind, ok := ServerTypeOf(server.Type)
 		if !ok {
@@ -1626,7 +1696,7 @@ func (s SFTP) validate() error {
 	// The key material is in this file, not in files it points at, so a broken
 	// one is reported here rather than at the first start.
 	if s.HostKey != "" {
-		if _, err := DecodeHostKey(s.HostKey); err != nil {
+		if _, err := Decode(KindSSHKey, s.HostKey); err != nil {
 			return fmt.Errorf("sftp.hostkey: %w", err)
 		}
 	}

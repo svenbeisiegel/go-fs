@@ -14,19 +14,17 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"go-fs/internal/cleanup"
 	"go-fs/internal/config"
-	"go-fs/internal/ftp"
 	"go-fs/internal/httpd"
 	"go-fs/internal/logging"
 	"go-fs/internal/repository"
 	"go-fs/internal/service"
-	"go-fs/internal/sftp"
-	"go-fs/internal/tftp"
 )
 
 // env is what building a service is given: the configuration, the path of
@@ -40,38 +38,52 @@ type env struct {
 
 // entry describes how one service is switched on, built and updated.
 type entry struct {
-	name    string
+	name string
+	// order places the service among the others: they are started, reloaded
+	// and listed in it, whichever of them the binary was built with.
+	order   int
 	enabled func(env) bool
 	create  func(env, *slog.Logger) (service.Server, error)
 	reload  func(service.Server, env) error
 }
 
-var services = []entry{
-	{
-		name:    "ftp",
-		enabled: func(e env) bool { return e.cfg.FTP.Enabled || e.cfg.FTPS.Enabled },
-		create: func(e env, log *slog.Logger) (service.Server, error) {
-			return ftp.New(e.cfg.FTP, e.cfg.FTPS, e.cfg.FTPUsers(), log)
-		},
-		reload: func(s service.Server, e env) error {
-			return s.(*ftp.Server).Reload(e.cfg.FTP, e.cfg.FTPS, e.cfg.FTPUsers())
-		},
-	},
-	{
-		name:    "sftp",
-		enabled: func(e env) bool { return e.cfg.SFTP.Enabled },
-		create: func(e env, log *slog.Logger) (service.Server, error) {
-			return sftp.New(e.cfg.SFTP, e.cfg.General.SSH, e.cfg.SFTPUsers(), log)
-		},
-		reload: func(s service.Server, e env) error {
-			return s.(*sftp.Server).Reload(e.cfg.SFTP, e.cfg.General.SSH, e.cfg.SFTPUsers())
-		},
-	},
+// The places of the services in services. The servers that are optional,
+// and left out by a build tag, add themselves from a file of their own
+// (services_ftp.go and the like), so that a binary built without one does not
+// import its package.
+const (
+	orderFTP = 10 * (iota + 1)
+	orderSFTP
+	orderHTTP
+	orderTFTP
+	orderCleanup
+	orderRepositories
+)
+
+// services are the services the binary was built with, in their order: those
+// every binary has, and those register added.
+var services = inOrder(builtIn)
+
+// register adds an optional service. It is called from the init functions of
+// the files of the optional servers, which run after services was made.
+func register(e entry) {
+	services = inOrder(append(services, e))
+}
+
+// inOrder sorts services by their order.
+func inOrder(entries []entry) []entry {
+	return slices.SortedFunc(slices.Values(entries),
+		func(a, b entry) int { return a.order - b.order })
+}
+
+// builtIn are the services every binary has.
+var builtIn = []entry{
 	{
 		name:    "http",
+		order:   orderHTTP,
 		enabled: func(e env) bool { return e.cfg.HTTP.Enabled || e.cfg.HTTPS.Enabled },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
-			server, err := httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.General.SSH, e.cfg.HTTPServerUsers(), e.cfg.Tokens, e.cfg.Servers, e.path, log)
+			server, err := httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.General.SSH, e.cfg.HTTPServerUsers(), e.cfg.Tokens, e.cfg.UsableServers(), e.path, log)
 			if err != nil {
 				return nil, err
 			}
@@ -81,21 +93,12 @@ var services = []entry{
 			return server, nil
 		},
 		reload: func(s service.Server, e env) error {
-			return s.(*httpd.Server).Reload(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.General.SSH, e.cfg.HTTPServerUsers(), e.cfg.Tokens, e.cfg.Servers)
-		},
-	},
-	{
-		name:    "tftp",
-		enabled: func(e env) bool { return e.cfg.TFTP.Enabled },
-		create: func(e env, log *slog.Logger) (service.Server, error) {
-			return tftp.New(e.cfg.TFTP, log)
-		},
-		reload: func(s service.Server, e env) error {
-			return s.(*tftp.Server).Reload(e.cfg.TFTP)
+			return s.(*httpd.Server).Reload(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.General.SSH, e.cfg.HTTPServerUsers(), e.cfg.Tokens, e.cfg.UsableServers())
 		},
 	},
 	{
 		name:    sweeper,
+		order:   orderCleanup,
 		enabled: func(e env) bool { return len(e.cfg.General.Cleanup) > 0 },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
 			return cleanup.New(e.cfg.General, log)
@@ -106,7 +109,8 @@ var services = []entry{
 	},
 	{
 		name:    repositories,
-		enabled: func(e env) bool { return len(e.cfg.Repositories) > 0 },
+		order:   orderRepositories,
+		enabled: func(e env) bool { return len(e.cfg.UsableRepositories()) > 0 },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
 			return repository.New(e.cfg, log)
 		},

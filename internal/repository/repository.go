@@ -52,10 +52,12 @@ func New(cfg config.Config, logger *slog.Logger) (*Manager, error) {
 	return m, nil
 }
 
-// build makes a runner for every repository of cfg, by name.
+// build makes a runner for every repository of cfg, by name, but for those of
+// a kind the binary was built without, which it leaves alone.
 func build(cfg config.Config, logger *slog.Logger) (map[string]*runner, error) {
-	out := make(map[string]*runner, len(cfg.Repositories))
-	for _, repo := range cfg.Repositories {
+	repos := cfg.UsableRepositories()
+	out := make(map[string]*runner, len(repos))
+	for _, repo := range repos {
 		r, err := newRunner(repo, cfg.HTTP.Basefolder, logger)
 		if err != nil {
 			return nil, fmt.Errorf("repository %q: %w", repo.Name, err)

@@ -17,9 +17,14 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"go-fs/internal/config"
 )
+
+// HandshakeTimeout bounds the connection and the handshake with a host, which
+// one that does not answer would hold.
+const HandshakeTimeout = 30 * time.Second
 
 // Login is what reaching a host takes.
 type Login struct {
@@ -62,14 +67,16 @@ func (l Login) ConfigServer(name string) config.Server {
 		VaultPath: l.VaultPath, VaultPassword: l.VaultPassword}
 }
 
-// Checked reads a login: the type defaults to SFTP, the host loses the brackets
-// of an IPv6 address and the port defaults to that of the type. keyOnly is a
-// login only asked for the key of its host, which needs no username. A login
+// Checked reads a login: the type defaults to SFTP, or to the first protocol of
+// a binary built without it, the host loses the brackets of an IPv6 address and
+// the port defaults to that of the type. keyOnly is a login only asked for the
+// key of its host, which needs no username. A login
 // by token is its address, as config.ArtifactoryURL reads it, and the token,
 // and nothing of the rest.
 func (l Login) Checked(keyOnly bool) (Login, error) {
 	if l.Type == "" {
-		l.Type = config.ServerTypeSFTP
+		// the first protocol, SFTP in a binary built with it
+		l.Type = config.ServerTypes[0].ID
 	}
 	kind, ok := config.ServerTypeOf(l.Type)
 	if !ok {
@@ -192,9 +199,8 @@ func (l Login) Where(p string) string {
 // handshake is broken off once the key is seen. It answers the type of the key
 // and its SHA-256 fingerprint.
 func HostKey(ctx context.Context, l Login, sshCfg config.SSH) (keyType, fingerprint string, err error) {
-	switch l.Type {
-	case config.ServerTypeSFTP:
-		return sshHostKey(ctx, l, sshCfg)
+	if p, ok := protocols[l.Type]; ok && p.hostKey != nil {
+		return p.hostKey(ctx, l, sshCfg)
 	}
 	return "", "", fmt.Errorf("a host reached by %s shows no key", l.Type)
 }

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"go-fs/internal/config"
+	"go-fs/internal/features"
 	"go-fs/internal/remote/remotetest"
 )
 
@@ -20,6 +21,7 @@ func asStored(server config.Server) config.Server {
 // A server allows downloading by default, and nothing that changes it, even
 // to an account that may do everything.
 func TestRemoteServerAllowsOnlyDownloadsByDefault(t *testing.T) {
+	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "a.txt", "a")
 	host.Write(t, "docs/b.txt", "b")
@@ -75,6 +77,7 @@ func TestRemoteServerAllowsOnlyDownloadsByDefault(t *testing.T) {
 
 // Each right of a server allows what it names, and nothing beside.
 func TestRemoteServerRightsAllowWhatTheyName(t *testing.T) {
+	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "a.txt", "a")
 	host.Write(t, "b.txt", "b")
@@ -106,6 +109,7 @@ func TestRemoteServerRightsAllowWhatTheyName(t *testing.T) {
 // A server that does not allow downloads is still listed, but none of its
 // files leaves it.
 func TestRemoteServerWithoutDownloads(t *testing.T) {
+	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "a.txt", "a")
 	host.Write(t, "docs/b.txt", "b")

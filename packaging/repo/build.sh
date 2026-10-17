@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # build.sh builds the package repository served on GitHub Pages into OUT:
 #
-#   rpm/                an rpm-md repository for zypper and dnf, repomd.xml signed
+#   rpm/                an rpm-md repository for zypper and dnf, repomd.xml signed,
+#                       with the packages of go-fs and go-fs-light
 #   rpm/go-fs.repo      the repository definition zypper and dnf add
 #   go-fs.asc           the public key, armored
 #
@@ -86,6 +87,9 @@ cat > "$out/index.html" <<EOF
 <style>body{font-family:system-ui,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem;line-height:1.5}pre{background:#f4f4f4;padding:.75rem;overflow-x:auto}</style>
 <h1>go-fs packages</h1>
 <p>Signed with <a href="go-fs.asc">this key</a>. The $keep newest releases are kept.</p>
+<p>The repository has two packages, which exclude each other: go-fs with every
+protocol, and go-fs-light with HTTP, HTTPS, the S3 API and the container
+registry alone. Install go-fs-light in place of go-fs below for the light one.</p>
 <h2>openSUSE and SLES</h2>
 <pre>sudo zypper addrepo $url/rpm/go-fs.repo
 sudo zypper refresh &amp;&amp; sudo zypper install go-fs
@@ -94,7 +98,7 @@ sudo zypper update go-fs</pre>
 <pre>sudo dnf config-manager addrepo --from-repofile=$url/rpm/go-fs.repo
 sudo dnf install go-fs</pre>
 <h2>Windows</h2>
-<p>The msi of the <a href="https://github.com/$repo/releases/latest">latest release</a>.
+<p>The msi of go-fs or go-fs-light of the <a href="https://github.com/$repo/releases/latest">latest release</a>.
 Once installed, go-fs updates itself from the releases in its admin interface.</p>
 <p>Source: <a href="https://github.com/$repo">github.com/$repo</a></p>
 </html>

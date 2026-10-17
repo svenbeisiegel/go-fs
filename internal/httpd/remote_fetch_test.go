@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"go-fs/internal/config"
+	"go-fs/internal/features"
 	"go-fs/internal/remote/remotetest"
 )
 
@@ -122,6 +123,7 @@ func TestLocalBrowseIsForASessionAndSaysWhereItMayStore(t *testing.T) {
 }
 
 func TestRemoteFetchStoresAFileOfTheServer(t *testing.T) {
+	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "deep/report.txt", "0123456789")
 	server, session := remoteServer(t, host, nil)
@@ -156,6 +158,7 @@ func TestRemoteFetchStoresAFileOfAnArtifactory(t *testing.T) {
 }
 
 func TestRemoteFetchReplacesOnlyWithTheOverwriteRight(t *testing.T) {
+	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "data.bin", "new")
 	host.Write(t, "folder/inside.txt", "in")
@@ -180,6 +183,7 @@ func TestRemoteFetchReplacesOnlyWithTheOverwriteRight(t *testing.T) {
 }
 
 func TestRemoteFetchKeepsToTheUploadLimit(t *testing.T) {
+	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "big.bin", "01234567890123456789")
 	server, session := remoteServer(t, host, func(cfg *httpConfig) { cfg.MaxUploadSize = 10 })
@@ -191,6 +195,7 @@ func TestRemoteFetchKeepsToTheUploadLimit(t *testing.T) {
 }
 
 func TestRemoteFetchRefusesWhatIsNotAFetch(t *testing.T) {
+	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "a.txt", "a")
 	server, session := remoteServer(t, host, func(cfg *httpConfig) {
@@ -234,6 +239,7 @@ func TestRemoteFetchRefusesWhatIsNotAFetch(t *testing.T) {
 }
 
 func TestRemotePageOffersFetchWhereTheAccountMayCreate(t *testing.T) {
+	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "a.txt", "a")
 	server, session := remoteServer(t, host, func(cfg *httpConfig) {

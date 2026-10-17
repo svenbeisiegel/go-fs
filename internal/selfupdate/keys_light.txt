@@ -1,0 +1,11 @@
+# The public keys go-fs-light accepts updates from, one base64 ed25519 key per
+# line. This file is compiled into every light build, so nothing at runtime can
+# add a key. It must share no key with keys.txt, which the full go-fs trusts:
+# the two products publish into the same release, and the separate keys are
+# what keep a light install from updating to the full product or the reverse.
+#
+# Generate a key pair once with
+#   go run ./tools/sign -generate
+# store the private key as the GOFS_LIGHT_SIGNING_KEY secret of the release
+# workflow, and add its public key below. A build without any key refuses
+# every update.

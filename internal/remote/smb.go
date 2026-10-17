@@ -1,3 +1,5 @@
+//go:build !light && !no_smb
+
 package remote
 
 import (
@@ -17,7 +19,15 @@ import (
 	"time"
 
 	"github.com/cloudsoda/go-smb2"
+
+	"go-fs/internal/config"
 )
+
+// Sending by SMB is left out by the tag no_smb, and by light.
+func init() {
+	registerProtocol(protocol{id: config.ServerTypeSMB,
+		open: func(ctx context.Context, l Login, _ config.SSH) (FS, error) { return openSMB(ctx, l) }})
+}
 
 // An SMB host, a Windows file server or a Samba, is reached by SMB 2 or 3 and
 // logged in to by NTLM with the username and the password; a username of

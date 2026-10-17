@@ -1,3 +1,5 @@
+//go:build !light && !no_ftp && !no_sftpd && !no_sftp_remote
+
 // Package e2e runs the HTTP, FTP and SFTP servers side by side over one served
 // folder and one list of accounts, the way the supervisor does, and checks that
 // the protocols agree: a right granted or withheld in [[users]] has to mean the

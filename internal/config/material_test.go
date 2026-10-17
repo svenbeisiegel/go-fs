@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go-fs/internal/features"
 )
 
 // selfSigned makes a certificate and its key as the file holds them. The
@@ -96,20 +98,17 @@ func TestDecodeRefusesTheOtherHalf(t *testing.T) {
 		!strings.Contains(err.Error(), "not a private key") {
 		t.Errorf("a certificate was accepted as a private key: %v", err)
 	}
-	hostKey, err := GenerateHostKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DecodeHostKey(hostKey); err != nil {
+	hostKey := generateHostKey(t)
+	if _, err := Decode(KindSSHKey, hostKey); err != nil {
 		t.Errorf("a generated host key has to be accepted: %v", err)
 	}
-	if _, err := DecodeHostKey(cert); err == nil {
+	if _, err := Decode(KindSSHKey, cert); err == nil {
 		t.Error("a certificate was accepted as an SSH host key")
 	}
 	// an EC key is a host key SSH can use, so the TLS one is not refused here;
 	// what makes it the wrong key is the certificate it does not match, which
 	// is what checkPair reports
-	if _, err := DecodeHostKey(key); err != nil {
+	if _, err := Decode(KindSSHKey, key); err != nil {
 		t.Errorf("an EC private key is a usable host key: %v", err)
 	}
 }
@@ -160,10 +159,7 @@ func TestDecodeRefusesATruncatedKey(t *testing.T) {
 
 func TestDescribeSaysWhatIsStored(t *testing.T) {
 	cert, key := selfSigned(t, "example.test")
-	hostKey, err := GenerateHostKey()
-	if err != nil {
-		t.Fatal(err)
-	}
+	hostKey := generateHostKey(t)
 
 	if got := Describe(KindCertificate, cert); !strings.Contains(got, "example.test") ||
 		!strings.Contains(got, "expires") {
@@ -188,6 +184,7 @@ func TestDescribeSaysWhatIsStored(t *testing.T) {
 // The pair check is the reason the material is validated here at all: a key
 // that belongs to another certificate cannot serve, and -check has to say so.
 func TestValidateChecksTheWholePair(t *testing.T) {
+	skipWithout(t, features.FTP)
 	folder := t.TempDir()
 	cert, key := selfSigned(t, "example")
 	_, otherKey := selfSigned(t, "other")

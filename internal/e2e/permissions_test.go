@@ -1,3 +1,5 @@
+//go:build !light && !no_ftp && !no_sftpd && !no_sftp_remote
+
 package e2e
 
 import (

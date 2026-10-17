@@ -324,6 +324,13 @@ func (h *Handler) handleApply(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// the servers and the repositories of parts the binary was built
+	// without were not on the page, and stay in the file as they were, so
+	// that go-fs reads back what go-fs-light wrote
+	if current, err := h.read(); err == nil {
+		cfg.Servers = append(cfg.Servers, current.AbsentServers()...)
+		cfg.Repositories = append(cfg.Repositories, current.AbsentRepositories()...)
+	}
 	// validated the way the file is validated when it is loaded, so that the
 	// page reports what -check would report and a file that cannot work is
 	// never written
